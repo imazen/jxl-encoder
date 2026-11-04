@@ -2066,6 +2066,12 @@ lookup, descriptors, metadata or compact/non-compact decisions.
 
 ## G. RESOLVED divergences (historical)
 
+### 2026-11-04: tone-mapping validation uses resolved and serialized peaks
+
+| Site | Ours after repair | libjxl v0.12 | Status |
+|---|---|---|---|
+| `EncodeRequest::resolved_intensity_target`, `api/validate.rs`, `FileHeader::write` | Compare minimum against the actual default/overridden peak; reject a peak that becomes binary16 zero. Check serialized peak/minimum/linear fields before writing any header bits. Valid defaults and serialization remain unchanged, including the existing lossless 255-nit policy. | `ToneMapping::VisitFields` rejects nonpositive decoded peak, negative minimum or minimum above decoded peak, and invalid relative linear-below (`image_metadata.cc:385–414`). | RESOLVED invalid-header admission. Existing PQ brightness, library, byte-lock/drift and optional subsampling gates pass. Legal override/first-frame decoder controls and smallest-positive binary16 boundary are retained. This does not claim the lossless default-selection policy matches libjxl's automatic HDR target selection. |
+
 ### 2026-11-04: optional RGB8 subsampling retains pixel-request metadata
 
 | Site | Ours after repair | libjxl v0.12 | Status |

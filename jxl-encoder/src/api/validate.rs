@@ -42,13 +42,13 @@ const METADATA_SIZE_LIMIT: usize = u32::MAX as usize >> 2;
 const F16_MAX_NITS: f32 = 65504.0;
 
 /// Validate caller-supplied tone-mapping fields. `None` means
-/// "use the encoder default" — only `Some(_)` values are checked.
+/// "use the encoder default". Entry points resolve the actual peak first.
 /// Rules:
 /// - `intensity_target` must be finite, `> 0`, and `<= 65504`
 ///   (f16 representation cap; anything larger silently fails in the
 ///   header writer).
 /// - `min_nits` must be finite, `>= 0`, and `<= intensity_target`
-///   (or `<= 65504` if `intensity_target` is unset). A min above
+///   (callers supply the resolved peak). A min above
 ///   the peak is physically nonsensical and would confuse decoders.
 /// - `linear_below` must be finite and `>= 0`. When
 ///   `relative_to_max_display=Some(true)`, additionally constrained
@@ -80,6 +80,11 @@ pub(crate) fn validate_tone_mapping_full(
                 message: format!(
                     "intensity_target {it} exceeds f16 max ({F16_MAX_NITS}); the codestream cannot represent it",
                 ),
+            }));
+        }
+        if crate::f16::f16_roundtrip(it).map_err(at_from)? <= 0.0 {
+            return Err(at!(EncodeError::InvalidInput {
+                message: format!("intensity_target {it} underflows to zero in binary16"),
             }));
         }
     }

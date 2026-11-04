@@ -118,7 +118,7 @@ issue138-reference-check manifest="tools/conformance-sweep/Cargo.toml":
 
 # Caller supplies pinned siblings, reference tools, and run-heavy controls.
 hdr-intensity-check manifest="Cargo.toml":
-    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --test hdr_intensity -- --nocapture
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --test hdr_intensity --test hdr_metadata_validation -- --nocapture
 
 # Caller supplies pinned siblings, v0.12 tools, flock and run-heavy controls.
 subsampled-metadata-check manifest="Cargo.toml":

@@ -487,6 +487,22 @@ impl FileHeader {
 
     /// Writes the complete file header (signature + size + metadata + transform_data).
     pub fn write(&self, writer: &mut BitWriter) -> Result<()> {
+        // Validate the wire values too: internal header builders bypass API
+        // admission, and a positive f32 peak can serialize as binary16 zero.
+        let meta = &self.metadata;
+        let peak = crate::f16::f16_roundtrip(meta.intensity_target)?;
+        let minimum = crate::f16::f16_roundtrip(meta.min_nits)?;
+        let linear_below = crate::f16::f16_roundtrip(meta.linear_below)?;
+        if peak <= 0.0
+            || minimum < 0.0
+            || minimum > peak
+            || linear_below < 0.0
+            || (meta.relative_to_max_display && linear_below > 1.0)
+        {
+            return Err(crate::error::Error::InvalidInput(
+                "invalid binary16 tone mapping: peak must be positive, minimum within peak, and relative linear_below within [0,1]".into(),
+            ));
+        }
         crate::trace::debug_eprintln!("FHDR [bit {}]: Starting file header", writer.bits_written());
         Self::write_signature(writer)?;
         crate::trace::debug_eprintln!("FHDR [bit {}]: After signature", writer.bits_written());
@@ -1049,6 +1065,31 @@ mod tests {
         let explicit = explicit.finish_with_padding();
         // The explicit Relative sRGB bundle is 17 bits; all_default is one bit.
         assert_eq!(explicit.len(), compact.len() + 2);
+    }
+
+    #[test]
+    fn invalid_wire_tone_mapping_is_rejected_before_writing() {
+        for compact in [false, true] {
+            for (peak, minimum, relative, linear) in [
+                (1e-12, 0.0, false, 0.0),
+                (0.0, 0.0, false, 0.0),
+                (f32::NAN, 0.0, false, 0.0),
+                (255.0, 500.0, false, 0.0),
+                (255.0, -1.0, false, 0.0),
+                (255.0, 0.0, true, 2.0),
+                (255.0, 0.0, false, -1.0),
+            ] {
+                let mut header = FileHeader::new_rgb(16, 9);
+                header.header_all_default_fast_paths = compact;
+                header.metadata.intensity_target = peak;
+                header.metadata.min_nits = minimum;
+                header.metadata.relative_to_max_display = relative;
+                header.metadata.linear_below = linear;
+                let mut writer = BitWriter::new();
+                assert!(header.write(&mut writer).is_err());
+                assert_eq!(writer.bits_written(), 0);
+            }
+        }
     }
 
     #[test]

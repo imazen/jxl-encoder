@@ -1731,6 +1731,31 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
+### RESOLVED 2026-11-04: implicit tone-mapping peaks and binary16 underflow
+
+Request/animation validation now receives the peak the writer will use:
+explicit request, then metadata, then the existing path/color default. This
+keeps the current lossless 255-nit default and lossy 255/1000/10000-nit
+SDR/HLG/PQ defaults. Lossless streaming validates its actual peak too.
+Previously `min_nits` with an unset peak was checked against 65504 instead:
+SDR/HLG requests emitted headers the independent decoder rejects as invalid.
+Positive peaks below binary16's smallest positive value serialized as zero.
+API admission rejects that underflow; the header writer independently checks
+all serialized tone fields before writing any bits, including internal callers.
+No valid header bits, public API, quality threshold or default peak changes.
+
+Rejection probes fail on the old code (`~/tmp/jxl-tone-before-2.log`) and pass
+after repair. Thirty-six legal default/override streams parse the expected
+peak/minimum and decode their first displayed frame through Rust and djxl
+v0.12; implied PQ/HLG float cases do too. The smallest positive binary16 peak
+remains accepted. Header tests cover invalid values with both compact-header
+policies and require an untouched output writer. The existing 80-case PQ
+signal check, optional metadata/shape matrix, JPEG-enabled library suite,
+unchanged byte locks/divergence checks, strict focused lint and minimal JPEG
+build pass (`~/tmp/jxl-tone-check.log`, rc0, 176 s, peak RSS 2.77 GiB).
+The additional implied-HDR controls pass in `~/tmp/jxl-tone-implied.log`.
+
+
 ### RESOLVED 2026-11-04: optional subsampled RGB8 partial MCU grids
 
 The RGB8 synthetic JPEG builder now completes each component's MCU grid:

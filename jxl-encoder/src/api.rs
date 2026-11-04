@@ -6009,6 +6009,33 @@ impl<'a> ExtraChannel<'a> {
 }
 
 impl<'a> EncodeRequest<'a> {
+    /// Match the peak actually written after color and metadata resolution.
+    fn resolved_intensity_target(&self) -> f32 {
+        self.intensity_target
+            .or_else(|| self.metadata.and_then(|metadata| metadata.intensity_target))
+            .unwrap_or_else(|| {
+                if matches!(self.config, ConfigRef::Lossless(_)) {
+                    return 255.0;
+                }
+                let transfer = self
+                    .color_encoding
+                    .as_ref()
+                    .map(|color| color.transfer_function)
+                    .or_else(|| {
+                        if self.source_gamma.is_some() {
+                            None
+                        } else {
+                            self.layout.implied_transfer_function()
+                        }
+                    });
+                match transfer {
+                    Some(crate::TransferFunction::Pq) => 10_000.0,
+                    Some(crate::TransferFunction::Hlg) => 1_000.0,
+                    _ => 255.0,
+                }
+            })
+    }
+
     /// Encode tightly packed, equally sized animation frames with this
     /// request's color signaling, metadata, allocation limits and cancellation.
     ///
@@ -6049,8 +6076,7 @@ impl<'a> EncodeRequest<'a> {
             self.metadata.and_then(|m| m.jumbf),
         )?;
         validate_tone_mapping_full(
-            self.intensity_target
-                .or_else(|| self.metadata.and_then(|m| m.intensity_target)),
+            Some(self.resolved_intensity_target()),
             self.min_nits
                 .or_else(|| self.metadata.and_then(|m| m.min_nits)),
             self.relative_to_max_display
@@ -6490,9 +6516,7 @@ impl<'a> EncodeRequest<'a> {
         // win over metadata-level values (`encode_lossy` line ~3018);
         // we apply the same precedence here so the validator sees the
         // value the encoder will actually use.
-        let it = self
-            .intensity_target
-            .or_else(|| self.metadata.and_then(|m| m.intensity_target));
+        let it = Some(self.resolved_intensity_target());
         let mn = self
             .min_nits
             .or_else(|| self.metadata.and_then(|m| m.min_nits));
@@ -10261,7 +10285,7 @@ impl LosslessEncoder {
         // mirror above for the `Some(_) iff non-default` shape. Issue
         // #46 chunk 1a extends the validator to cover
         // `relative_to_max_display` + `linear_below`.
-        let it = (self.intensity_target != 255.0).then_some(self.intensity_target);
+        let it = Some(self.intensity_target);
         let mn = (self.min_nits != 0.0).then_some(self.min_nits);
         let rtmd = self.relative_to_max_display.then_some(true);
         let lb = (self.linear_below != 0.0).then_some(self.linear_below);
