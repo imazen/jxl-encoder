@@ -2066,6 +2066,12 @@ lookup, descriptors, metadata or compact/non-compact decisions.
 
 ## G. RESOLVED divergences (historical)
 
+### 2026-11-04: gain-map codestreams do not import secondary ICC
+
+| Site | Ours after repair | Format rule | Status |
+|---|---|---|---|
+| `jpeg/encode.rs::encode_gain_map_jpeg_to_jxl_stop` / private header assembly | Gain-map input uses primary orientation and omits its own ICC. Ordinary JPEG and pixel-request profiles retain their existing import paths; original secondary ICC bytes stay in the JBRD tail. | [Ultra HDR gain-map compression](https://developer.android.com/media/platform/hdr-image-format#gain_map_compression) does not use a stored gain map's color profile. | RESOLVED unintended gain-value color interpretation. All 32 new cases fail before repair and pass afterward, preserving primary ICC and exact Rust/djxl JPEG reconstruction; gain pixels equal the independently profile-free cjxl reference. Existing orientation, library, ICC-validity and optional-pixel gates pass. |
+
 ### 2026-11-04: HDR gain-map orientation uses the primary's Identity fallback
 
 | Site | Ours after repair | Format rule | Status |

@@ -25,7 +25,7 @@ pub use encode::{
 #[cfg(feature = "chroma-subsampling")]
 pub(crate) use encode::{build_jpeg_file_header, encode_jpeg_pixels_with_header};
 pub(crate) use encode::{
-    encode_jpeg_to_jxl_container_with_effort_stop, encode_jpeg_to_jxl_oriented_stop,
+    encode_gain_map_jpeg_to_jxl_stop, encode_jpeg_to_jxl_container_with_effort_stop,
     encode_jpeg_to_jxl_with_effort_stop, jpeg_orientation,
 };
 pub use lossy::{

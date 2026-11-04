@@ -471,3 +471,101 @@ fn iso_gain_map_follows_primary_with_absent_or_invalid_exif() {
         failures.len()
     );
 }
+
+fn with_icc_profile(jpeg: &[u8], profile: &[u8]) -> Vec<u8> {
+    let mut payload = b"ICC_PROFILE\0".to_vec();
+    payload.extend([1, 1]);
+    payload.extend(profile);
+    let mut output = jpeg[..2].to_vec();
+    output.extend([0xff, 0xe2]);
+    output.extend(u16::try_from(payload.len() + 2).unwrap().to_be_bytes());
+    output.extend(payload);
+    output.extend(&jpeg[2..]);
+    output
+}
+
+/// Gain-map ICC is not used; primary ICC and the original JPEG bytes remain.
+/// https://developer.android.com/media/platform/hdr-image-format#gain_map_compression
+#[test]
+fn iso_gain_map_ignores_secondary_icc_and_preserves_primary_profile() {
+    let root = jxl_encoder::test_helpers::output_dir("gain-map-icc-policy");
+    let root = (0..)
+        .find_map(|i| {
+            let path = root.join(format!("run-{i}"));
+            match std::fs::create_dir(&path) {
+                Ok(()) => Some(path),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => None,
+                Err(error) => panic!("{}: {error}", path.display()),
+            }
+        })
+        .unwrap();
+    let profile: &[u8] = zenpixels_convert::icc_profiles::DISPLAY_P3_V4;
+    let config = LosslessConfig::new().with_effort(3);
+    let mut failures = Vec::new();
+    let mut cells = 0;
+    for (width, height) in [(64, 32), (259, 133)] {
+        let jpeg = jpeg_crop(width, height);
+        for primary_case in [
+            ExifCase::Absent,
+            ExifCase::Value(0),
+            ExifCase::Value(1),
+            ExifCase::Value(6),
+        ] {
+            let tag = match primary_case {
+                ExifCase::Value(tag @ 1..=8) => tag,
+                _ => 1,
+            };
+            let clean_reference = with_exif_orientation(&jpeg, tag);
+            for secondary_tag in [2, 8] {
+                for primary_icc in [false, true] {
+                    let mut primary = with_exif_case(&jpeg, primary_case, false);
+                    if primary_icc {
+                        primary = with_icc_profile(&primary, profile);
+                    }
+                    let secondary = with_iso_metadata(&with_icc_profile(
+                        &with_exif_orientation(&jpeg, secondary_tag),
+                        profile,
+                    ));
+                    let mut original = primary;
+                    original.extend(secondary);
+                    let label = format!(
+                        "{width}x{height}-p{primary_case:?}-s{secondary_tag}-icc{primary_icc}"
+                    );
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        let encoded = config.encode_jpeg_transcode(&original).unwrap();
+                        let base = jxl_oxide::JxlImage::builder()
+                            .read(std::io::Cursor::new(&encoded))
+                            .unwrap();
+                        assert_eq!(
+                            base.original_icc(),
+                            if primary_icc { Some(profile) } else { None }
+                        );
+                        let (_, gain) = gain_map_bundle(&encoded);
+                        let gain = jxl_oxide::JxlImage::builder()
+                            .read(std::io::Cursor::new(gain))
+                            .unwrap();
+                        assert!(
+                            gain.original_icc().is_none(),
+                            "gain-map profile must be ignored"
+                        );
+                        verify_reference(
+                            &original,
+                            &root.join(&label),
+                            Some((&clean_reference, tag)),
+                        );
+                    }));
+                    if result.is_err() {
+                        failures.push(label);
+                    }
+                    cells += 1;
+                }
+            }
+        }
+    }
+    assert_eq!(cells, 32);
+    assert!(
+        failures.is_empty(),
+        "{} of {cells} gain-map ICC cases failed: {failures:?}",
+        failures.len()
+    );
+}

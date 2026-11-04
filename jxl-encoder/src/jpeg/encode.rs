@@ -126,10 +126,10 @@ pub(crate) fn encode_jpeg_to_jxl_with_effort_stop(
     Ok(codestream)
 }
 
-/// Like [`encode_jpeg_to_jxl_with_effort_stop`], with the codestream's orientation set to
-/// `orientation` instead of read from `jpeg`'s own Exif: an UltraHDR gain map takes its
-/// primary image's orientation, so a decoder that orients each codestream lines the two up.
-pub(crate) fn encode_jpeg_to_jxl_oriented_stop(
+/// Transcode gain-map coefficients with the primary's resolved orientation.
+/// Secondary EXIF orientation and ICC are not used for gain-map rendering;
+/// the complete original JPEG remains in the outer container's JBRD tail.
+pub(crate) fn encode_gain_map_jpeg_to_jxl_stop(
     jpeg: &JpegData,
     effort: u8,
     orientation: crate::headers::file_header::Orientation,
@@ -175,7 +175,7 @@ fn encode_jpeg_to_jxl_inner(
     effort: u8,
     stop: Option<&dyn Stop>,
     budget: Option<&Arc<MemoryBudget>>,
-    orientation: Option<crate::headers::file_header::Orientation>,
+    gain_map_orientation: Option<crate::headers::file_header::Orientation>,
     pixel_header: Option<(&FileHeader, Option<&[u8]>)>,
 ) -> Result<(Vec<u8>, usize)> {
     if let Some(s) = stop {
@@ -1283,9 +1283,10 @@ fn encode_jpeg_to_jxl_inner(
     let mut writer =
         BitWriter::with_capacity_fallible(budget.is_some_and(|b| b.is_fallible()), output_cap)?;
 
-    // Pixel-originated coefficients use their request metadata. JPEG inputs
-    // retain their original ICC and Exif import for exact reconstruction.
-    let jpeg_icc = if pixel_header.is_none() {
+    // Pixel coefficients use request metadata; ordinary JPEG inputs import
+    // their ICC/EXIF. Gain maps use the primary orientation and ignore their
+    // own profile (the original secondary JPEG is preserved in JBRD).
+    let jpeg_icc = if pixel_header.is_none() && gain_map_orientation.is_none() {
         extract_icc(jpeg)
     } else {
         None
@@ -1295,7 +1296,7 @@ fn encode_jpeg_to_jxl_inner(
         || build_jpeg_file_header(width, height, is_gray),
         |(header, _)| header.clone(),
     );
-    if let Some(orientation) = orientation {
+    if let Some(orientation) = gain_map_orientation {
         file_header.metadata.orientation = orientation;
     } else if pixel_header.is_none()
         && let Some(exif) = super::jbrd::exif_payload(jpeg)

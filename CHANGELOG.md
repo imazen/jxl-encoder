@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Ignore secondary gain-map ICC during rendering, retaining primary profiles and all original JPEG bytes for reconstruction.
+
 - Keep ISO gain maps aligned when primary JPEG EXIF is absent or invalid: apply its resolved Identity orientation and ignore conflicting secondary EXIF, while retaining exact JPEG reconstruction.
 
 - Reject extra channels on optional subsampled RGB8 stills and non-Full444 animations instead of silently dropping channels or ignoring the requested sampling mode.

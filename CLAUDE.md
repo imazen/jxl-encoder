@@ -1731,6 +1731,26 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
+### RESOLVED 2026-11-04: secondary gain-map ICC altered gain-value interpretation
+
+The private gain-map JPEG transcode now imports the primary's orientation
+and ignores secondary ICC. Ordinary JPEG and pixel-header paths retain their
+own profiles. The [Ultra HDR gain-map rule](https://developer.android.com/media/platform/hdr-image-format#gain_map_compression)
+does not use a stored gain map's color profile. Previously its profile was
+copied into the gain codestream, enabling a color transform of gain values.
+The original secondary profile bytes remain in the outer JBRD tail.
+
+All 32 regressions fail before repair. After repair, both sizes, conflicting
+secondary tags and absent/invalid/valid primary EXIF pass with and without
+primary Display P3: the primary ICC remains exact, gain pixels match cjxl's
+profile-free reference, and both Rust/djxl reconstruct every original byte.
+The full 1,152 orientation matrix, reconstruction/validity controls,
+JPEG-enabled library suite, optional RGB8 HDR/ICC/shape controls, strict
+JPEG lint and minimal JPEG build also pass. Log:
+`~/tmp/jxl-gainmap-icc-after.log` (rc0, 199 s, peak RSS 1.74 GiB).
+No public API, default quantization policy or tolerance changed.
+
+
 ### RESOLVED 2026-11-04: strict JPEG integration-test lint
 
 The JPEG integration target now uses explicit error decomposition, a range

@@ -9,7 +9,7 @@ use enough::Stop;
 use zenjpeg::container::marker::{self, MarkerKind};
 
 use super::{
-    JpegData, JpegError, encode_jpeg_to_jxl_oriented_stop, jpeg_orientation, read_jpeg_with_stop,
+    JpegData, JpegError, encode_gain_map_jpeg_to_jxl_stop, jpeg_orientation, read_jpeg_with_stop,
 };
 use crate::budget::{MemoryBudget, vec_with_capacity_fallible};
 use crate::error::{Error, Result};
@@ -125,7 +125,7 @@ pub(super) fn append(
     // https://developer.android.com/media/platform/hdr-image-format#gain_map_compression
     let orientation = jpeg_orientation(jpeg).unwrap_or_default();
     let codestream =
-        encode_jpeg_to_jxl_oriented_stop(&gain_map, effort, orientation, stop, budget)?;
+        encode_gain_map_jpeg_to_jxl_stop(&gain_map, effort, orientation, stop, budget)?;
     drop(gain_map);
     poll(stop)?;
     // Copy the ISO rational representation verbatim. Parsing and serializing
