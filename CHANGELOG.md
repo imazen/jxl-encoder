@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Reject extra channels on optional subsampled RGB8 stills and non-Full444 animations instead of silently dropping channels or ignoring the requested sampling mode.
+
 - Reject minimum luminance above the resolved default peak and positive intensity targets that serialize as binary16 zero. Validate wire tone fields before writing headers; preserve existing valid defaults and bytes.
 
 - Preserve caller color encoding, ICC, tone mapping and intrinsic size in optional subsampled RGB8 encoding; forward cancellation and memory-budget controls into coefficient coding.

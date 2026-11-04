@@ -4567,19 +4567,13 @@ impl LossyConfig {
 
     /// Set the chroma subsampling mode (issue #47).
     ///
-    /// Default is [`ChromaSubsampling::Full444`] — every existing
-    /// bitstream stays byte-identical without an explicit call. See
-    /// [`ChromaSubsampling`] for the per-mode shift table and the
-    /// chunk-3 status: only `Full444` is honoured end-to-end; setting
-    /// any other mode causes the encoder to return
-    /// [`EncodeError::InvalidConfig`] with a message that names the
-    /// missing encoder-side wiring.
-    ///
-    /// The conversion helpers (RGB→YCbCr, Sharp YUV 4:2:0 downsample)
-    /// are already implemented in
-    /// `crate::vardct::chroma_subsampling` when the
-    /// `chroma-subsampling` cargo feature is enabled — chunk 4 wires
-    /// them through the encode pipeline.
+    /// Default [`ChromaSubsampling::Full444`] uses the standard XYB path.
+    /// The three subsampled modes support RGB8 still images when both
+    /// `chroma-subsampling` and `jpeg-reencoding` are enabled, through
+    /// the JPEG-shaped YCbCr coefficient path. Other layouts, additional
+    /// extra channels and subsampled animations return
+    /// [`EncodeError::InvalidConfig`]. See [`ChromaSubsampling`] for
+    /// the per-mode shifts and supported feature combinations.
     pub fn with_chroma_subsampling(mut self, mode: ChromaSubsampling) -> Self {
         self.chroma_subsampling = mode;
         self
@@ -6043,8 +6037,9 @@ impl<'a> EncodeRequest<'a> {
     /// transfer-function conversion as a still request; an ICC profile is
     /// embedded as the output profile and does not itself transform input.
     /// Use `with_color_encoding` to specify the lossy input interpretation.
-    /// Custom row strides, extra channels and automatic alpha association are
-    /// rejected; pack frames and select alpha association explicitly first.
+    /// Custom row strides, extra channels, non-Full444 chroma subsampling and
+    /// automatic alpha association are rejected; pack frames and select alpha
+    /// association explicitly first.
     #[track_caller]
     pub fn encode_animation(
         self,
@@ -6052,6 +6047,13 @@ impl<'a> EncodeRequest<'a> {
         frames: &[AnimationFrame<'_>],
     ) -> Result<Vec<u8>> {
         crate::error::check_stop(self.stop).map_err(at_from)?;
+        if let ConfigRef::Lossy(config) = self.config
+            && !config.chroma_subsampling.is_full()
+        {
+            return Err(at!(EncodeError::InvalidConfig {
+                message: "chroma subsampling is not implemented for animation; use Full444".into(),
+            }));
+        }
         if !(1..=1 << 30).contains(&animation.tps_numerator)
             || !(1..=1024).contains(&animation.tps_denominator)
         {
@@ -9149,6 +9151,13 @@ impl<'a> EncodeRequest<'a> {
                      Bgra8 / Gray / 16-bit / float / linear layouts \
                      are still pending.",
                     self.layout
+                ),
+            });
+        }
+        if !self.extra_channels.is_empty() {
+            return Err(EncodeError::InvalidConfig {
+                message: format!(
+                    "chroma subsampling {tag} does not support additional extra channels"
                 ),
             });
         }

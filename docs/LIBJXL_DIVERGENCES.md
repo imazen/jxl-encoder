@@ -2066,6 +2066,12 @@ lookup, descriptors, metadata or compact/non-compact decisions.
 
 ## G. RESOLVED divergences (historical)
 
+### 2026-11-04: optional subsampling refuses unsupported payload shapes
+
+| Site | Ours after repair | Reference / format distinction | Status |
+|---|---|---|---|
+| `EncodeRequest::encode_animation`, `encode_lossy_sub_via_jpeg_path` | Reject non-Full444 lossy animation and extra channels on the optional RGB8 still path. Legacy animation funnels through the same request validation. Supported RGB8 stills and Full444 animation retain their existing behavior. | This restriction belongs to our optional implementation; it is not a claim that JPEG XL universally forbids those combinations. | RESOLVED silent depth-channel loss and ignored animation sampling. Before repair all three modes discard depth and produce animation bytes identical to Full444; after repair the specific typed-error controls and unchanged supported-path decoder/animation/library gates pass. |
+
 ### 2026-11-04: tone-mapping validation uses resolved and serialized peaks
 
 | Site | Ours after repair | libjxl v0.12 | Status |

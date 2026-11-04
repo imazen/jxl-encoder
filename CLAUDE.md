@@ -1731,6 +1731,25 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
+### RESOLVED 2026-11-04: optional subsampling silently discarded payload choices
+
+All three optional RGB8 subsampling modes accepted additional depth channels
+but omitted them. Their animation requests produced streams byte-identical
+to Full444. Both new refusal regressions fail before repair, including all
+three modes (`~/tmp/jxl-subsampled-shapes-before.log`). Additional channels
+now return InvalidConfig in the subsampled still path; non-Full444 lossy
+animation returns InvalidConfig at the shared request entry point used by
+both legacy and request APIs. Full444 animation and supported RGB8 stills
+retain their existing behavior. Public subsampling docs now describe the
+implemented feature pair and these limitations rather than the old
+signal-only stage.
+
+The existing 72 HDR/nine ICC/48 shape cells, new refusal controls, 34
+animation checks, 1,733 JPEG-enabled library tests and minimal JPEG build
+pass. Strict focused Clippy passes too. Log:
+`~/tmp/jxl-subsampled-shapes-after.log` (rc0, 96 s, peak RSS 1.73 GiB).
+
+
 ### 2026-11-04: native CI runner disk exhaustion
 
 Run 41889610596's Linux native job 126783674073 ended with the runner's

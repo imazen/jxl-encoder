@@ -130,38 +130,22 @@ pub enum ProgressiveMode {
 /// | `Sub420`   | 1               | 1               | quarter (H+V halved) |
 /// | `Sub440`   | 0               | 1               | half vertical        |
 ///
-/// # Current status (chunk 3)
+/// # Current support
 ///
-/// **API surface + zenyuv-backed RGB→YCbCr+420 helpers landed; encoder
-/// pipeline not yet wired.** Only [`ChromaSubsampling::Full444`] (the
-/// default) is currently honoured end-to-end. Setting any other mode
-/// causes the encoder to return [`crate::EncodeError::InvalidConfig`].
+/// [`ChromaSubsampling::Full444`] uses the standard XYB encoder. The other
+/// modes support RGB8 still images when both `chroma-subsampling` and
+/// `jpeg-reencoding` are enabled. They convert RGB to YCbCr with zenyuv,
+/// downsample chroma, quantize DCT8 coefficients and reuse the JPEG-shaped
+/// coefficient writer. This path carries color/ICC/display metadata; its
+/// quality decisions are distinct from the standard adaptive XYB pipeline.
 ///
-/// The conversion building blocks live in
-/// `crate::vardct::chroma_subsampling` (gated behind the
-/// `chroma-subsampling` cargo feature) and call into the production
-/// `zenyuv` SIMD kernels — Box-filter 4:2:0 (`rgb_to_yuv420`) and Sharp
-/// YUV 4:2:0 (`rgb_to_yuv420_sharp_with_workspace`). What's missing
-/// is the encoder-side wiring: the JXL spec ties chroma subsampling to
-/// `ColorTransform::kYCbCr` (libjxl `enc_frame.cc:381-387`), but our
-/// VarDCT pipeline currently emits `ColorTransform::kXYB`, and the
-/// VarDCT encoder's adaptive_quant / CfL / AC-strategy / transform
-/// stages assume all three channels share one block grid. Per-channel
-/// block grids (Y full-res, Cb/Cr half-res) exist only in the
-/// `jpeg-reencoding` path today.
-///
-/// Chunk 4 work (tracked on issue #47): route Sub420 through the JPEG
-/// transcode-shaped pipeline — convert RGB → YCbCr via zenyuv, DCT8 +
-/// quantize all three planes (Y at full res, Cb/Cr at half res), and
-/// reuse `crate::jpeg::encode::encode_jpeg_to_jxl_inner`'s
-/// `channel_shifts` / `do_ycbcr=true` / `jpeg_upsampling=[1,0,1]` /
-/// modular substream layout. That gets us a decoder-roundtrippable
-/// Sub420 bitstream without touching the standard VarDCT pipeline.
+/// Other input layouts, additional extra channels and subsampled animations
+/// return [`crate::EncodeError::InvalidConfig`]. Without the feature pair,
+/// non-Full444 requests return an explicit missing-feature error.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ChromaSubsampling {
     /// **Default.** Full-resolution chroma (4:4:4). Y, Cb, Cr each sampled
-    /// at every pixel. Largest files; highest chroma fidelity. The only
-    /// mode currently honoured by the encoder.
+    /// at every pixel, through the standard XYB encoder.
     #[default]
     Full444,
     /// 4:2:2 — chroma halved horizontally, full vertical.

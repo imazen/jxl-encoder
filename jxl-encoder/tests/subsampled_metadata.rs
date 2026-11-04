@@ -244,3 +244,62 @@ fn subsampled_rgb8_gamma_and_incompatible_color_encoding() {
         );
     }
 }
+
+#[test]
+fn subsampled_rgb8_refuses_unsupported_extra_channels() {
+    let pixels = [64, 96, 128].repeat(32 * 17);
+    let depth = vec![127; 32 * 17];
+    let extras = [jxl_encoder::api::ExtraChannel::depth(&depth)];
+    let mut accepted = Vec::new();
+    for mode in MODES {
+        let result = LossyConfig::new(0.1)
+            .with_chroma_subsampling(mode)
+            .encode_request(32, 17, PixelLayout::Rgb8)
+            .with_extra_channels(&extras)
+            .encode(&pixels);
+        match result {
+            Ok(_) => accepted.push(format!("{mode:?}")),
+            Err(error) => assert!(error.to_string().contains("extra channels"), "{error}"),
+        }
+    }
+    assert!(accepted.is_empty(), "silently dropped depth: {accepted:?}");
+}
+
+#[test]
+fn subsampled_rgb8_animation_refuses_unimplemented_sampling() {
+    let pixels = [64, 96, 128].repeat(32 * 17);
+    let frames = [
+        jxl_encoder::AnimationFrame::new(&pixels, 10),
+        jxl_encoder::AnimationFrame::new(&pixels, 20),
+    ];
+    let baseline = LossyConfig::new(0.1)
+        .encode_request(32, 17, PixelLayout::Rgb8)
+        .encode_animation(&jxl_encoder::AnimationParams::default(), &frames)
+        .unwrap();
+    let mut accepted = Vec::new();
+    for mode in MODES {
+        let config = LossyConfig::new(0.1).with_chroma_subsampling(mode);
+        let legacy = config.encode_animation(
+            32,
+            17,
+            PixelLayout::Rgb8,
+            &jxl_encoder::AnimationParams::default(),
+            &frames,
+        );
+        assert!(legacy.is_err(), "legacy animation ignored {mode:?}");
+        let result = config
+            .encode_request(32, 17, PixelLayout::Rgb8)
+            .encode_animation(&jxl_encoder::AnimationParams::default(), &frames);
+        match result {
+            Ok(bytes) => accepted.push(format!(
+                "{mode:?}: identical to Full444 = {}",
+                bytes == baseline
+            )),
+            Err(error) => assert!(error.to_string().contains("subsampling"), "{error}"),
+        }
+    }
+    assert!(
+        accepted.is_empty(),
+        "ignored animation sampling: {accepted:?}"
+    );
+}
