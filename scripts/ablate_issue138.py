@@ -49,6 +49,10 @@ def main():
                 "dc_parity": [o for o in opts if not o.startswith("strategy:")] + ["strategy:dc-parity"],
                 "libjxl": [o for o in opts if not o.startswith("strategy:")] + ["strategy:libjxl"],
                 "libjxl_r1": [o for o in opts if not o.startswith(("strategy:", "resampling:"))] + ["strategy:libjxl", "resampling:1"],
+                "libjxl_r1_loop": [o for o in opts if not o.startswith(("strategy:", "resampling:"))]
+                    + ["strategy:libjxl", "resampling:1", "hdr_loss:butteraugli", "butteraugli_iters:2"],
+                "libjxl_r1_loop8": [o for o in opts if not o.startswith(("strategy:", "resampling:"))]
+                    + ["strategy:libjxl", "resampling:1", "hdr_loss:butteraugli", "butteraugli_iters:8"],
                 "no_options": [],
                 "no_faster": [o for o in opts if not o.startswith("faster_decoding:")],
                 "epf0": [o for o in opts if not o.startswith("epf:")] + ["epf:0"],
