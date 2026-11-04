@@ -2066,7 +2066,7 @@ lookup, descriptors, metadata or compact/non-compact decisions.
 
 ## G. RESOLVED divergences (historical)
 
-### 2026-11-04: diagnostic float bit-depth parsing
+### 2026-11-04: diagnostic float bit-depth parsing (`fa1b084a`)
 
 `scripts/jxl_bitstream_diff.py::bit_depth` now reads the float exponent
 field as `1 + Bits(4)`, matching libjxl v0.12

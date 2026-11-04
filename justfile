@@ -93,13 +93,25 @@ fast-decode-conformance source +files:
 issue138-replay binary out corpus icc:
     python3 scripts/replay_issue138.py {{quote(binary)}} {{quote(out)}} {{quote(corpus)}} {{quote(icc)}}
 
+issue138-ablate binary replay out corpus icc:
+    python3 scripts/ablate_issue138.py {{quote(binary)}} {{quote(replay)}} {{quote(out)}} {{quote(corpus)}} {{quote(icc)}}
+
+issue138-dc-ablate binary replay out corpus icc:
+    python3 scripts/ablate_issue138.py {{quote(binary)}} {{quote(replay)}} {{quote(out)}} {{quote(corpus)}} {{quote(icc)}} --arms custom,dc_parity
+
+conformance-build manifest="tools/conformance-sweep/Cargo.toml":
+    cargo build --locked --release --manifest-path {{quote(manifest)}}
+
+bitstream-parser-check:
+    python3 -m unittest discover -s scripts -p test_jxl_bitstream_diff.py
+
+issue138-cell binary out seed index corpus icc:
+    {{quote(binary)}} --images {{quote(corpus + "/CID22/CID22-512/validation")}} --images {{quote(corpus + "/gb82-sc")}} --icc {{quote(icc)}} --out {{quote(out)}} --seed {{seed}} --only {{index}} --threads 1 --retain --reference-study --study-max-pixels 100000000
+
 # Caller provides resource controls and verified CJXL_PATH/DJXL_PATH.
 issue138-reference-check manifest="tools/conformance-sweep/Cargo.toml":
     cargo test --release --manifest-path {{quote(manifest)}}
     cargo clippy --manifest-path {{quote(manifest)}} --all-targets -- -D warnings
-
-bitstream-parser-check:
-    python3 -m unittest discover -s scripts -p test_jxl_bitstream_diff.py
 
 # Caller supplies pinned siblings, reference tools, and run-heavy controls.
 metric-domain-check manifest="Cargo.toml":
@@ -113,6 +125,15 @@ metric-domain-check manifest="Cargo.toml":
 metric-domain-lint manifest="Cargo.toml":
     cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --lib --test metric_color_domain --features __external_metric,ssim2-loop,zensim-loop -- -D warnings
     cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience --lib -- -D warnings
+
+issue128-check manifest="Cargo.toml":
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --test it icc_ratio::
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --test it icc_mab_curves::
+
+issue128-real-profiles binary out icc:
+    {{quote(binary)}} --icc-regression --out {{quote(out)}} --icc {{quote(icc)}}
+
+correctness-closure-check manifest="Cargo.toml": (metric-domain-check manifest) (issue128-check manifest) (metric-domain-lint manifest)
 
 # Weekly conformance sweep (tools/conformance-sweep): random real-image
 # encodes checked by djxl v0.12, upstream jxl-rs and zenjxl-decoder.
