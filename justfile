@@ -105,6 +105,12 @@ issue138-loop-ablate binary replay out corpus icc:
 issue138-strict-loop-ablate binary replay out corpus icc:
     python3 scripts/ablate_issue138.py {{quote(binary)}} {{quote(replay)}} {{quote(out)}} {{quote(corpus)}} {{quote(icc)}} --arms original,dc_parity_loop,libjxl_r1_loop,libjxl_r1_loop8
 
+issue138-ablation-table ablations out:
+    python3 scripts/summarize_issue138.py {{quote(ablations)}} {{quote(out)}}
+
+issue138-vdp2-loop-ablate binary replay out corpus icc:
+    python3 scripts/ablate_issue138.py {{quote(binary)}} {{quote(replay)}} {{quote(out)}} {{quote(corpus)}} {{quote(icc)}} --arms original,vdp2_loop,vdp2_loop8,dc_vdp2_loop
+
 conformance-build manifest="tools/conformance-sweep/Cargo.toml":
     cargo build --locked --release --manifest-path {{quote(manifest)}}
 

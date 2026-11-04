@@ -53,6 +53,10 @@ def main():
                     + ["strategy:libjxl", "resampling:1", "hdr_loss:butteraugli", "butteraugli_iters:2"],
                 "libjxl_r1_loop8": [o for o in opts if not o.startswith(("strategy:", "resampling:"))]
                     + ["strategy:libjxl", "resampling:1", "hdr_loss:butteraugli", "butteraugli_iters:8"],
+                "vdp2_loop": opts + ["hdr_loss:vdp2", "butteraugli_iters:2"],
+                "vdp2_loop8": opts + ["hdr_loss:vdp2", "butteraugli_iters:8"],
+                "dc_vdp2_loop": [o for o in opts if not o.startswith("strategy:")]
+                    + ["strategy:dc-parity", "hdr_loss:vdp2", "butteraugli_iters:2"],
                 "no_options": [],
                 "no_faster": [o for o in opts if not o.startswith("faster_decoding:")],
                 "epf0": [o for o in opts if not o.startswith("epf:")] + ["epf:0"],
