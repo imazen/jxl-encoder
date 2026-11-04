@@ -2100,6 +2100,11 @@ No gate was introduced or changed, so registry metadata and gate counts are
 unchanged. This restores operand consistency; it does not qualify a new
 metric calibration or claim broad RD gain. [Contract and tests](PERCEPTUAL_COLOR_DOMAIN.md).
 
+The [explicit HDR-loop control](../benchmarks/issue138_loop_ablation_2026-11-04.md)
+passes 3/10 remaining PQ records with Butteraugli alone and 8/10 with the
+existing DC-parity option. Increasing two iterations to eight changes no
+verdict. One residual worsens with DC parity; production policies stay unchanged.
+
 ### 2026-09-24: JPEG CfL maximum tie selection (`d6bbdda2`)
 
 `vardct/chroma_from_luma.rs::jpeg_cfl_search` now uses libjxl v0.12's rounded

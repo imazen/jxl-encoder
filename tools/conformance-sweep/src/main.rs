@@ -655,6 +655,13 @@ fn lossy_config(cell: &Cell) -> LossyConfig {
                 _ => ChromaSubsampling::Sub440,
             }),
             "faster_decoding" => c.with_faster_decoding(v.parse().unwrap()),
+            "hdr_loss" => c.with_hdr_loss(match v {
+                "butteraugli" => jxl_encoder::HdrLoss::Butteraugli,
+                "vdp2" => jxl_encoder::HdrLoss::Vdp2,
+                "auto" => jxl_encoder::HdrLoss::Auto,
+                _ => unreachable!("{o}"),
+            }),
+            "butteraugli_iters" => c.with_butteraugli_iters(v.parse().unwrap()),
             _ => unreachable!("{o}"),
         };
     }

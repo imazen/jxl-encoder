@@ -99,6 +99,9 @@ issue138-ablate binary replay out corpus icc:
 issue138-dc-ablate binary replay out corpus icc:
     python3 scripts/ablate_issue138.py {{quote(binary)}} {{quote(replay)}} {{quote(out)}} {{quote(corpus)}} {{quote(icc)}} --arms custom,dc_parity
 
+issue138-loop-ablate binary replay out corpus icc:
+    python3 scripts/ablate_issue138.py {{quote(binary)}} {{quote(replay)}} {{quote(out)}} {{quote(corpus)}} {{quote(icc)}} --arms original,butteraugli_loop,butteraugli_loop8,dc_parity_loop,dc_parity_loop8
+
 conformance-build manifest="tools/conformance-sweep/Cargo.toml":
     cargo build --locked --release --manifest-path {{quote(manifest)}}
 

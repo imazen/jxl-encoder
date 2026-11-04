@@ -53,6 +53,12 @@ def main():
                 "no_faster": [o for o in opts if not o.startswith("faster_decoding:")],
                 "epf0": [o for o in opts if not o.startswith("epf:")] + ["epf:0"],
                 "no_gaborish": [o for o in opts if o != "no_gaborish"] + ["no_gaborish"],
+                "butteraugli_loop": opts + ["hdr_loss:butteraugli", "butteraugli_iters:2"],
+                "butteraugli_loop8": opts + ["hdr_loss:butteraugli", "butteraugli_iters:8"],
+                "dc_parity_loop": [o for o in opts if not o.startswith("strategy:")]
+                    + ["strategy:dc-parity", "hdr_loss:butteraugli", "butteraugli_iters:2"],
+                "dc_parity_loop8": [o for o in opts if not o.startswith("strategy:")]
+                    + ["strategy:dc-parity", "hdr_loss:butteraugli", "butteraugli_iters:8"],
             }
             if args.arms:
                 requested = args.arms.split(",")
