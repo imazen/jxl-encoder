@@ -31,7 +31,8 @@ pub struct LoopFrame {
     /// Cancellation or a failed metric comparison can leave a partial seed
     /// trace; these frames do not record the reason for termination.
     pub iter: u32,
-    /// The metric that scored it: `"butteraugli"`, `"cvvdp"` or `"zensim"`.
+    /// The metric that scored it: `"butteraugli"`, `"vdp2"`, `"cvvdp"`,
+    /// `"zensim"` or `"external"`.
     pub metric: &'static str,
     /// The reconstruction's score in the metric's units.
     pub score: f64,

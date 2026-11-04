@@ -1733,6 +1733,27 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
+### RESOLVED 2026-11-04: explicit HDR loop budgets were discarded; VDP2 packed rows used padded stride
+
+The HDR VDP2 suppression now applies only when the iteration budget is unset.
+Explicit budgets select the requested loop; zero and default HDR remain off.
+The override regression failed all 16 explicit cases with zero recorded frames.
+Enabling it exposed a pre-existing odd-width panic: VDP2 indexed the packed
+reference using reconstruction padding. It now reads source rows at width and
+reconstruction rows at their stride. Independent planar/packed comparisons cover
+one-pixel axes and NaN padding; both that unit regression and a 259x17 encode
+panic before repair. VDP2 traces now name the scorer correctly.
+
+All 48 selected override/default streams render through Rust and djxl, and the
+32 default/zero streams match the retained pre-fix bytes exactly. Eighteen
+existing HDR integration tests, 82 selected unchanged locks/trace checks,
+1,668 library tests, strict focused lint and minimal std/convenience checks pass.
+Existing ignores and byte expectations remain unchanged. Full log:
+`~/tmp/jxl-hdr-loop-after-stride.log`, rc0, 123 s, peak RSS 1.65 GiB.
+This repairs explicit control and row handling; it does not qualify VDP2 as a
+new default or establish issue-138 quality resolution.
+
+
 ### RESOLVED 2026-11-04: alternate-color gain-map bundle metadata consistency
 
 The bundle serializer accepted nonzero versions and all ICC/`want_icc`

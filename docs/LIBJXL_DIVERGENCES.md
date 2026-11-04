@@ -488,6 +488,34 @@ VarDCT stream learner. See [lossless tracking](LIBJXL_PARITY_TRACKING.md).
 
 ## E. Per-API behavior divergences (opt-in)
 
+### VDP2 packed reference stride (2026-11-04)
+
+`hdr_vdp2_lite::compare_vdp2_interleaved` reads source rows with `width`
+while retaining the independent padded stride for reconstructed planes. The
+previous shared stride indexed beyond the tightly packed source on odd widths.
+The VDP2 path is our opt-in metric, not a libjxl algorithm. Packed/strided
+comparisons use an independent planar gather, NaN row padding and one-pixel
+axes; no metric formula or threshold changes. The new unit test and the
+259x17 override integration both panic before the repair and pass afterward.
+
+### Explicit HDR loop budgets (2026-11-04)
+
+The existing HDR loop suppression applies exactly when the iteration budget is
+unset, the resolved transfer is PQ/HLG and the resolved loss is VDP2. An
+explicit `with_butteraugli_iters(n)` opts into the chosen loss; zero disables
+it. This preserves the default policy and corrects silently ignored overrides.
+VDP2 trace records identify their actual scorer rather than Butteraugli.
+libjxl v0.12 uses its Butteraugli loop; VDP2 remains our optional metric, with
+no new public API or strategy gate. The historical default-policy measurements
+precede reconstruction/metric-domain repairs and do not qualify a policy flip.
+The 48 selected override/default streams fully render through Rust and djxl;
+16 explicit-budget cases record three VDP2 frames instead of zero. All 32
+default/zero streams match the retained pre-fix bytes exactly. Existing HDR
+tests, selected locks/trace checks, library tests, strict focused lint and the
+minimal std/convenience build pass. Full log: `~/tmp/jxl-hdr-loop-after-stride.log`,
+rc0, 123 s, peak RSS 1.65 GiB.
+
+
 ### September 24: explicit lossless WP mode (#24)
 
 `LosslessInternalParams::forced_wp_mode` (`__expert`) selects mode 0..=4

@@ -4670,6 +4670,8 @@ impl LossyConfig {
     /// [`MAX_QUANT_LOOP_ITERS`]. The encoder additionally saturates at
     /// consumption time so callers that skip `validate()` still cannot
     /// DoS the encoder by passing a huge value.
+    /// An explicit budget also opts HDR input into the selected loop metric;
+    /// the default HDR policy keeps the loop disabled. Zero still disables it.
     /// Requires the `butteraugli-loop` feature.
     #[cfg(feature = "butteraugli-loop")]
     #[doc(hidden)]
@@ -8662,7 +8664,10 @@ impl<'a> EncodeRequest<'a> {
             // Zeroing `butteraugli_iters` reproduces the `--no-butteraugli` base
             // EXACTLY (same field state → identical downstream W44-168/169 dispatch).
             //
-            // Gate = HDR transfer AND resolved-loss `Vdp2` (the default routing):
+            // Historical measurements above preceded later reconstruction and
+            // metric-domain repairs; they do not qualify a new HDR policy.
+            // An explicit iteration budget is honored as a caller opt-in.
+            // Gate = unset budget AND HDR transfer AND resolved-loss `Vdp2`:
             //  - SDR (transfer != PQ/HLG) → untouched, byte-identical (hash-locks).
             //  - explicit `with_hdr_loss(Butteraugli)` on HDR is a deliberate escape
             //    hatch → KEEPS the loop (still over-refines; documented caveat), so
@@ -8670,7 +8675,8 @@ impl<'a> EncodeRequest<'a> {
             //  - explicit `with_hdr_loss(Vdp2)` on SDR (odd but legal) is guarded by
             //    the transfer check → keeps the loop.
             // See docs/LIBJXL_DIVERGENCES.md.
-            if cfg.is_hdr_pq_hlg(self.layout, self.color_encoding.as_ref())
+            if cfg.butteraugli_iters.is_none()
+                && cfg.is_hdr_pq_hlg(self.layout, self.color_encoding.as_ref())
                 && matches!(enc.hdr_loss, crate::vardct::hdr_metrics::HdrLoss::Vdp2)
             {
                 enc.butteraugli_iters = 0;

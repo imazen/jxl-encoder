@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Honor explicit HDR loop iteration budgets while retaining the default no-loop policy. Correct VDP2 packed-reference stride handling on odd widths and identify VDP2 correctly in loop traces.
+
 - Reject gain-map bundle versions and alternate ICC/flag combinations that violate the file-format metadata contract, before writing output; correct alternate-image color documentation.
 
 - Preserve libjxl DC chroma subtraction order under the existing strict-parity gate; retain normal calibrated arithmetic and all existing byte expectations.

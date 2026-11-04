@@ -2897,12 +2897,18 @@ impl VarDctEncoder {
                 trace.push(crate::LoopFrame {
                     seed: k_init_mul,
                     iter: iter as u32,
-                    metric: match active_metric {
-                        #[cfg(feature = "__external_metric")]
-                        ActiveMetric::Butteraugli if self.external_metric.is_some() => "external",
-                        ActiveMetric::Butteraugli => "butteraugli",
-                        ActiveMetric::Cvvdp => "cvvdp",
-                        ActiveMetric::Zensim => "zensim",
+                    metric: if use_vdp2 {
+                        "vdp2"
+                    } else {
+                        match active_metric {
+                            #[cfg(feature = "__external_metric")]
+                            ActiveMetric::Butteraugli if self.external_metric.is_some() => {
+                                "external"
+                            }
+                            ActiveMetric::Butteraugli => "butteraugli",
+                            ActiveMetric::Cvvdp => "cvvdp",
+                            ActiveMetric::Zensim => "zensim",
+                        }
                     },
                     score: iter_score,
                     target: f64::from(effective_metric_target_distance),

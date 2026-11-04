@@ -238,6 +238,8 @@ pub fn compare_vdp2_planar(
 /// into `ref_r/g/b` and calling [`compare_vdp2_planar`] — the only change
 /// is how the reference luminance plane is gathered — so the encoder can
 /// skip materializing ~144 MB of planar reference planes at 12 MP.
+/// `padded_stride` applies only to reconstruction planes; interleaved source
+/// rows contain exactly `width` pixels.
 #[allow(clippy::too_many_arguments)] // mirrors compare_vdp2_planar, minus 2 ref planes
 pub fn compare_vdp2_interleaved(
     ref_interleaved: &[f32],
@@ -253,8 +255,7 @@ pub fn compare_vdp2_interleaved(
         return Err("VDP2-lite: zero-sized image");
     }
     let it = intensity_target.max(MIN_LUMINANCE_NITS);
-    let log_ref =
-        log10_luminance_plane_interleaved(ref_interleaved, width, height, padded_stride, it);
+    let log_ref = log10_luminance_plane_interleaved(ref_interleaved, width, height, width, it);
     let log_rec = log10_luminance_plane(rec_r, rec_g, rec_b, width, height, padded_stride, it);
     Ok(compare_vdp2_from_logs(&log_ref, &log_rec, width, height))
 }
@@ -677,6 +678,73 @@ mod tests {
                 q.to_bits(),
                 "diffmap[{i}] differs: planar {p} vs interleaved {q}"
             );
+        }
+    }
+
+    #[test]
+    fn packed_reference_matches_strided_reconstruction() {
+        for (w, h) in [(1, 1), (1, 17), (17, 1), (31, 17), (259, 17)] {
+            let n = w * h;
+            let reference: [Vec<f32>; 3] = core::array::from_fn(|c| {
+                (0..n)
+                    .map(|i| 0.1 + ((i * 7 + c * 17) % 101) as f32 / 128.0)
+                    .collect()
+            });
+            let reconstructed: [Vec<f32>; 3] = core::array::from_fn(|c| {
+                reference[c]
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &v)| v + ((i + c) % 3) as f32 * 0.005)
+                    .collect()
+            });
+            let interleaved: Vec<f32> = (0..n)
+                .flat_map(|i| [reference[0][i], reference[1][i], reference[2][i]])
+                .collect();
+            let expected = compare_vdp2_planar(
+                &reference[0],
+                &reference[1],
+                &reference[2],
+                &reconstructed[0],
+                &reconstructed[1],
+                &reconstructed[2],
+                w,
+                h,
+                w,
+                1000.0,
+            )
+            .unwrap();
+            assert!(expected.score.is_finite());
+            for pad in [0, 1, 7] {
+                let stride = w + pad;
+                let mut planes: [Vec<f32>; 3] =
+                    core::array::from_fn(|_| vec![f32::NAN; stride * h]);
+                for c in 0..3 {
+                    for y in 0..h {
+                        planes[c][y * stride..y * stride + w]
+                            .copy_from_slice(&reconstructed[c][y * w..y * w + w]);
+                    }
+                }
+                let actual = compare_vdp2_interleaved(
+                    &interleaved,
+                    &planes[0],
+                    &planes[1],
+                    &planes[2],
+                    w,
+                    h,
+                    stride,
+                    1000.0,
+                )
+                .unwrap();
+                assert_eq!(
+                    actual.score.to_bits(),
+                    expected.score.to_bits(),
+                    "{w}x{h}, padding {pad}"
+                );
+                assert_eq!(actual.diffmap.len(), expected.diffmap.len());
+                for (a, b) in actual.diffmap.iter().zip(&expected.diffmap) {
+                    assert_eq!(a.to_bits(), b.to_bits());
+                }
+            }
         }
     }
 
