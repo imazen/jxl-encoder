@@ -428,6 +428,8 @@ alloc-stdlib = "0.3.0"
 image = "0.25.10"
 # jxl-rs (github.com/lilith/jxl-rs) is the PRIMARY decoder for roundtrip tests
 jxl = "0.4.0"
+# ICC regressions include 4 MB profiles, beyond the old decoder's fixed cap.
+jxl-current = { package = "jxl", version = "0.8.0" }
 jxl_transforms = "0.4.0"
 # jxl-oxide is secondary — always test jxl-rs first
 jxl-oxide = "0.12.6"

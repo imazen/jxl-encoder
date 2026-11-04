@@ -2,7 +2,9 @@
 
 ## [Unreleased]
 
-- Correct float exponent-field parsing in the independent bitstream diagnostic, preserving alignment of later metadata and frame fields.
+- Expand ICC repetition regressions through 4 MB and validate named RGB/CMYK profiles. Advance the native decoder pin with the ICC read-ahead repair while retaining its paired API review changes; upstream decoder failures remain explicit.
+
+- Correct float exponent-field parsing in the independent bitstream diagnostic, preserving alignment of later metadata and frame fields (`fa1b084a`).
 
 - Fix perceptual-loop comparisons with non-default intensity targets or non-sRGB primaries: normalize inverse-XYB reconstruction and convert source references into the same linear-sRGB domain. Default PQ/HLG loop policy is unchanged (`f3559269`).
 

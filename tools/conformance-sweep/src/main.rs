@@ -665,6 +665,13 @@ fn strategy(v: &str) -> EncoderStrategy {
     match v {
         "libjxl" => EncoderStrategy::Libjxl,
         "lean" => EncoderStrategy::LeanFaster,
+        "custom" | "dc-parity" => {
+            use jxl_encoder::api::EncoderImprovementsCustom;
+            EncoderStrategy::Custom(Box::new(EncoderImprovementsCustom {
+                dc_encode_libjxl_parity: v == "dc-parity",
+                ..Default::default()
+            }))
+        }
         _ => EncoderStrategy::Aggressive,
     }
 }
@@ -949,8 +956,10 @@ fn decode_djxl(data: &[u8], dir: &Path, tag: &str, float: bool) -> Result<Decode
         d.icc = icc_bytes;
         Ok(d)
     })();
-    for p in [&jxl, &out, &icc] {
-        let _ = std::fs::remove_file(p);
+    if !KEEP_REFERENCES.load(Ordering::Relaxed) {
+        for p in [&jxl, &out, &icc] {
+            let _ = std::fs::remove_file(p);
+        }
     }
     result
 }
@@ -1342,11 +1351,12 @@ fn cjxl_reference_error(
     let jxl = dir.join(format!("{tag}.jxl"));
     let img = reference_pixels(cell, want);
     std::fs::write(&ppm, img).map_err(|e| e.to_string())?;
-    let factor = lossy_config(cell).effective_resampling();
+    let config = lossy_config(cell);
+    let factor = config.effective_resampling();
     let o = std::process::Command::new(jxl_encoder::test_helpers::cjxl_path())
         .arg(&ppm)
         .arg(&jxl)
-        .arg(format!("--distance={}", cell.distance))
+        .arg(format!("--distance={}", config.effective_distance()))
         .arg(format!("--effort={}", cell.effort.clamp(1, 10)))
         .arg(format!("--resampling={factor}"))
         .arg("-x")
@@ -1354,10 +1364,14 @@ fn cjxl_reference_error(
         .arg("--num_threads=1")
         .args(extra)
         .output();
-    let _ = std::fs::remove_file(&ppm);
+    if !KEEP_REFERENCES.load(Ordering::Relaxed) {
+        let _ = std::fs::remove_file(&ppm);
+    }
     let o = o.map_err(|e| format!("run cjxl: {e}"))?;
     let bytes = std::fs::read(&jxl);
-    let _ = std::fs::remove_file(&jxl);
+    if !KEEP_REFERENCES.load(Ordering::Relaxed) {
+        let _ = std::fs::remove_file(&jxl);
+    }
     if !o.status.success() {
         let msg = String::from_utf8_lossy(&o.stderr);
         return Err(format!("cjxl: {}", msg.lines().last().unwrap_or("?")));
@@ -1374,6 +1388,7 @@ fn cjxl_reference_error(
 /// too noisy for a fixed bound.
 static REFERENCE_STUDY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static STUDY_MAX_PIXELS: AtomicUsize = AtomicUsize::new(128 * 128);
+static KEEP_REFERENCES: AtomicBool = AtomicBool::new(false);
 
 /// cjxl flags for the cell options that have a direct cjxl equivalent.
 fn cjxl_flags_for(cell: &Cell) -> Vec<String> {
@@ -1584,9 +1599,180 @@ fn iso_week_seed() -> u64 {
     (days + 3) / 7
 }
 
+/// Fixed real-profile regression for the original issue-128 reports. All
+/// streams are retained, including successful ones, and every decoder must
+/// recover the exact ICC bytes. This does not score lossy color quality.
+fn upstream_header_icc(data: &[u8]) -> Result<Vec<u8>, String> {
+    use jxl::api::{Event, JxlColorProfile, JxlDecoder, JxlDecoderOptions, ProfileLevel};
+    let mut options = JxlDecoderOptions::default();
+    options.max_profile_level = ProfileLevel::Main10;
+    let mut decoder = JxlDecoder::new(options);
+    let mut input = data;
+    loop {
+        let previous = input.len();
+        match decoder
+            .process(&mut input, None, None)
+            .map_err(|e| format!("{e:?}"))?
+        {
+            Event::BasicInfo => {
+                return match decoder.embedded_color_profile() {
+                    Some(JxlColorProfile::Icc(profile)) => Ok(profile.clone()),
+                    _ => Err("missing ICC".into()),
+                };
+            }
+            Event::NeedMoreInput { .. } if input.is_empty() || input.len() == previous => {
+                return Err("truncated or stalled".into());
+            }
+            _ => {}
+        }
+    }
+}
+
+// Diagnostic mutation of our fixed Level-10/jxlc fixture, never a shipping
+// workaround. Extra unread bytes expose an ICC parser read-ahead estimate.
+fn icc_read_ahead_control(data: &[u8]) -> Option<Vec<u8>> {
+    let mut offset = 0;
+    while offset + 8 <= data.len() {
+        let size = u32::from_be_bytes(data[offset..offset + 4].try_into().ok()?) as usize;
+        if size < 8 || size > data.len() - offset {
+            return None;
+        }
+        if &data[offset + 4..offset + 8] == b"jxlc" {
+            let mut control = data[..offset].to_vec();
+            control.extend_from_slice(&u32::try_from(size + 32768).ok()?.to_be_bytes());
+            control.extend_from_slice(&data[offset + 4..offset + size]);
+            control.resize(control.len() + 32768, 0);
+            control.extend_from_slice(&data[offset + size..]);
+            return Some(control);
+        }
+        offset += size;
+    }
+    None
+}
+
+fn icc_regression(input: &Path, out: &Path) {
+    let names = [
+        "ITUR_2100_PQ_FULL.ICC",
+        "Probev1_ICCv4.icc",
+        "sRGB_ICC_v4_Appearance.icc",
+    ];
+    let profiles: Vec<_> = names
+        .into_iter()
+        .map(|name| {
+            let data = std::fs::read(input.join(name))
+                .unwrap_or_else(|e| panic!("required ICC profile {name}: {e}"));
+            assert!(
+                data.len() >= 132 && &data[36..40] == b"acsp",
+                "invalid profile {name}"
+            );
+            Icc {
+                name: name.into(),
+                data,
+                gray: false,
+            }
+        })
+        .collect();
+    std::fs::create_dir(out).expect("output must be a new directory");
+    let scratch = out.join("scratch");
+    std::fs::create_dir(&scratch).unwrap();
+    let mut rows = String::from("index\twidth\theight\tlossless\tlayout\tprofile\tbytes\tstatus\n");
+    let mut failures = Vec::new();
+    let mut index = 0;
+    for (w, h) in [(1, 1), (300, 260)] {
+        for lossless in [false, true] {
+            for profile in &profiles {
+                // Probev1 is CMYK. Give it actual CMYK samples and a black
+                // channel; attaching it to RGB creates an invalid color pair.
+                let (layout, pixel) = match &profile.data[16..20] {
+                    b"RGB " => (PixelLayout::Rgb8, &[37u8, 101, 219][..]),
+                    b"CMYK" => (PixelLayout::Cmyk8, &[37u8, 101, 219, 53][..]),
+                    other => panic!("unsupported profile space: {other:?}"),
+                };
+                let pixels = pixel.repeat(w * h);
+                let metadata = ImageMetadata::new().with_icc_profile(&profile.data);
+                let bytes = if lossless {
+                    LosslessConfig::new()
+                        .with_effort(3)
+                        .encode_request(w as u32, h as u32, layout)
+                        .with_metadata(&metadata)
+                        .encode(&pixels)
+                } else {
+                    LossyConfig::new(1.0)
+                        .with_effort(3)
+                        .encode_request(w as u32, h as u32, layout)
+                        .with_metadata(&metadata)
+                        .encode(&pixels)
+                }
+                .unwrap_or_else(|e| panic!("encode {} {layout:?}: {e}", profile.name));
+                std::fs::write(out.join(format!("{index}.jxl")), &bytes).unwrap();
+                let mut errors = Vec::new();
+                for (who, decoded) in [
+                    ("jxl-rs", decode_jxl_rs(&bytes)),
+                    ("zenjxl", decode_zen(&bytes)),
+                    (
+                        "djxl",
+                        decode_djxl(&bytes, &scratch, &format!("icc{index}"), false),
+                    ),
+                ] {
+                    match decoded {
+                        Ok(d)
+                            if (d.w, d.h) == (w, h)
+                                && d.icc.as_deref() == Some(profile.data.as_slice()) => {}
+                        Ok(_) => errors.push(format!("{who}: dimensions or ICC bytes differ")),
+                        Err(e) => errors.push(format!("{who}: {e}")),
+                    }
+                }
+                let detail = if errors.is_empty() {
+                    "OK".to_string()
+                } else {
+                    errors.join("; ")
+                };
+                std::fs::write(out.join(format!("{index}.log")), &detail).unwrap();
+                let detail = detail.replace(['\n', '\t'], " ");
+                if detail != "OK" {
+                    failures.push(format!("{index}: {detail}"));
+                    if let Some(control) = icc_read_ahead_control(&bytes) {
+                        std::fs::write(
+                            out.join(format!("{index}-read-ahead-control.jxl")),
+                            &control,
+                        )
+                        .unwrap();
+                        let exact =
+                            upstream_header_icc(&control).is_ok_and(|icc| icc == profile.data);
+                        let record = format!(
+                            "original header: {:?}\npadded-control ICC byte-exact: {exact}\n",
+                            upstream_header_icc(&bytes).map(|icc| icc == profile.data)
+                        );
+                        std::fs::write(out.join(format!("{index}-read-ahead-control.txt")), record)
+                            .unwrap();
+                    }
+                }
+                writeln!(
+                    rows,
+                    "{index}\t{w}\t{h}\t{lossless}\t{layout:?}\t{}\t{}\t{detail}",
+                    profile.name,
+                    bytes.len()
+                )
+                .unwrap();
+                std::fs::write(out.join("results.tsv"), &rows).unwrap();
+                eprintln!(
+                    "ICC {index}: {} {w}x{h} {layout:?} lossless={lossless}: {detail}",
+                    profile.name
+                );
+                index += 1;
+            }
+        }
+    }
+    assert!(failures.is_empty(), "ICC regression failures: {failures:?}");
+}
+
 fn main() {
     let mut images = Vec::new();
     let (mut out, mut icc_dir) = (None, None);
+    let mut real_icc = false;
+    let mut override_options: Option<Vec<String>> = None;
+    let mut override_effort = None;
+    let mut retain = false;
     let (mut seed, mut cells, mut minutes, mut threads, mut only) =
         (None, 2000u64, 0u64, 0usize, None);
     let mut args = std::env::args().skip(1);
@@ -1596,6 +1782,19 @@ fn main() {
             "--images" => images.push(PathBuf::from(val())),
             "--out" => out = Some(PathBuf::from(val())),
             "--icc" => icc_dir = Some(PathBuf::from(val())),
+            "--icc-regression" => real_icc = true,
+            "--options" => {
+                let value = val();
+                override_options = Some(
+                    value
+                        .split(',')
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_owned)
+                        .collect(),
+                );
+            }
+            "--effort" => override_effort = Some(val().parse::<u8>().unwrap()),
+            "--retain" => retain = true,
             "--seed" => seed = Some(val().parse().unwrap()),
             "--cells" => cells = val().parse().unwrap(),
             "--minutes" => minutes = val().parse().unwrap(),
@@ -1610,7 +1809,16 @@ fn main() {
         }
     }
     let out = out.expect("--out <dir> is required");
+    if real_icc {
+        icc_regression(icc_dir.as_deref().expect("--icc is required"), &out);
+        return;
+    }
     let seed = seed.unwrap_or_else(iso_week_seed);
+    assert!(
+        only.is_some() || (override_options.is_none() && override_effort.is_none() && !retain),
+        "diagnostic --options/--effort/--retain overrides require --only"
+    );
+    KEEP_REFERENCES.store(retain, Ordering::Relaxed);
     let threads = if threads == 0 {
         std::thread::available_parallelism()
             .map(|n| n.get())
@@ -1659,11 +1867,23 @@ fn main() {
                 }
                 let k = next.fetch_add(1, Ordering::Relaxed);
                 let Some(&index) = indices.get(k) else { return };
-                let cell = plan(seed, index, &sources, &iccs);
+                let mut cell = plan(seed, index, &sources, &iccs);
+                if let Some(opts) = &override_options {
+                    cell.opts.clone_from(opts);
+                }
+                if let Some(effort) = override_effort {
+                    cell.effort = effort;
+                }
                 let desc = cell.describe(&sources, &iccs);
                 let CellRun { verdict, bytes, pixels, elapsed, study } =
                     run_cell(seed, &cell, &sources, &iccs, &scratch);
                 let len = bytes.as_ref().map_or(0, Vec::len);
+                if retain {
+                    if let Some(b) = &bytes {
+                        std::fs::write(out.join(format!("cell{index}.jxl")), b).unwrap();
+                    }
+                    std::fs::write(out.join(format!("cell{index}.input")), &pixels).unwrap();
+                }
                 if let Some(row) = study {
                     study_rows.lock().unwrap().push((index, row));
                 }
@@ -1734,7 +1954,9 @@ fn main() {
         }
         std::fs::write(out.join("reference_study.tsv"), t).unwrap();
     }
-    let _ = std::fs::remove_dir_all(&scratch);
+    if !retain {
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
     let (ok, rejected, failed) = (ok.into_inner(), rejected.into_inner(), failed.into_inner());
     let findings = findings.into_inner();
     let summary = format!(

@@ -9,8 +9,8 @@
 //! that, so the writer must fall back. Each profile here must decode in jxl-rs
 //! and djxl v0.12, and both must return the profile byte for byte.
 //!
-//! Sizes stay below the pinned jxl-rs 0.4's 1 MiB cap on the encoded ICC
-//! stream (`IccTooLarge`, a resource policy).
+//! The current jxl-rs 0.8 oracle supports the 4 MB profile case; the old
+//! 0.4 oracle refused its predicted ICC stream at the fixed 1 MiB cap.
 
 use jxl_encoder::{ImageMetadata, LosslessConfig, LossyConfig, PixelLayout};
 
@@ -93,60 +93,57 @@ fn padded_icc(total: usize, fill: &[u8]) -> Vec<u8> {
 
 /// Full jxl-rs decode; returns the embedded ICC profile.
 pub(crate) fn jxl_rs_icc(data: &[u8], label: &str) -> Vec<u8> {
-    use jxl::api::{
-        JxlColorProfile, JxlDataFormat, JxlDecoder, JxlDecoderOptions, JxlOutputBuffer,
-        JxlPixelFormat, ProcessingResult, states,
+    use jxl_current::api::{
+        Event, JxlColorProfile, JxlDataFormat, JxlDecoder, JxlDecoderOptions, JxlOutputBuffer,
+        JxlPixelFormat, ProfileLevel,
     };
-    use jxl::image::{Image, Rect};
-
+    use jxl_current::image::{Image, Rect};
+    let mut options = JxlDecoderOptions::default();
+    options.max_profile_level = ProfileLevel::Main10;
+    let mut decoder = JxlDecoder::new(options);
     let mut input = data;
-    let mut init = JxlDecoder::<states::Initialized>::new(JxlDecoderOptions::default());
-    let mut decoder = loop {
-        match init.process(&mut input) {
-            Ok(ProcessingResult::Complete { result }) => break result,
-            Ok(ProcessingResult::NeedsMoreInput { fallback, .. }) => {
-                assert!(!input.is_empty(), "jxl-rs header {label}: truncated");
-                init = fallback
-            }
-            Err(e) => panic!("jxl-rs header {label}: {e:?}"),
-        }
-    };
-    let icc = match decoder.embedded_color_profile() {
-        JxlColorProfile::Icc(icc) => icc.clone(),
-        _ => panic!("jxl-rs {label}: expected an ICC profile"),
-    };
-    let (width, height) = decoder.basic_info().size;
-    let format = decoder.current_pixel_format().clone();
-    let channels = format.color_type.samples_per_pixel();
-    decoder.set_pixel_format(JxlPixelFormat {
-        color_type: format.color_type,
-        color_data_format: Some(JxlDataFormat::f32()),
-        extra_channel_format: vec![],
-    });
-    let mut frame = loop {
-        match decoder.process(&mut input) {
-            Ok(ProcessingResult::Complete { result }) => break result,
-            Ok(ProcessingResult::NeedsMoreInput { fallback, .. }) => decoder = fallback,
-            Err(e) => panic!("jxl-rs frame info {label}: {e:?}"),
-        }
-    };
-    let mut color = Image::<f32>::new((width * channels, height)).expect("alloc color");
-    let mut buffers = vec![JxlOutputBuffer::from_image_rect_mut(
-        color
-            .get_rect_mut(Rect {
-                origin: (0, 0),
-                size: (width * channels, height),
-            })
-            .into_raw(),
-    )];
+    let mut color: Option<Image<f32>> = None;
+    let mut icc = None;
     loop {
-        match frame.process(&mut input, &mut buffers) {
-            Ok(ProcessingResult::Complete { .. }) => break,
-            Ok(ProcessingResult::NeedsMoreInput { fallback, .. }) => frame = fallback,
-            Err(e) => panic!("jxl-rs frame decode {label}: {e:?}"),
+        let mut output = color.as_mut().map(|image| {
+            let size = image.size();
+            vec![JxlOutputBuffer::from_image_rect_mut(
+                image
+                    .get_rect_mut(Rect {
+                        origin: (0, 0),
+                        size,
+                    })
+                    .into_raw(),
+            )]
+        });
+        let event = decoder
+            .process(&mut input, output.as_deref_mut(), None)
+            .unwrap_or_else(|e| panic!("jxl-rs 0.8 {label}: {e:?}"));
+        match event {
+            Event::BasicInfo => {
+                icc = match decoder.embedded_color_profile() {
+                    Some(JxlColorProfile::Icc(icc)) => Some(icc.clone()),
+                    _ => panic!("jxl-rs {label}: expected an ICC profile"),
+                };
+                let (width, height) = decoder.basic_info().unwrap().size;
+                let format = decoder.current_pixel_format().unwrap().clone();
+                assert!(format.extra_channel_format.is_empty());
+                let channels = format.color_type.samples_per_pixel();
+                decoder
+                    .set_pixel_format(JxlPixelFormat {
+                        color_type: format.color_type,
+                        color_data_format: Some(JxlDataFormat::f32()),
+                        extra_channel_format: vec![],
+                    })
+                    .unwrap();
+                color = Some(Image::new((width * channels, height)).expect("alloc color"));
+            }
+            Event::FrameHeader => {}
+            Event::FrameComplete { has_more_frames } => assert!(!has_more_frames),
+            Event::Complete => return icc.expect("complete ICC and pixel decode"),
+            Event::NeedMoreInput { .. } => assert!(!input.is_empty(), "jxl-rs {label}: truncated"),
         }
     }
-    icc
 }
 
 /// Full djxl v0.12 decode; returns the original ICC profile.
@@ -176,7 +173,7 @@ pub(crate) fn djxl_icc(data: &[u8], label: &str) -> Vec<u8> {
 fn repetitive_icc_profiles_decode_in_both_decoders() {
     let pixels: Vec<u8> = (0..16 * 16 * 3).map(|i| (i * 37 % 256) as u8).collect();
     for (name, fill) in [("zero", &[0u8][..]), ("repeat", &b"ABCDEFGHIJKLMNOP"[..])] {
-        for total in [300_000usize, 1_000_000] {
+        for total in [300_000usize, 1_000_000, 4_000_000] {
             let icc = padded_icc(total, fill);
             let meta = ImageMetadata::new().with_icc_profile(&icc);
             for lossless in [true, false] {

@@ -2113,9 +2113,25 @@ checksum = "96d1c706ad4b79469f7e713886c1d62b1cef365f38978c5e78d6e44258b18b99"
 dependencies = [
  "array-init",
  "byteorder",
- "jxl_macros",
- "jxl_simd",
- "jxl_transforms",
+ "jxl_macros 0.4.3",
+ "jxl_simd 0.4.3",
+ "jxl_transforms 0.4.3",
+ "num-derive 0.4.2",
+ "num-traits",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "jxl"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b8379fc83d79477900c9aed78cb8370a556d834081bebcb771c6010381c4e230"
+dependencies = [
+ "array-init",
+ "byteorder",
+ "jxl_macros 0.8.0",
+ "jxl_simd 0.8.0",
+ "jxl_transforms 0.8.0",
  "num-derive 0.4.2",
  "num-traits",
  "thiserror 2.0.21",
@@ -2172,7 +2188,8 @@ dependencies = [
  "hashbrown 0.17.1",
  "image",
  "imgref",
- "jxl",
+ "jxl 0.4.3",
+ "jxl 0.8.0",
  "jxl-bitstream",
  "jxl-color",
  "jxl-encoder-macros",
@@ -2184,7 +2201,7 @@ dependencies = [
  "jxl-oxide-common",
  "jxl-threadpool",
  "jxl-vardct",
- "jxl_transforms",
+ "jxl_transforms 0.4.3",
  "linear-srgb",
  "once_cell",
  "postcard",
@@ -2390,10 +2407,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "jxl_macros"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eeb27c06a9957bd9c8e65d0aeea0db6a555a9e1c85597e284f8304015c410c87"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "jxl_simd"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "15d37f283bbcd785c0a1b128a9c1249feb8bdca899fffb0f281a6b183d3c3761"
+
+[[package]]
+name = "jxl_simd"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a645451b4d34b4017caf24110a14eb737e275b5d3d121bc754e67727ee65af0e"
 
 [[package]]
 name = "jxl_transforms"
@@ -2401,7 +2435,16 @@ version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3dcc4291b69be45f42167d1722b286fec0ff8644e75e9e74d4c8db24e7e90bdf"
 dependencies = [
- "jxl_simd",
+ "jxl_simd 0.4.3",
+]
+
+[[package]]
+name = "jxl_transforms"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "21c4b7f8957f5ba578b2e28cd5ebbc97dad58a3ad5ff26765da61e8dab8f1cad"
+dependencies = [
+ "jxl_simd 0.8.0",
 ]
 
 [[package]]
@@ -5267,9 +5310,9 @@ dependencies = [
  "hex",
  "image",
  "imgref",
- "jxl",
+ "jxl 0.4.3",
  "jxl-encoder",
- "jxl_transforms",
+ "jxl_transforms 0.4.3",
  "libc",
  "parquet",
  "postcard",
