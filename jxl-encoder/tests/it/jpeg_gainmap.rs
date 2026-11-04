@@ -348,3 +348,62 @@ fn iso_gain_map_camera_corpus() {
         verify(&bytes, &Path::new(&output).join(path.file_stem().unwrap()));
     }
 }
+
+#[test]
+fn iso_gain_map_follows_all_primary_secondary_orientations() {
+    let root =
+        jxl_encoder::test_helpers::output_dir_for("jxl-encoder", "gain-map-orientation-matrix");
+    let root = (0..)
+        .find_map(|i| {
+            let dir = root.join(format!("run-{i}"));
+            match std::fs::create_dir(&dir) {
+                Ok(()) => Some(dir),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => None,
+                Err(e) => panic!("{}: {e}", dir.display()),
+            }
+        })
+        .unwrap();
+    let jpeg = jpeg_crop(64, 32);
+    let config = LosslessConfig::new().with_effort(3);
+    for primary_tag in 1..=8 {
+        for secondary_tag in 1..=8 {
+            let primary = with_exif_orientation(&jpeg, primary_tag);
+            let secondary = with_iso_metadata(&with_exif_orientation(&jpeg, secondary_tag));
+            let mut original = primary;
+            original.extend(&secondary);
+            let encoded = config.encode_jpeg_transcode(&original).unwrap();
+            let (_, gain) = gain_map_bundle(&encoded);
+            let expected = config
+                .encode_jpeg_transcode_codestream(&with_exif_orientation(&secondary, primary_tag))
+                .unwrap();
+            assert_eq!(
+                gain, expected,
+                "primary {primary_tag}, secondary {secondary_tag}"
+            );
+            assert_eq!(header_orientation(gain), header_orientation(&encoded));
+            assert_eq!(decode_jxl_rs(gain), decode_jxl_rs(&expected));
+            assert_eq!(
+                zensim_decoder::reconstruct_jpeg(&encoded).unwrap().unwrap(),
+                original
+            );
+            let stem = format!("p{primary_tag}-s{secondary_tag}");
+            let input = root.join(format!("{stem}.jxl"));
+            let rebuilt = root.join(format!("{stem}.jpg"));
+            std::fs::write(&input, &encoded).unwrap();
+            reference_decode(&input, &rebuilt, true);
+            assert_eq!(std::fs::read(rebuilt).unwrap(), original);
+            let gain_input = root.join(format!("{stem}-gain.jxl"));
+            let expected_input = root.join(format!("{stem}-expected.jxl"));
+            let gain_png = root.join(format!("{stem}-gain.png"));
+            let expected_png = root.join(format!("{stem}-expected.png"));
+            std::fs::write(&gain_input, gain).unwrap();
+            std::fs::write(&expected_input, &expected).unwrap();
+            reference_decode(&gain_input, &gain_png, false);
+            reference_decode(&expected_input, &expected_png, false);
+            assert_eq!(
+                image::open(gain_png).unwrap().to_rgba16(),
+                image::open(expected_png).unwrap().to_rgba16()
+            );
+        }
+    }
+}

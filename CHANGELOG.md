@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Native orientation via `ImageMetadata::with_orientation(Orientation)` for lossless and VarDCT still images and animations, preserving coded pixel order and dimensions.
+
 - Preserve caller color encoding, ICC, tone mapping and intrinsic size in optional subsampled RGB8 encoding; forward cancellation and memory-budget controls into coefficient coding.
 
 - Fix optional RGB8 chroma subsampling on partial MCU dimensions; reject malformed public JPEG coefficient grids before indexing them.

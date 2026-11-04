@@ -113,6 +113,8 @@ pub mod convenience;
 #[cfg(feature = "__external_metric")]
 pub use loop_metric::{ExternalLoopMetric, ExternalMetric};
 pub use loop_trace::{LoopFrame, LoopTrace};
+/// Shared EXIF/JPEG XL display orientation from zenpixels.
+pub use zenpixels_convert::Orientation;
 // Re-export new API as primary
 pub use api::{
     AnimationFrame, AnimationParams, At, BlendMode, Buffering, ChromaSubsampling, ContainerMode,

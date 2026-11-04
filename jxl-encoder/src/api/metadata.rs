@@ -6,6 +6,7 @@
 /// Image metadata (ICC, EXIF, XMP, JUMBF, tone mapping) to embed in the JXL file.
 #[derive(Clone, Debug, Default)]
 pub struct ImageMetadata<'a> {
+    pub(crate) orientation: crate::Orientation,
     pub(crate) icc_profile: Option<&'a [u8]>,
     pub(crate) exif: Option<&'a [u8]>,
     pub(crate) xmp: Option<&'a [u8]>,
@@ -45,6 +46,19 @@ impl<'a> ImageMetadata<'a> {
     /// Create empty metadata.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Set the native JPEG XL display orientation.
+    ///
+    /// Stored pixel order and coded dimensions are preserved. Decoders may
+    /// apply this orientation when rendering. The native tag is authoritative:
+    /// EXIF and XMP payloads are preserved verbatim and their orientation tags
+    /// are not composed with it. An unset native tag remains Identity even
+    /// when attached EXIF or XMP carries a different orientation.
+    /// Defaults to [`crate::Orientation::Identity`].
+    pub fn with_orientation(mut self, orientation: crate::Orientation) -> Self {
+        self.orientation = orientation;
+        self
     }
 
     /// Attach an ICC color profile.
