@@ -1,0 +1,12 @@
+# libjxl v0.12 Quantizer + QuantizeGradient; default DC correlation
+# global_scale quant_dc precision Ybits Bbits qY qB legacyB invYbits yFactorBits
+3 13 1 3fd20d21 406b41e7 1 0 1 3f1c0000 3fd20d21
+3 64 1 3eaaaaab 40155555 1 2 4 40400000 3eaaaaab
+17 3 1 3fa0a0a1 4033e71a 1 0 1 3f4c0000 3fa0a0a1
+3 64 1 3f2aaaab 3fd55555 2 1 2 40400000 3eaaaaab
+3 64 1 3faaaaab 40955555 4 4 6 40400000 3eaaaaab
+1024 1 1 3e000000 3e000000 2 0 0 41800000 3d800000
+53 7 0 3ecccccd 3f0ccccd 1 0 0 40398000 3eb0a59b
+127 13 2 3f400000 3f8ccccd 38 10 10 424e6000 3c9ec767
+1103 3 1 3c23d70a 3ca3d70a 0 0 0 424ed000 3c9e716b
+8192 64 3 3a83126f 3ab78034 32 6 6 47000000 38000000

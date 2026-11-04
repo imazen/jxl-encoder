@@ -125,6 +125,12 @@ subsampled-metadata-check manifest="Cargo.toml":
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features jpeg-reencoding,chroma-subsampling --test subsampled_odd_shapes --test subsampled_metadata
     cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features jpeg-reencoding,chroma-subsampling --lib --test subsampled_odd_shapes --test subsampled_metadata -- -D warnings
 
+libjxl-cfl-dc-oracle source build out:
+    c++ -std=c++17 -O1 -ffp-contract=off -no-pie -I{{quote(source)}} -I{{quote(build + "/lib/include")}} -I{{quote(source + "/third_party/highway")}} scripts/libjxl_cfl_dc.cc {{quote(build + "/lib/CMakeFiles/jxl_enc-obj.dir/jxl/enc_modular.cc.o")}} {{quote(build + "/lib/CMakeFiles/jxl_dec-obj.dir/jxl/quantizer.cc.o")}} {{quote(build + "/lib/CMakeFiles/jxl_dec-obj.dir/jxl/quant_weights.cc.o")}} {{quote(build + "/lib/CMakeFiles/jxl_dec-obj.dir/jxl/memory_manager_internal.cc.o")}} -Wl,--unresolved-symbols=ignore-all -o {{quote(out)}}
+
+cfl-dc-reference oracle out:
+    python3 scripts/generate_cfl_dc_reference.py {{quote(oracle)}} {{quote(out)}}
+
 # Linux object oracle from an unmodified libjxl v0.12 build.
 libjxl-gradient-dc-oracle include object out:
     c++ -std=c++17 -O1 -no-pie -I{{quote(include)}} scripts/libjxl_gradient_dc.cc {{quote(object)}} -Wl,--unresolved-symbols=ignore-all -o {{quote(out)}}
