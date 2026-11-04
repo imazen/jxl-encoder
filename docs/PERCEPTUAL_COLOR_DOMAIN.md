@@ -39,6 +39,8 @@ djxl forced to linear sRGB. It covers 1000-nit linear sRGB and 10000-nit PQ
 with BT.2020 primaries. This selected, flat-color oracle is not broad HDR
 quality qualification.
 
+The Linux CI job runs `metric_color_domain` explicitly with both decoder tools.
+
 Run `just metric-domain-check <pinned-manifest>` with verified `CJXL_PATH`,
 `DJXL_PATH`, `TMPDIR=$HOME/tmp` and the required resource wrapper.
 Logs: `~/tmp/jxl138-metric-domain-before2.log` (both fail),

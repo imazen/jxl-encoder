@@ -69,6 +69,10 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: cargo test --locked --release -p jxl-encoder --features __external_metric --test it -- external_metric loop_trace
 
+      - name: Verify perceptual metric color domains against both decoders
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo test --locked --release -p jxl-encoder --features __external_metric --test metric_color_domain
+
       - name: Provision legacy JPEG reconstruction fixtures
         if: matrix.os == 'ubuntu-latest'
         shell: bash
