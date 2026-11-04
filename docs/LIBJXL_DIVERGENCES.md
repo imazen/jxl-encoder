@@ -2066,7 +2066,7 @@ lookup, descriptors, metadata or compact/non-compact decisions.
 
 ## G. RESOLVED divergences (historical)
 
-### 2026-11-04: PQ input uses the selected display-relative units
+### 2026-11-04: PQ input uses the selected display-relative units (`403263d5`)
 
 | Site | Ours after repair | libjxl v0.12 | Status |
 |---|---|---|---|
