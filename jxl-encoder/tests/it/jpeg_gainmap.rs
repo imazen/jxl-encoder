@@ -97,6 +97,10 @@ fn exif_value(orientation: &str) -> u16 {
 }
 
 fn verify(original: &[u8], dir: &Path) {
+    verify_reference(original, dir, None);
+}
+
+fn verify_reference(original: &[u8], dir: &Path, explicit_reference: Option<(&[u8], u16)>) {
     std::fs::create_dir_all(dir).unwrap();
     let config = LosslessConfig::new().with_effort(3);
     let encoded = config.encode_jpeg_transcode(original).unwrap();
@@ -112,16 +116,19 @@ fn verify(original: &[u8], dir: &Path) {
         metadata, source_metadata,
         "preserve exact ISO rational bytes"
     );
-    // The gain map takes the primary's orientation; with none it is the secondary's own
-    // transcode byte for byte.
+    // Secondary EXIF cannot override the primary's resolved orientation,
+    // including Identity when primary EXIF is absent or invalid.
     let orientation = header_orientation(&encoded);
+    if let Some((_, expected_tag)) = explicit_reference {
+        assert_eq!(exif_value(&orientation), expected_tag);
+    }
     assert_eq!(
         header_orientation(gain_map),
         orientation,
         "the gain-map codestream carries the primary's orientation"
     );
-    let oriented_secondary = if orientation == "Identity" {
-        secondary.to_vec()
+    let oriented_secondary = if let Some((reference, _)) = explicit_reference {
+        reference.to_vec()
     } else {
         with_exif_orientation(secondary, exif_value(&orientation))
     };
@@ -347,4 +354,120 @@ fn iso_gain_map_camera_corpus() {
         );
         verify(&bytes, &Path::new(&output).join(path.file_stem().unwrap()));
     }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum ExifCase {
+    Absent,
+    Value(u16),
+    Truncated,
+}
+
+fn with_exif_case(jpeg: &[u8], case: ExifCase, big: bool) -> Vec<u8> {
+    let tag = match case {
+        ExifCase::Absent => return jpeg.to_vec(),
+        ExifCase::Value(tag) => tag,
+        ExifCase::Truncated => 1,
+    };
+    let mut payload = b"Exif\0\0".to_vec();
+    payload.extend(if big {
+        b"MM\0\x2a\0\0\0\x08\0\x01\x01\x12\0\x03\0\0\0\x01".as_slice()
+    } else {
+        b"II\x2a\0\x08\0\0\0\x01\0\x12\x01\x03\0\x01\0\0\0".as_slice()
+    });
+    payload.extend(if big {
+        tag.to_be_bytes()
+    } else {
+        tag.to_le_bytes()
+    });
+    payload.extend([0; 6]);
+    if matches!(case, ExifCase::Truncated) {
+        payload.truncate(22);
+    }
+    let mut output = jpeg[..2].to_vec();
+    output.extend([0xff, 0xe1]);
+    output.extend(u16::try_from(payload.len() + 2).unwrap().to_be_bytes());
+    output.extend(payload);
+    output.extend(&jpeg[2..]);
+    output
+}
+
+fn with_xmp_orientation(jpeg: &[u8], tag: u16) -> Vec<u8> {
+    let payload = [b"http://ns.adobe.com/xap/1.0/\0".as_slice(),
+        format!("<x:xmpmeta xmlns:x='adobe:ns:meta/' xmlns:tiff='http://ns.adobe.com/tiff/1.0/'><tiff:Orientation>{tag}</tiff:Orientation></x:xmpmeta>").as_bytes()].concat();
+    let mut output = jpeg[..2].to_vec();
+    output.extend([0xff, 0xe1]);
+    output.extend(u16::try_from(payload.len() + 2).unwrap().to_be_bytes());
+    output.extend(payload);
+    output.extend(&jpeg[2..]);
+    output
+}
+
+/// The gain map must share primary orientation; its own EXIF is ignored.
+/// https://developer.android.com/media/platform/hdr-image-format#gain_map_compression
+#[test]
+fn iso_gain_map_follows_primary_with_absent_or_invalid_exif() {
+    let root = jxl_encoder::test_helpers::output_dir("gain-map-exif-fallback");
+    let root = (0..)
+        .find_map(|i| {
+            let path = root.join(format!("run-{i}"));
+            match std::fs::create_dir(&path) {
+                Ok(()) => Some(path),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => None,
+                Err(error) => panic!("{}: {error}", path.display()),
+            }
+        })
+        .unwrap();
+    let cases: Vec<_> = std::iter::once(ExifCase::Absent)
+        .chain((0..=9).map(ExifCase::Value))
+        .chain(std::iter::once(ExifCase::Truncated))
+        .collect();
+    let mut failures = Vec::new();
+    let mut cells = 0;
+    for (width, height) in [(64, 32), (259, 133)] {
+        let jpeg = jpeg_crop(width, height);
+        for &primary_case in &cases {
+            let tag = match primary_case {
+                ExifCase::Value(tag @ 1..=8) => tag,
+                _ => 1,
+            };
+            let clean_reference = with_exif_orientation(&jpeg, tag);
+            for &secondary_case in &cases {
+                for primary_big in [false, true] {
+                    for secondary_big in [false, true] {
+                        let primary = with_xmp_orientation(
+                            &with_exif_case(&jpeg, primary_case, primary_big),
+                            if tag == 8 { 1 } else { 8 },
+                        );
+                        let secondary = with_iso_metadata(&with_xmp_orientation(
+                            &with_exif_case(&jpeg, secondary_case, secondary_big),
+                            if tag == 2 { 8 } else { 2 },
+                        ));
+                        let mut original = primary;
+                        original.extend(secondary);
+                        let label = format!(
+                            "{width}x{height}-p{primary_case:?}-{primary_big}-s{secondary_case:?}-{secondary_big}"
+                        );
+                        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            verify_reference(
+                                &original,
+                                &root.join(&label),
+                                Some((&clean_reference, tag)),
+                            );
+                        }));
+                        if result.is_err() {
+                            failures.push(label);
+                        }
+                        cells += 1;
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(cells, 1152);
+    assert!(
+        failures.is_empty(),
+        "{} of {cells} gain-map orientation cases failed: {failures:?}",
+        failures.len()
+    );
 }

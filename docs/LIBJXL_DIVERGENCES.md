@@ -2066,6 +2066,12 @@ lookup, descriptors, metadata or compact/non-compact decisions.
 
 ## G. RESOLVED divergences (historical)
 
+### 2026-11-04: HDR gain-map orientation uses the primary's Identity fallback
+
+| Site | Ours after repair | Format rule | Status |
+|---|---|---|---|
+| `jpeg/gainmap.rs` side transcode | Always use `jpeg_orientation(primary).unwrap_or_default()`; secondary EXIF cannot replace Identity after absent/invalid primary EXIF. | [Ultra HDR gain-map compression](https://developer.android.com/media/platform/hdr-image-format#gain_map_compression): gain-map orientation matches the primary; secondary orientation metadata is ignored. | RESOLVED misalignment. The 1,152 primary/secondary EXIF cases (including invalid/truncated/absent tags, independent byte orders, conflicting XMP and two sizes) fail 224 cases before repair and all pass afterward with native/reference pixel checks and exact Rust/djxl JPEG reconstruction. This extends the existing ISO-tagged JPEG integration; XMP-only gain maps remain outside that route. |
+
 ### 2026-11-04: optional subsampling refuses unsupported payload shapes
 
 | Site | Ours after repair | Reference / format distinction | Status |

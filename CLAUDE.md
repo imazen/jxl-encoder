@@ -1731,6 +1731,27 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
+### RESOLVED 2026-11-04: gain-map EXIF overrode an absent/invalid primary tag
+
+The gain-map side transcode always receives the primary's resolved native
+orientation, including Identity when its EXIF is absent, invalid or truncated.
+Previously that fallback imported the secondary JPEG's own EXIF and rotated
+its gain map independently. The [Ultra HDR format rule](https://developer.android.com/media/platform/hdr-image-format#gain_map_compression)
+requires matching primary orientation and ignores secondary orientation metadata.
+No new orientation type or public API is introduced; original JPEG metadata
+and tail bytes remain in JBRD unchanged.
+
+The regression fails 224 of 1,152 cases before repair and passes every case
+afterward: primary/secondary absent, tags 0–9 or truncated EXIF, both TIFF byte
+orders independently, both image sizes, and conflicting XMP. All cases check
+native headers, full Rust/djxl rendering, exact gain pixels against cjxl v0.12
+with the independently chosen primary tag, and exact reconstruction through
+Rust and djxl. The primary pixels stay unchanged. Existing JPEG library and
+reconstruction/validity checks pass. Functional log:
+`~/tmp/jxl-gainmap-after.log`; that encompassing command stops at seven
+pre-existing strict JPEG-test lint diagnostics, repaired separately.
+
+
 ### RESOLVED 2026-11-04: optional subsampling silently discarded payload choices
 
 All three optional RGB8 subsampling modes accepted additional depth channels
