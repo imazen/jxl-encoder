@@ -492,19 +492,6 @@ pub(crate) mod gpu {
     /// planes.
     pub(crate) struct GpuZensimBackend {
         inner: ZensimOpaque,
-        /// Tight-stride f32 scratch for the distorted side's R/G/B
-        /// planes. Mirrors `GpuCvvdpBackend::dist_plane_scratch` —
-        /// the linear-planes API expects tight `width × height`
-        /// planes (no padding); we copy each row before the call to
-        /// `score_from_linear_planes_with_warm_ref_diffmap`.
-        ///
-        /// **Load-bearing here, unlike on the CPU backend.**
-        /// `score_from_linear_planes_with_warm_ref_diffmap` takes NO stride
-        /// parameter, so the copy is the only way to satisfy its tight-plane
-        /// contract. The CPU backend's equivalent scratch was deleted
-        /// (2026-08-31) because its callee has always taken a `stride`; do not
-        /// "clean up" this one by symmetry — check the callee's signature first.
-        dist_plane_scratch: [Vec<f32>; 3],
         width: u32,
         height: u32,
         reference_warmed: bool,
@@ -548,42 +535,13 @@ pub(crate) mod gpu {
                 Err(_) => return None,
             };
 
-            let n = (width as usize).checked_mul(height as usize)?;
             Some(Self {
                 inner,
-                dist_plane_scratch: [
-                    alloc::vec![0.0f32; n],
-                    alloc::vec![0.0f32; n],
-                    alloc::vec![0.0f32; n],
-                ],
                 width,
                 height,
                 reference_warmed: false,
                 compare_call_count: 0,
             })
-        }
-
-        /// Copy one strided plane into the tight scratch slot. Mirrors
-        /// `GpuCvvdpBackend::copy_strided_row_into_scratch`.
-        fn copy_strided_row_into_scratch(
-            scratch: &mut [f32],
-            src: &[f32],
-            padded_width: usize,
-            width: usize,
-            height: usize,
-        ) {
-            debug_assert_eq!(scratch.len(), width * height);
-            if padded_width == width {
-                let n = width * height;
-                debug_assert!(src.len() >= n);
-                scratch.copy_from_slice(&src[..n]);
-                return;
-            }
-            for y in 0..height {
-                let src_row = y * padded_width;
-                let dst_row = y * width;
-                scratch[dst_row..dst_row + width].copy_from_slice(&src[src_row..src_row + width]);
-            }
         }
     }
 
@@ -620,7 +578,7 @@ pub(crate) mod gpu {
             }
             // Reference is tight by the trait contract.
             self.inner
-                .warm_reference_from_linear_planes(&ref_r[..n], &ref_g[..n], &ref_b[..n])
+                .warm_reference_from_linear_planes([&ref_r[..n], &ref_g[..n], &ref_b[..n]], width)
                 .map_err(|e| {
                     crate::error::Error::InvalidInput(format!(
                         "GPU zensim warm_reference_from_linear_planes: {e}"
@@ -655,12 +613,6 @@ pub(crate) mod gpu {
                 )));
             }
 
-            // Strided → tight copy.
-            let [s_r, s_g, s_b] = &mut self.dist_plane_scratch;
-            Self::copy_strided_row_into_scratch(s_r, dist_r, padded_width, width, height);
-            Self::copy_strided_row_into_scratch(s_g, dist_g, padded_width, width, height);
-            Self::copy_strided_row_into_scratch(s_b, dist_b, padded_width, width, height);
-
             // The Phase 1 zensim-gpu API takes a `&mut Vec<f32>` that
             // it `clear()`s + extends with the diffmap (semantics
             // matching butteraugli-gpu and cvvdp-gpu B7a recycling).
@@ -680,9 +632,8 @@ pub(crate) mod gpu {
             let score_normalized = self
                 .inner
                 .score_from_linear_planes_with_warm_ref_diffmap(
-                    &self.dist_plane_scratch[0],
-                    &self.dist_plane_scratch[1],
-                    &self.dist_plane_scratch[2],
+                    [dist_r, dist_g, dist_b],
+                    padded_width,
                     diffmap_out,
                 )
                 .map_err(|e| {

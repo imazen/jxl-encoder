@@ -87,14 +87,6 @@ pub(crate) mod gpu {
     /// buttloop iteration with the current iter's reconstructed planes.
     pub(crate) struct GpuCvvdpBackend {
         inner: CvvdpOpaque,
-        /// Tight-stride f32 scratch for the distorted side's R/G/B
-        /// planes. The buttloop hands us strided `recon_r/g/b` with
-        /// `padded_width >= width`; we copy each row into this buffer
-        /// before passing the slice to `compute_with_warm_ref_from_linear_planes`,
-        /// because CVVDP's linear-planes entry points expect tight
-        /// `width × height` planes (no padding). Allocated once and
-        /// reused every iter to avoid per-iter `Vec` churn.
-        dist_plane_scratch: [alloc::vec::Vec<f32>; 3],
         width: u32,
         height: u32,
         reference_warmed: bool,
@@ -169,46 +161,13 @@ pub(crate) mod gpu {
                 Err(_) => return None,
             };
 
-            let n = (width as usize).checked_mul(height as usize)?;
             Some(Self {
                 inner,
-                dist_plane_scratch: [
-                    alloc::vec![0.0f32; n],
-                    alloc::vec![0.0f32; n],
-                    alloc::vec![0.0f32; n],
-                ],
                 width,
                 height,
                 reference_warmed: false,
                 compare_call_count: 0,
             })
-        }
-
-        /// Copy one strided plane into the tight scratch slot. Mirrors
-        /// `GpuButteraugliBackend::copy_strided_row_into_scratch` — same
-        /// fast-path when `padded_width == width`, same per-row copy
-        /// otherwise. The buttloop's reconstructed planes carry the
-        /// `padded_width` stride (one block-row of padding); CVVDP
-        /// needs tight stride.
-        fn copy_strided_row_into_scratch(
-            scratch: &mut [f32],
-            src: &[f32],
-            padded_width: usize,
-            width: usize,
-            height: usize,
-        ) {
-            debug_assert_eq!(scratch.len(), width * height);
-            if padded_width == width {
-                let n = width * height;
-                debug_assert!(src.len() >= n);
-                scratch.copy_from_slice(&src[..n]);
-                return;
-            }
-            for y in 0..height {
-                let src_row = y * padded_width;
-                let dst_row = y * width;
-                scratch[dst_row..dst_row + width].copy_from_slice(&src[src_row..src_row + width]);
-            }
         }
     }
 
@@ -246,7 +205,7 @@ pub(crate) mod gpu {
             // Reference is tight by the trait contract — `set_reference`
             // doesn't take a stride; `width == stride`.
             self.inner
-                .warm_reference_from_linear_planes(&ref_r[..n], &ref_g[..n], &ref_b[..n])
+                .warm_reference_from_linear_planes([&ref_r[..n], &ref_g[..n], &ref_b[..n]], width)
                 .map_err(|e| {
                     crate::error::Error::InvalidInput(format!(
                         "GPU CVVDP warm_reference_from_linear_planes: {e}"
@@ -281,12 +240,6 @@ pub(crate) mod gpu {
                 )));
             }
 
-            // Strided → tight copy into the per-instance scratch.
-            let [s_r, s_g, s_b] = &mut self.dist_plane_scratch;
-            Self::copy_strided_row_into_scratch(s_r, dist_r, padded_width, width, height);
-            Self::copy_strided_row_into_scratch(s_g, dist_g, padded_width, width, height);
-            Self::copy_strided_row_into_scratch(s_b, dist_b, padded_width, width, height);
-
             // Resize the caller-owned diffmap Vec — CVVDP's linear-planes
             // diffmap path requires the buffer to hold exactly W*H
             // entries on entry (verified by zenmetrics
@@ -300,9 +253,8 @@ pub(crate) mod gpu {
             let score_obj = self
                 .inner
                 .compute_with_warm_ref_from_linear_planes(
-                    &self.dist_plane_scratch[0],
-                    &self.dist_plane_scratch[1],
-                    &self.dist_plane_scratch[2],
+                    [dist_r, dist_g, dist_b],
+                    padded_width,
                     Some(diffmap_out),
                 )
                 .map_err(|e| {
@@ -405,7 +357,8 @@ pub(crate) mod cpu {
     //!   `score_with_warm_ref_diffmap`.
     //! - **Linear-f32 planar one-shots**: `score_from_linear_planes` /
     //!   `score_from_linear_planes_with_diffmap` — the entry points
-    //!   the JPEG XL buttloop needs.
+    //!   the JPEG XL buttloop needs. The buttloop's planes carry `padded_width`;
+    //!   the scorer reads them where they are.
     //!
     //! ## Phase 5b follow-on (NOT this chunk)
     //!
@@ -447,16 +400,6 @@ pub(crate) mod cpu {
         /// `compare_with_reference` call until the backend is dropped.
         /// `[r, g, b]`.
         ref_planes: [alloc::vec::Vec<f32>; 3],
-        /// Tight-stride f32 scratch for the distorted side. Mirrors
-        /// `GpuCvvdpBackend::dist_plane_scratch`: the buttloop hands us
-        /// strided `recon_r/g/b` with `padded_width >= width`; we copy
-        /// each row into this buffer before passing the slice to
-        /// `score_from_linear_planes_with_diffmap`, because the CPU
-        /// scorer (like the GPU one) expects tight `width × height`
-        /// planes (or a single `padded_width` shared across all 6
-        /// planes — we normalise to tight stride for simplicity since
-        /// the buffer is allocated once and reused).
-        dist_plane_scratch: [alloc::vec::Vec<f32>; 3],
         width: u32,
         height: u32,
         reference_warmed: bool,
@@ -519,41 +462,11 @@ pub(crate) mod cpu {
                     alloc::vec![0.0f32; n],
                     alloc::vec![0.0f32; n],
                 ],
-                dist_plane_scratch: [
-                    alloc::vec![0.0f32; n],
-                    alloc::vec![0.0f32; n],
-                    alloc::vec![0.0f32; n],
-                ],
                 width,
                 height,
                 reference_warmed: false,
                 compare_call_count: 0,
             })
-        }
-
-        /// Copy one strided plane into a tight-stride destination.
-        /// Mirrors `GpuCvvdpBackend::copy_strided_row_into_scratch` —
-        /// same fast-path when `padded_width == width`, same per-row
-        /// copy otherwise.
-        fn copy_strided_row_into_scratch(
-            scratch: &mut [f32],
-            src: &[f32],
-            padded_width: usize,
-            width: usize,
-            height: usize,
-        ) {
-            debug_assert_eq!(scratch.len(), width * height);
-            if padded_width == width {
-                let n = width * height;
-                debug_assert!(src.len() >= n);
-                scratch.copy_from_slice(&src[..n]);
-                return;
-            }
-            for y in 0..height {
-                let src_row = y * padded_width;
-                let dst_row = y * width;
-                scratch[dst_row..dst_row + width].copy_from_slice(&src[src_row..src_row + width]);
-            }
         }
     }
 
@@ -628,12 +541,6 @@ pub(crate) mod cpu {
                 )));
             }
 
-            // Strided → tight copy into the per-instance scratch.
-            let [s_r, s_g, s_b] = &mut self.dist_plane_scratch;
-            Self::copy_strided_row_into_scratch(s_r, dist_r, padded_width, width, height);
-            Self::copy_strided_row_into_scratch(s_g, dist_g, padded_width, width, height);
-            Self::copy_strided_row_into_scratch(s_b, dist_b, padded_width, width, height);
-
             // Call cvvdp-cpu's one-shot linear-planes entry point with
             // the cached reference + current distorted planes. The
             // caller-owned `diffmap_out` is OVERWRITTEN by the cvvdp-cpu
@@ -645,21 +552,17 @@ pub(crate) mod cpu {
             // allocator typically returns the same block; the user-
             // observed behaviour is identical to the GPU backend's
             // `resize` path).
-            //
-            // Tight `padded_width = width` is passed because we've
-            // already normalised the dist scratch above and the ref
-            // planes are tight by construction.
-            let tight_width = width;
             let jod = self
                 .inner
                 .score_from_linear_planes_with_diffmap(
-                    &self.ref_planes[0],
-                    &self.ref_planes[1],
-                    &self.ref_planes[2],
-                    &self.dist_plane_scratch[0],
-                    &self.dist_plane_scratch[1],
-                    &self.dist_plane_scratch[2],
-                    tight_width,
+                    [
+                        &self.ref_planes[0],
+                        &self.ref_planes[1],
+                        &self.ref_planes[2],
+                    ],
+                    width,
+                    [dist_r, dist_g, dist_b],
+                    padded_width,
                     diffmap_out,
                 )
                 .map_err(|e| {
@@ -979,6 +882,45 @@ mod tests {
                 v.is_finite(),
                 "strided compare diffmap[{i}] must be finite; got {v}"
             );
+        }
+    }
+
+    /// The strided compare gives the tight compare's score and diffmap to the bit,
+    /// reading the planes where they are, including a last row with no padding.
+    #[cfg(feature = "cvvdp-loop-cpu")]
+    #[test]
+    fn cpu_cvvdp_strided_compare_matches_tight() {
+        let (w, h, padded_w) = (33usize, 27usize, 41usize);
+        let plane = |seed: usize| -> alloc::vec::Vec<f32> {
+            (0..w * h)
+                .map(|i| 0.05 + 0.9 * (((i % w) * 3 + (i / w) * 5 + seed) % 241) as f32 / 240.0)
+                .collect()
+        };
+        let padded = |tight: &[f32]| -> alloc::vec::Vec<f32> {
+            let mut out = alloc::vec![f32::NAN; (h - 1) * padded_w + w];
+            for (row, line) in tight.chunks_exact(w).enumerate() {
+                out[row * padded_w..row * padded_w + w].copy_from_slice(line);
+            }
+            out
+        };
+        let (r, g, b) = (plane(0), plane(31), plane(62));
+        let (dr, dg, db) = (plane(7), plane(38), plane(69));
+        let (pr, pg, pb) = (padded(&dr), padded(&dg), padded(&db));
+        let mut backend =
+            cpu::CpuCvvdpBackend::try_new(w as u32, h as u32, crate::api::DisplayConfig::WebSdr80)
+                .expect("construct succeeds");
+        backend.set_reference(&r, &g, &b, w, h).unwrap();
+        let (mut dm_tight, mut dm_strided) = (alloc::vec::Vec::new(), alloc::vec::Vec::new());
+        let tight = backend
+            .compare_with_reference(&dr, &dg, &db, w, w, h, &mut dm_tight)
+            .unwrap();
+        let strided = backend
+            .compare_with_reference(&pr, &pg, &pb, padded_w, w, h, &mut dm_strided)
+            .unwrap();
+        assert_eq!(tight.score.to_bits(), strided.score.to_bits());
+        assert_eq!(dm_tight.len(), dm_strided.len());
+        for (i, (x, y)) in dm_tight.iter().zip(&dm_strided).enumerate() {
+            assert_eq!(x.to_bits(), y.to_bits(), "diffmap[{i}]");
         }
     }
 
