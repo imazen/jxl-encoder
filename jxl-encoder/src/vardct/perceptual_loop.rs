@@ -2357,6 +2357,13 @@ impl VarDctEncoder {
                 recon_b,
                 padded_pixels,
             );
+            super::reconstruct::normalize_metric_rgb(
+                [recon_r, recon_g, recon_b],
+                width,
+                height,
+                padded_width,
+                self.intensity_target,
+            );
 
             // W45-RECON per-iter probe (2026-09-22): dump recon stats for
             // EVERY iter when JXL_RECON_ALL_ITERS=1 — the iter-1 score
@@ -3319,6 +3326,13 @@ impl VarDctEncoder {
                             recon_g,
                             recon_b,
                             padded_pixels,
+                        );
+                        super::reconstruct::normalize_metric_rgb(
+                            [recon_r, recon_g, recon_b],
+                            width,
+                            height,
+                            padded_width,
+                            self.intensity_target,
                         );
 
                         // Score the probe. Backend invariant: !use_vdp2 +

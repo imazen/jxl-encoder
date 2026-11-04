@@ -1902,6 +1902,13 @@ impl VarDctEncoder {
                 &mut recon_b,
                 padded_pixels,
             );
+            super::reconstruct::normalize_metric_rgb(
+                [&mut recon_r, &mut recon_g, &mut recon_b],
+                width,
+                height,
+                padded_width,
+                self.intensity_target,
+            );
 
             // Step 5+6, C3b attr arm (iterations 2+, s_k known): ONE fused
             // call = scalar score + attribution map; per-tile steering via

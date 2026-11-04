@@ -2774,6 +2774,24 @@ impl Default for VarDctEncoder {
 }
 
 impl VarDctEncoder {
+    pub(super) fn needs_metric_reference(&self) -> bool {
+        #[allow(unused_mut)]
+        let mut need = false;
+        #[cfg(feature = "butteraugli-loop")]
+        {
+            need = need || self.butteraugli_iters > 0;
+        }
+        #[cfg(feature = "ssim2-loop")]
+        {
+            need = need || self.ssim2_iters > 0;
+        }
+        #[cfg(feature = "zensim-loop")]
+        {
+            need = need || self.zensim_iters > 0;
+        }
+        need
+    }
+
     /// Create a new tiny encoder with the given distance.
     ///
     /// Any positive distance is accepted, including true near-lossless
@@ -3946,26 +3964,19 @@ impl VarDctEncoder {
         // encode peaks (benchmarks/jxl_alloc_sites_4k_2026-08-13.md).
         // `iters > 0` is conservative: the adaptive paths only reduce
         // iteration counts, never raise them from zero.
-        let need_linear = {
-            #[allow(unused_mut)]
-            let mut need = false;
-            #[cfg(feature = "butteraugli-loop")]
-            {
-                need = need || self.butteraugli_iters > 0;
-            }
-            #[cfg(feature = "ssim2-loop")]
-            {
-                need = need || self.ssim2_iters > 0;
-            }
-            #[cfg(feature = "zensim-loop")]
-            {
-                need = need || self.zensim_iters > 0;
-            }
-            need
-        };
+        let need_linear = self.needs_metric_reference();
         if !need_linear {
             linear_src.release();
         }
+        // Forward XYB and metric reconstruction use sRGB primaries.
+        let _metric_source_guard = if need_linear {
+            Some(
+                linear_src
+                    .prepare_metric_reference(self.color_encoding.as_ref(), self.budget.as_ref())?,
+            )
+        } else {
+            None
+        };
 
         // Noise parameters. Four sources, in priority order
         // (matches libjxl enc_frame.cc:680-689):
@@ -7853,11 +7864,74 @@ impl LinearSource<'_> {
         }
     }
 
+    /// Reuse owned input for the metric's sRGB reference; borrowed input
+    /// gets a fallible, budgeted copy. Forward XYB must run before this.
+    pub(super) fn prepare_metric_reference(
+        &mut self,
+        color_encoding: Option<&crate::headers::color_encoding::ColorEncoding>,
+        budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+    ) -> crate::error::Result<crate::budget::BudgetGuard> {
+        let Some(matrix) = color_encoding.and_then(super::xyb::primaries_to_srgb_matrix) else {
+            return Ok(crate::budget::BudgetGuard::inert());
+        };
+        let mut guard = crate::budget::BudgetGuard::inert();
+        if let LinearSource::Borrowed(values) = self {
+            guard = crate::budget::MemoryBudget::reserve_opt(
+                budget,
+                (values.len() as u64).saturating_mul(4),
+            )?;
+            let fallible = budget.is_some_and(|b| b.is_fallible());
+            let mut owned = crate::budget::vec_f32_zeroed_fallible(fallible, values.len())?;
+            owned.copy_from_slice(values);
+            *self = LinearSource::Owned(owned);
+        }
+        if let LinearSource::Owned(values) = self {
+            for pixel in values.as_chunks_mut::<3>().0 {
+                let [r, g, b] = [pixel[0], pixel[1], pixel[2]];
+                for c in 0..3 {
+                    pixel[c] = matrix[c][0] * r + matrix[c][1] * g + matrix[c][2] * b;
+                }
+            }
+        }
+        Ok(guard)
+    }
+
     /// Free an owned buffer (no-op when borrowed). The source reads as an
     /// empty slice afterwards; callers only release once every reader is
     /// statically known not to run.
     fn release(&mut self) {
         *self = LinearSource::Borrowed(&[]);
+    }
+}
+
+#[cfg(test)]
+mod metric_source_tests {
+    use super::LinearSource;
+
+    #[test]
+    fn borrowed_metric_source_checks_budget_before_copying() {
+        let original = [0.1, 0.2, 0.3];
+        let encoding = crate::headers::color_encoding::ColorEncoding::bt2100_pq();
+        let mut source = LinearSource::Borrowed(&original);
+        let too_small = crate::budget::MemoryBudget::with_alloc_policy(1, true);
+        assert!(
+            source
+                .prepare_metric_reference(Some(&encoding), Some(&too_small))
+                .is_err()
+        );
+        assert_eq!(source.slice(), original);
+        assert_eq!(too_small.used(), 0);
+
+        let budget = crate::budget::MemoryBudget::with_alloc_policy(1024, true);
+        let guard = source
+            .prepare_metric_reference(Some(&encoding), Some(&budget))
+            .unwrap();
+        assert!(matches!(source, LinearSource::Owned(_)));
+        assert_ne!(source.slice(), original);
+        assert_eq!(original, [0.1, 0.2, 0.3]);
+        assert_eq!(budget.used(), 12);
+        drop(guard);
+        assert_eq!(budget.used(), 0);
     }
 }
 

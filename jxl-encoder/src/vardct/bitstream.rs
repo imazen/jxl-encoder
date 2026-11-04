@@ -1996,6 +1996,21 @@ impl VarDctEncoder {
 
         let (mut xyb_x, mut xyb_y, mut xyb_b) =
             self.convert_to_xyb_padded(width, height, padded_width, padded_height, linear_rgb)?;
+        let mut metric_source = super::encoder::LinearSource::Borrowed(linear_rgb);
+        let _metric_source_guard = if self.needs_metric_reference() {
+            Some(
+                metric_source
+                    .prepare_metric_reference(self.color_encoding.as_ref(), self.budget.as_ref())?,
+            )
+        } else {
+            None
+        };
+        #[cfg(any(
+            feature = "butteraugli-loop",
+            feature = "ssim2-loop",
+            feature = "zensim-loop"
+        ))]
+        let linear_rgb = metric_source.slice();
 
         // Defense-in-depth XYB scan. Mirrors `vardct/encoder.rs:675`. Catches
         // downstream-bug non-finite values that should never appear on the

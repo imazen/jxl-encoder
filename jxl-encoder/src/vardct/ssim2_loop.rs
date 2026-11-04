@@ -321,6 +321,13 @@ impl VarDctEncoder {
                 &mut recon_b,
                 padded_pixels,
             );
+            super::reconstruct::normalize_metric_rgb(
+                [&mut recon_r, &mut recon_g, &mut recon_b],
+                width,
+                height,
+                padded_width,
+                self.intensity_target,
+            );
 
             // Step 5: Compute full-image SSIM2 (using precomputed reference).
             // Reuse the recon_rgb3 buffer — clear and refill each iteration.

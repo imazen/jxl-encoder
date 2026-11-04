@@ -27,6 +27,79 @@ use super::frame::DistanceParams;
 use super::quant::{INV_DC_QUANT, quant_weights};
 use super::quantize::adjust_quant_bias;
 
+/// Undo the forward opsin transform's `intensity_target / 255` scale before
+/// comparing with normalized linear-light reference pixels. Only visible
+/// samples participate; row padding is not an image neighbor.
+#[cfg(any(
+    feature = "butteraugli-loop",
+    feature = "ssim2-loop",
+    feature = "zensim-loop"
+))]
+pub(crate) fn normalize_metric_rgb(
+    planes: [&mut [f32]; 3],
+    width: usize,
+    height: usize,
+    stride: usize,
+    intensity_target: f32,
+) {
+    if intensity_target == 255.0 {
+        return;
+    }
+    let scale = 255.0 / intensity_target;
+    for plane in planes {
+        if stride == width {
+            for value in &mut plane[..width * height] {
+                *value *= scale;
+            }
+        } else {
+            for y in 0..height {
+                for value in &mut plane[y * stride..y * stride + width] {
+                    *value *= scale;
+                }
+            }
+        }
+    }
+}
+
+#[cfg(all(
+    test,
+    any(
+        feature = "butteraugli-loop",
+        feature = "ssim2-loop",
+        feature = "zensim-loop"
+    )
+))]
+mod metric_rgb_tests {
+    #[test]
+    fn normalization_preserves_padding_and_matches_packed_rows() {
+        for intensity in [255.0, 1000.0, 10000.0] {
+            let mut packed: [Vec<f32>; 3] =
+                core::array::from_fn(|c| (0..6).map(|i| (i + c) as f32 * 0.125).collect());
+            let mut strided: [Vec<f32>; 3] = core::array::from_fn(|c| {
+                let mut plane = vec![f32::NAN; 10];
+                plane[..3].copy_from_slice(&packed[c][..3]);
+                plane[5..8].copy_from_slice(&packed[c][3..]);
+                plane
+            });
+            let [r, g, b] = &mut packed;
+            super::normalize_metric_rgb([r, g, b], 3, 2, 3, intensity);
+            let [r, g, b] = &mut strided;
+            super::normalize_metric_rgb([r, g, b], 3, 2, 5, intensity);
+            for c in 0..3 {
+                for y in 0..2 {
+                    for x in 0..3 {
+                        assert_eq!(
+                            packed[c][y * 3 + x].to_bits(),
+                            strided[c][y * 5 + x].to_bits()
+                        );
+                    }
+                    assert!(strided[c][y * 5 + 3..y * 5 + 5].iter().all(|v| v.is_nan()));
+                }
+            }
+        }
+    }
+}
+
 /// Dequantize `quant_dc` into the post-CfL float DC grid
 /// (`shared.dc_storage` equivalent — libjxl `DequantDC`,
 /// compressed_dc.cc:201). Row-major flat `[c][by * xsize_blocks + bx]`.
