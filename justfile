@@ -108,6 +108,14 @@ issue138-strict-loop-ablate binary replay out corpus icc:
 conformance-build manifest="tools/conformance-sweep/Cargo.toml":
     cargo build --locked --release --manifest-path {{quote(manifest)}}
 
+conformance-recon-build manifest="tools/conformance-sweep/Cargo.toml":
+    cargo build --locked --release --manifest-path {{quote(manifest)}} --features jxl-encoder/__internal_recon_hook
+
+issue138-quant-trace binary out seed index corpus icc opts:
+    mkdir {{quote(out)}}
+    mkdir {{quote(out + "/quant-trace")}}
+    JXL_AQDBG_DUMP={{quote(out + "/quant-trace")}} {{quote(binary)}} --images {{quote(corpus + "/CID22/CID22-512/validation")}} --images {{quote(corpus + "/gb82-sc")}} --icc {{quote(icc)}} --out {{quote(out + "/sweep")}} --seed {{seed}} --only {{index}} --threads 1 --retain --reference-study --study-max-pixels 100000000 --options {{quote(opts)}}
+
 bitstream-parser-check:
     python3 -m unittest discover -s scripts -p test_jxl_bitstream_diff.py
 
@@ -120,6 +128,11 @@ issue138-reference-check manifest="tools/conformance-sweep/Cargo.toml":
     cargo clippy --manifest-path {{quote(manifest)}} --all-targets -- -D warnings
 
 # Caller supplies pinned siblings, reference tools, and run-heavy controls.
+gain-map-bundle-check manifest="Cargo.toml":
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features hdr-gainmap,jpeg-reencoding --lib
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features hdr-gainmap,jpeg-reencoding --test it jpeg_gainmap::
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features hdr-gainmap,jpeg-reencoding --lib --test it -- -D warnings
+
 hdr-intensity-check manifest="Cargo.toml":
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --test hdr_intensity --test hdr_metadata_validation -- --nocapture
 
