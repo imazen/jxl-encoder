@@ -602,6 +602,47 @@ fn fdct_quantize_plane(
     (coeffs, w_blocks as u32, h_blocks as u32)
 }
 
+/// Complete the MCU grid expected by the JPEG coefficient path. Fully
+/// invisible blocks keep the nearest visible DC and have zero AC.
+#[cfg(feature = "jpeg-reencoding")]
+fn pad_component_to_mcu(
+    component: &mut crate::jpeg::JpegComponent,
+    mcu_columns: u32,
+    mcu_rows: u32,
+) -> Result<(), crate::error::Error> {
+    let width = (mcu_columns * component.h_samp_factor) as usize;
+    let height = (mcu_rows * component.v_samp_factor) as usize;
+    let old_width = component.width_in_blocks as usize;
+    let old_height = component.height_in_blocks as usize;
+    if (width, height) == (old_width, old_height) {
+        return Ok(());
+    }
+    let count = width
+        .checked_mul(height)
+        .and_then(|n| n.checked_mul(64))
+        .ok_or_else(|| {
+            crate::error::Error::InvalidInput("MCU coefficient size overflows usize".into())
+        })?;
+    let mut coefficients = crate::budget::vec_with_capacity_fallible(true, count)?;
+    coefficients.resize(count, 0_i16);
+    for y in 0..height {
+        for x in 0..width {
+            let destination = (y * width + x) * 64;
+            let source = (y.min(old_height - 1) * old_width + x.min(old_width - 1)) * 64;
+            if x < old_width && y < old_height {
+                coefficients[destination..destination + 64]
+                    .copy_from_slice(&component.coeffs[source..source + 64]);
+            } else {
+                coefficients[destination] = component.coeffs[source];
+            }
+        }
+    }
+    component.coeffs = coefficients;
+    component.width_in_blocks = width as u32;
+    component.height_in_blocks = height as u32;
+    Ok(())
+}
+
 /// Synthesise a [`JpegData`] payload from an interleaved RGB buffer
 /// for the chunk-4 / chunk-5 chroma-subsampling lossy paths.
 ///
@@ -641,11 +682,20 @@ fn synth_jpeg_data_from_rgb8(
             "synth_jpeg_data_from_rgb8 requires non-zero dimensions, got {width}x{height}"
         )));
     }
-    if rgb.len() < width * height * 3 {
+    let input_size = width
+        .checked_mul(height)
+        .and_then(|n| n.checked_mul(3))
+        .ok_or_else(|| crate::error::Error::InvalidInput("RGB dimensions overflow usize".into()))?;
+    if width > u32::MAX as usize || height > u32::MAX as usize {
+        return Err(crate::error::Error::InvalidInput(
+            "RGB dimensions exceed u32".into(),
+        ));
+    }
+    if rgb.len() < input_size {
         return Err(crate::error::Error::InvalidInput(format!(
             "synth_jpeg_data_from_rgb8 rgb buffer too small: {} < {}",
             rgb.len(),
-            width * height * 3
+            input_size
         )));
     }
 
@@ -705,6 +755,13 @@ fn synth_jpeg_data_from_rgb8(
     let comp_cb = jpeg_component(2, 1, 1, 1, cb_w_blocks, cb_h_blocks, cb_coeffs);
     let comp_cr = jpeg_component(3, 1, 1, 1, cr_w_blocks, cr_h_blocks, cr_coeffs);
 
+    let mut components = alloc::vec![comp_y, comp_cb, comp_cr];
+    let mcu_columns = width.div_ceil(8 * y_h_samp as usize) as u32;
+    let mcu_rows = height.div_ceil(8 * y_v_samp as usize) as u32;
+    for component in &mut components {
+        pad_component_to_mcu(component, mcu_columns, mcu_rows)?;
+    }
+
     let quant_y = jpeg_quant_table(&luma_qt, 0, false);
     let quant_c = jpeg_quant_table(&chroma_qt, 1, true);
 
@@ -717,7 +774,7 @@ fn synth_jpeg_data_from_rgb8(
         com_data: Vec::new(),
         quant: alloc::vec![quant_y, quant_c],
         huffman_code: Vec::new(),
-        components: alloc::vec![comp_y, comp_cb, comp_cr],
+        components,
         scan_info: Vec::new(),
         marker_order: Vec::new(),
         inter_marker_data: Vec::new(),

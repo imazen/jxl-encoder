@@ -1731,16 +1731,24 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
-### 2026-11-04: optional subsampled RGB8 panics on partial MCU dimensions
+### RESOLVED 2026-11-04: optional subsampled RGB8 partial MCU grids
 
-`chroma-subsampling,jpeg-reencoding` with a 32x17 RGB8 input and Sub420
-panics in `jpeg/encode.rs` AC collection (a three-row coefficient grid is
-indexed at row 3). The synthetic JPEG builder uses visible ceil-8 plane
-dimensions where the JPEG path expects complete MCU component grids.
-Both new metadata probes stop at this earlier panic; metadata forwarding is
-still under investigation. Existing 256x256 subsampling tests did not cover it.
-Reproduction log: `~/tmp/jxl138-gradient-strict.log`; no existing expectation
-was relaxed. Pad the synthetic components before testing header propagation.
+The RGB8 synthetic JPEG builder now completes each component's MCU grid:
+visible coefficients are retained; fully invisible blocks copy the nearest
+visible DC with zero AC. Previously 38 of 48 real-image shape/mode/color
+cases panicked during AC collection. All 48 now fully render through the
+primary Rust decoder and djxl v0.12 with matching dimensions and samples;
+packed and strided requests produce identical bytes. Public coefficient
+inputs with incomplete grids or zero sampling factors return typed errors.
+The JPEG-enabled library suite, reconstruction conformance gate, twelve JBRD
+validity checks, fifteen existing subsampling checks and focused strict
+Clippy pass (`~/tmp/jxl-subsampled-grid-check.log`). Wrapper: rc=0, 158 s,
+peak RSS 2.72 GiB. No existing expectation changed.
+
+Still active: aligned subsampled RGB8 requests drop caller HDR color/tone,
+intrinsic-size and ICC fields. Independent header regressions reproduce this
+separately from the repaired geometry. EXIF/XMP container forwarding already
+exists; do not describe those fields as dropped.
 
 
 ### RESOLVED 2026-11-04: envelope parser misread floating-point exponent width

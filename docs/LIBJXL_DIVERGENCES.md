@@ -2066,6 +2066,12 @@ lookup, descriptors, metadata or compact/non-compact decisions.
 
 ## G. RESOLVED divergences (historical)
 
+### 2026-11-04: optional RGB8 subsampling completes MCU component grids
+
+| Site | Ours after repair | libjxl v0.12 | Status |
+|---|---|---|---|
+| `vardct/chroma_subsampling.rs::pad_component_to_mcu`, `jpeg/encode.rs` input validation | Synthetic RGB8 components fill the complete MCU grid; invisible blocks repeat nearest visible DC with zero AC. Public malformed coefficient grids fail before indexing. | JPEG coefficient input uses complete MCU component grids (`JPEGComponent::width_in_blocks` / `height_in_blocks`); invisible blocks do not contribute displayed samples. | RESOLVED partial-MCU panic. All 48 selected real-image shape/mode/color cases render through Rust and djxl v0.12 with matching samples; original JPEG reconstruction and validity gates pass. This does not establish equivalent RGB-to-YCbCr filtering or quantization. |
+
 ### 2026-11-04: faster-decoding DC quantization in parity modes (`9a0f6931`)
 
 The existing `dc_encode_libjxl_parity` permission now includes the predictor

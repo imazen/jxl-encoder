@@ -274,6 +274,43 @@ fn encode_jpeg_to_jxl_inner(
         )));
     }
 
+    if width == 0
+        || height == 0
+        || jpeg
+            .components
+            .iter()
+            .any(|c| c.h_samp_factor == 0 || c.v_samp_factor == 0)
+    {
+        return Err(crate::error::Error::InvalidInput(
+            "JPEG dimensions and sampling factors must be nonzero".into(),
+        ));
+    }
+    let mcu_columns = width.div_ceil(8 * max_h as usize);
+    let mcu_rows = height.div_ceil(8 * max_v as usize);
+    for (index, component) in jpeg.components.iter().enumerate() {
+        let expected_width = mcu_columns * component.h_samp_factor as usize;
+        let expected_height = mcu_rows * component.v_samp_factor as usize;
+        let expected_coefficients = expected_width
+            .checked_mul(expected_height)
+            .and_then(|n| n.checked_mul(64))
+            .ok_or_else(|| {
+                crate::error::Error::InvalidInput(
+                    "JPEG coefficient dimensions overflow usize".into(),
+                )
+            })?;
+        if component.width_in_blocks as usize != expected_width
+            || component.height_in_blocks as usize != expected_height
+            || component.coeffs.len() != expected_coefficients
+        {
+            return Err(crate::error::Error::InvalidInput(format!(
+                "JPEG component {index} must fill its MCU grid: expected {expected_width}x{expected_height} blocks and {expected_coefficients} coefficients, got {}x{} and {}",
+                component.width_in_blocks,
+                component.height_in_blocks,
+                component.coeffs.len()
+            )));
+        }
+    }
+
     // Compute per-channel upsampling modes from sampling factors
     let jpeg_upsampling = if num_components == 3 {
         compute_jpeg_upsampling(jpeg, &jpeg_c_map)
