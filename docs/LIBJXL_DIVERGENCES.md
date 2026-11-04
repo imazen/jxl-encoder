@@ -488,6 +488,25 @@ VarDCT stream learner. See [lossless tracking](LIBJXL_PARITY_TRACKING.md).
 
 ## E. Per-API behavior divergences (opt-in)
 
+### Native orientation metadata (PR 133, 2026-11-04)
+
+`ImageMetadata::with_orientation` uses the shared zenpixels orientation type.
+Its explicit native tag controls display; EXIF and XMP remain byte-for-byte
+payloads and are not composed into the native tag. Unset native orientation
+remains Identity on pixel input. libjxl exposes native orientation in its basic
+info and imports JPEG EXIF during transcode; our JPEG path retains that import
+and exact JBRD reconstruction. Wire values remain the EXIF/JXL 1–8 table. The optional RGB8 subsampling
+writer also receives the native tag through its pixel-header override; the
+new regression fails before this forwarding at FlipH (Identity on wire).
+Its 6,534 native/EXIF/XMP cases preserve stored samples and opaque payloads;
+djxl independently verifies selected displayed permutations. Another 144
+streams cover all native tags with PQ, HLG and Display P3 ICC through the
+three modes and two widths; native and djxl samples match independent
+permutations of their own profile baseline.
+No strategy gate, registry metadata or gate count changes.
+[Coverage and original-ICC reference control](ORIENTATION_METADATA.md).
+
+
 ### September 24: explicit lossless WP mode (#24)
 
 `LosslessInternalParams::forced_wp_mode` (`__expert`) selects mode 0..=4

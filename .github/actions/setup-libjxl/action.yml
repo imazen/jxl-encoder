@@ -7,7 +7,7 @@ runs:
       id: tools
       with:
         path: .ci-libjxl/tools
-        key: libjxl-v0.12.0-${{ runner.os }}-${{ runner.arch }}-${{ runner.os == 'Windows' && runner.arch == 'ARM64' && 'v3' || 'v1' }}
+        key: libjxl-v0.12.0-${{ runner.os }}-${{ runner.arch }}-${{ runner.os == 'Windows' && runner.arch == 'ARM64' && 'v3' || runner.os == 'Linux' && runner.arch == 'ARM64' && hashFiles('scripts/libjxl_original_profile.*') || 'v1' }}
 
     - name: Download static Linux x64 reference tools
       if: steps.tools.outputs.cache-hit != 'true' && runner.os == 'Linux' && runner.arch == 'X64'
@@ -52,10 +52,15 @@ runs:
           -DJPEGXL_ENABLE_EXAMPLES=OFF -DJPEGXL_ENABLE_JNI=OFF \
           -DJPEGXL_ENABLE_OPENEXR=OFF -DJPEGXL_ENABLE_SJPEG=OFF \
           -DJPEGXL_ENABLE_DOXYGEN=OFF -DJPEGXL_ENABLE_MANPAGES=OFF \
-          -DJPEGXL_BUNDLE_LIBPNG=ON -DJPEGXL_ENABLE_SKCMS=ON
+          -DJPEGXL_BUNDLE_LIBPNG=ON -DJPEGXL_ENABLE_SKCMS=ON \
+          -DCMAKE_PROJECT_INCLUDE="$GITHUB_WORKSPACE/scripts/libjxl_original_profile.cmake"
         nice -n 19 cmake --build .ci-libjxl/build --target cjxl djxl --parallel 4
         mkdir -p .ci-libjxl/tools
         cp .ci-libjxl/build/tools/cjxl .ci-libjxl/build/tools/djxl .ci-libjxl/tools/
+        if [[ "$RUNNER_OS" == Linux && "$RUNNER_ARCH" == ARM64 ]]; then
+          nice -n 19 cmake --build .ci-libjxl/build --target jxl-original-profile --parallel 4
+          cp .ci-libjxl/build/tools/jxl-original-profile .ci-libjxl/tools/
+        fi
 
     - name: Build native reference tools for Windows ARM
       if: steps.tools.outputs.cache-hit != 'true' && runner.os == 'Windows' && runner.arch == 'ARM64'
@@ -101,6 +106,11 @@ runs:
           if [[ "$tool" == cjxl ]]; then key=CJXL_PATH; else key=DJXL_PATH; fi
           echo "$key=$tool_path" >> "$GITHUB_ENV"
         done
+        if [[ "$RUNNER_OS" == Linux && "$RUNNER_ARCH" == ARM64 ]]; then
+          oracle="$PWD/.ci-libjxl/tools/jxl-original-profile"
+          "$oracle" --version
+          echo "LIBJXL_ORIGINAL_PROFILE_ORACLE=$oracle" >> "$GITHUB_ENV"
+        fi
         mkdir -p "$HOME/tmp/jxl-encoder-reference-tests"
         scratch_path="$HOME/tmp/jxl-encoder-reference-tests"
         if [[ "$RUNNER_OS" == Windows ]]; then scratch_path=$(cygpath -m "$scratch_path"); fi

@@ -11,25 +11,8 @@ use crate::error::Result;
 use super::color_encoding::ColorEncoding;
 use super::extra_channels::ExtraChannelInfo;
 
-/// Orientation of the image.
-///
-/// The full 8-value JXL spec table (ISO/IEC 18181-1 ImageMetadata
-/// orientation). JPEG transcoding preserves the first EXIF APP1
-/// orientation; ordinary pixel encodes default to [`Orientation::Identity`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-#[repr(u8)]
-#[allow(dead_code)]
-pub enum Orientation {
-    #[default]
-    Identity = 1,
-    FlipHorizontal = 2,
-    Rotate180 = 3,
-    FlipVertical = 4,
-    Transpose = 5,
-    Rotate90CW = 6,
-    AntiTranspose = 7,
-    Rotate90CCW = 8,
-}
+/// Shared EXIF/JPEG XL display orientation.
+pub use zenpixels_convert::Orientation;
 
 /// Bit depth specification.
 #[derive(Debug, Clone, Copy)]

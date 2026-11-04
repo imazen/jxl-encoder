@@ -7531,6 +7531,7 @@ impl<'a> EncodeRequest<'a> {
             }
         }
         if let Some(meta) = self.metadata {
+            file_header.metadata.orientation = meta.orientation;
             if meta.icc_profile.is_some() {
                 file_header.metadata.color_encoding.want_icc = true;
             }
@@ -8849,8 +8850,9 @@ impl<'a> EncodeRequest<'a> {
                 }
             }
         }
-        // Tone mapping and intrinsic size from metadata
+        // Native orientation, tone mapping and intrinsic size from metadata.
         if let Some(meta) = self.metadata {
+            enc.orientation = meta.orientation;
             if let Some(it) = meta.intensity_target {
                 enc.intensity_target = it;
             }
@@ -9217,6 +9219,9 @@ impl<'a> EncodeRequest<'a> {
             _ => 255.0,
         };
         let icc = self.metadata.and_then(|m| m.icc_profile);
+        if let Some(metadata) = self.metadata {
+            header.metadata.orientation = metadata.orientation;
+        }
         if let Some((width, height)) = self.metadata.and_then(|meta| meta.intrinsic_size) {
             header.metadata.have_intrinsic_size = true;
             header.metadata.intrinsic_width = width;

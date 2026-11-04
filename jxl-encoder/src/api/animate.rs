@@ -170,6 +170,9 @@ pub(crate) fn encode_animation_lossless(
     } else {
         FileHeader::new_rgb(width, height)
     };
+    file_header.metadata.orientation = request
+        .metadata
+        .map_or(crate::Orientation::Identity, |m| m.orientation);
     if sample_image.bit_depth == 16 {
         file_header.metadata.bit_depth = crate::headers::file_header::BitDepth::uint16();
         for ec in &mut file_header.metadata.extra_channels {
@@ -877,6 +880,9 @@ pub(crate) fn encode_animation_lossy(
         &[]
     };
     let mut file_header = enc.build_file_header(w, h, extras_info);
+    file_header.metadata.orientation = request
+        .metadata
+        .map_or(crate::Orientation::Identity, |m| m.orientation);
     // `have_timecodes` flips to true if any frame supplied an explicit
     // timecode (libjxl writes the 32-bit timecode field per-frame, so
     // the file-level flag must be on).
