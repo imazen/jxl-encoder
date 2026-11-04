@@ -1804,17 +1804,9 @@ fn exif_orientation(exif: &[u8]) -> Option<crate::headers::file_header::Orientat
             if u16_at(entry + 2)? != 3 || u32_at(entry + 4)? != 1 {
                 return None;
             }
-            return Some(match u16_at(entry + 8)? {
-                1 => Orientation::Identity,
-                2 => Orientation::FlipHorizontal,
-                3 => Orientation::Rotate180,
-                4 => Orientation::FlipVertical,
-                5 => Orientation::Transpose,
-                6 => Orientation::Rotate90CW,
-                7 => Orientation::AntiTranspose,
-                8 => Orientation::Rotate90CCW,
-                _ => return None,
-            });
+            return u8::try_from(u16_at(entry + 8)?)
+                .ok()
+                .and_then(Orientation::from_exif);
         }
         entry = entry.checked_add(12)?;
     }
@@ -2138,7 +2130,7 @@ mod tests {
         let valid = b"II\x2a\0\x08\0\0\0\x01\0\x12\x01\x03\0\x01\0\0\0\x06\0\0\0\0\0\0\0";
         assert_eq!(
             exif_orientation(valid),
-            Some(crate::headers::file_header::Orientation::Rotate90CW)
+            Some(crate::headers::file_header::Orientation::Rotate90)
         );
         for len in 0..22 {
             assert_eq!(exif_orientation(&valid[..len]), None, "truncation {len}");

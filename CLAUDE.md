@@ -1684,20 +1684,27 @@ Empirical encoder-tuning chunks (W44-216 onward) follow nine rules distilled fro
 
 When spawning a sub-agent for a tuning chunk, the prompt MUST include reading the methodology memo + `docs/HYPOTHESIS_LEDGER.md` in "inputs to read FIRST" and acceptance criteria MUST include updating the ledger.
 
-## Native orientation integration (2026-10-18)
+## Native orientation review (PR 133, 2026-11-04)
 
-`ImageMetadata::with_orientation` sets the codestream orientation independently
-of EXIF container bytes. Both lossless and VarDCT writers must receive it; input
-sample order and coded dimensions stay unchanged. `just native-orientation-check`
-uses the isolated contract package so unrelated workspace path dependencies do
-not prevent API validation. The test requires the version-guarded libjxl v0.12
-reference in addition to the primary Rust decoder.
+`ImageMetadata::with_orientation` accepts the existing
+`zenpixels_convert::Orientation`, re-exported as `jxl_encoder::Orientation`.
+It changes display interpretation without rearranging samples. The native
+JXL tag is authoritative; EXIF and XMP bytes remain unchanged and their
+orientation tags do not compose with it. Unset native orientation is Identity.
+JPEG transcodes retain the separate first-EXIF import behavior and reconstruct
+the original JPEG bytes, including conflicting XMP.
 
-The animation entry points accepting `ImageMetadata` must forward the same
-native tag to their file headers. The regression first reproduced orientation
-2 becoming 1. Both modes now pass all eight tags for still and single-frame
-animation inputs: stored samples remain unchanged, display transforms match,
-and libjxl v0.12 independently checks geometry and lossless display pixels.
+[Contract, exact coverage and reference controls](docs/ORIENTATION_METADATA.md).
+`just native-orientation-check <pinned-manifest>` runs against the same locked
+sibling closure as CI. The original-ICC control is caller-selected through
+`just native-orientation-icc-check <pinned-manifest> <oracle>` and is also an
+explicit Linux ARM CI step. Both animation writers use the current request
+pipeline, preserving limits, cancellation and metadata precedence.
+
+The LCMS2 libjxl v0.12 CLI cannot coalesce a cropped XYB animation with the
+bundled Display P3 ICC in its default output color space. Its public decoder
+API accepts every frame when the original ICC is explicitly requested; do not
+misclassify that CLI limitation as an invalid stream or strip the ICC to hide it.
 
 ## Known Bugs (ACTIVE)
 

@@ -110,11 +110,11 @@ pub(crate) mod zq_seed;
 #[cfg(feature = "convenience")]
 pub mod convenience;
 
-/// Native JPEG XL display orientation (the EXIF 1–8 table).
-pub use headers::file_header::Orientation;
 #[cfg(feature = "__external_metric")]
 pub use loop_metric::{ExternalLoopMetric, ExternalMetric};
 pub use loop_trace::{LoopFrame, LoopTrace};
+/// Shared EXIF/JPEG XL display orientation from zenpixels.
+pub use zenpixels_convert::Orientation;
 // Re-export new API as primary
 pub use api::{
     AnimationFrame, AnimationParams, At, BlendMode, Buffering, ChromaSubsampling, ContainerMode,

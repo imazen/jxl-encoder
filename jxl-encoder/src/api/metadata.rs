@@ -51,7 +51,10 @@ impl<'a> ImageMetadata<'a> {
     /// Set the native JPEG XL display orientation.
     ///
     /// Stored pixel order and coded dimensions are preserved. Decoders may
-    /// apply this orientation when rendering; EXIF bytes are left unchanged.
+    /// apply this orientation when rendering. The native tag is authoritative:
+    /// EXIF and XMP payloads are preserved verbatim and their orientation tags
+    /// are not composed with it. An unset native tag remains Identity even
+    /// when attached EXIF or XMP carries a different orientation.
     /// Defaults to [`crate::Orientation::Identity`].
     pub fn with_orientation(mut self, orientation: crate::Orientation) -> Self {
         self.orientation = orientation;
