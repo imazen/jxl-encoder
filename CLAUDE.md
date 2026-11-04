@@ -1987,12 +1987,18 @@ all remaining issue-138 quality failures. [Domain contract](docs/PERCEPTUAL_COLO
 
 ### 2026-11-04: issue 138 current-main replay
 
-The 21 reported encoder-failure cells replay against the committed sibling
-closure: all seven seed-2964 cells and seed-2965 cell 28968 pass. Thirteen
-still fail the existing transfer-signal reference bound. Giving cjxl the
-same alpha channels and supported explicit options resolves three of them;
-ten remain quality failures, not decoder rejection. No threshold changes.
-[Evidence and reproduction](benchmarks/issue138_replay_2026-11-04.md).
+The original dynamic-reference replay passed eight of 21 records; matching
+cjxl's alpha and supported options raised that historical result to 11/21.
+Fresh current-main `2118c352` replay against the checksum-pinned static
+v0.12 reference passes 10/21: ten PQ quality failures plus cell 2965/28968's
+cross-decoder agreement failure. The historical dynamic runtime still gives
+11/21 with the same current encoder binary. Three retained encoder revisions
+produce identical bytes for that extra cell, while the two reference PFMs
+differ by 0.023304897360503674 at one blue sample. The new native precision
+repair still exceeds the static-reference gate there. Numerical attribution
+remains open in [decoder issue 73](https://github.com/imazen/zenjxl-decoder/issues/73).
+No threshold or expected bytes changed. [Identities, exact values and
+reproduction](benchmarks/issue138_replay_2026-11-04.md#current-main-replay-and-reference-output-split).
 The matched-reference repair affects only the standalone test tool.
 
 The sweep now checks float alpha too: in-range samples require exact f32
