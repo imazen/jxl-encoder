@@ -862,6 +862,16 @@ checklist) were archived to [docs/CODE-HISTORY.md](docs/CODE-HISTORY.md)
 
 ## Resolved Bugs
 
+### RESOLVED 2026-11-04: HDR regression assumed HOME on Windows
+
+The new PQ intensity test unwrapped an unset `HOME` in both Windows CI jobs.
+It now uses the existing portable output-directory helper with a fresh run
+subdirectory. The full 80-case test passes with `HOME` removed, and strict
+focused Clippy passes; pixel expectations and the production fix are unchanged.
+Log: `~/tmp/jxl-hdr-nohome-check.log` (rc0, 8 seconds; build/test peak RSS
+0.77 GiB, minimum available 19,592 MiB). Windows CI must still confirm the fix.
+
+
 ### RESOLVED 2026-11-04: explicit PQ display intensity changed source brightness
 
 PQ ingest returns absolute light normalized to 10,000 nits, while XYB input

@@ -8,10 +8,17 @@ mod decode;
 
 #[test]
 fn pq_signal_is_independent_of_intensity_metadata() {
-    let directory = std::path::PathBuf::from(std::env::var_os("HOME").unwrap())
-        .join("tmp")
-        .join(format!("jxl-pq-intensity-{}", std::process::id()));
-    std::fs::create_dir_all(&directory).unwrap();
+    let root = jxl_encoder::test_helpers::output_dir("hdr-intensity");
+    let directory = (0..)
+        .find_map(|i| {
+            let directory = root.join(format!("run-{i}"));
+            match std::fs::create_dir(&directory) {
+                Ok(()) => Some(directory),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => None,
+                Err(error) => panic!("{}: {error}", directory.display()),
+            }
+        })
+        .unwrap();
     let mut cell = 0;
     for (w, h) in [(32, 17), (259, 17)] {
         for kind in 0..3 {
