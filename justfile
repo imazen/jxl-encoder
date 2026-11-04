@@ -98,6 +98,19 @@ issue138-reference-check manifest="tools/conformance-sweep/Cargo.toml":
     cargo test --release --manifest-path {{quote(manifest)}}
     cargo clippy --manifest-path {{quote(manifest)}} --all-targets -- -D warnings
 
+# Caller supplies pinned siblings, reference tools, and run-heavy controls.
+metric-domain-check manifest="Cargo.toml":
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __external_metric --test metric_color_domain --test external_metric
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --lib
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --test it hash_lock
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --test it strategy_libjxl
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --test it divergence_table_drift
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --test animation_contract
+
+metric-domain-lint manifest="Cargo.toml":
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --lib --test metric_color_domain --features __external_metric,ssim2-loop,zensim-loop -- -D warnings
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience --lib -- -D warnings
+
 # Weekly conformance sweep (tools/conformance-sweep): random real-image
 # encodes checked by djxl v0.12, upstream jxl-rs and zenjxl-decoder.
 # `just conformance-sweep <out> <icc-dir> <images-or-dirs>... [--seed N] [--cells N] [--minutes N]`

@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Fix perceptual-loop comparisons with non-default intensity targets or non-sRGB primaries: normalize inverse-XYB reconstruction and convert source references into the same linear-sRGB domain. Default PQ/HLG loop policy is unchanged (`f3559269`).
+
 - Reuse the full-range-safe modular gradient predictor for float-packed lossless encoding, avoiding intermediate signed overflow during squeeze.
 
 - Fixed: lossy float layouts coded alpha from an 8-bit copy. f16 alpha is now coded exactly as half floats, f32 alpha in [0, 1] exactly as binary32 (f32 alpha that is all half floats as f16); lossy alpha (`with_alpha_distance`) and out-of-range f32 alpha use 16-bit integers.

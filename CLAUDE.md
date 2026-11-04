@@ -1678,6 +1678,18 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
+### 2026-11-04: perceptual-loop HDR scale and reference primaries
+
+Confirmed by `metric_color_domain` before the repair: at 1000 nits the
+reference `[0.1, 0.2, 0.3]` was compared with reconstruction
+`[0.39222655, 0.78433686, 1.17631]`. With BT.2020 primaries the source
+reference stayed unconverted while inverse XYB returned sRGB. The repair
+normalizes reconstruction by `255 / intensity_target` and converts metric
+references to sRGB after forward XYB. Callback tests and independent jxl-rs
+and djxl pixel checks pass. Broad gates remain separate.
+Default PQ/HLG disables the perceptual loop, so this finding does not explain
+all remaining issue-138 quality failures. [Domain contract](docs/PERCEPTUAL_COLOR_DOMAIN.md).
+
 ### 2026-11-04: issue 138 current-main replay
 
 The 21 reported encoder-failure cells replay against the committed sibling

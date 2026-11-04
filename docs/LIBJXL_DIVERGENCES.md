@@ -2066,6 +2066,17 @@ lookup, descriptors, metadata or compact/non-compact decisions.
 
 ## G. RESOLVED divergences (historical)
 
+### 2026-11-04: perceptual metric operands use one color domain (`f3559269`)
+
+| Site | Ours after repair | libjxl v0.12 | Status |
+|---|---|---|---|
+| `reconstruct::normalize_metric_rgb`, called by Butteraugli, SSIM2 and Zensim loops | Inverse-XYB reconstruction is multiplied by `255 / intensity_target` on visible samples; the default 255-nit path performs no arithmetic | `opsin_params.cc::InitSIMDInverseMatrix` folds `255 / intensity_target` into the inverse opsin matrix | Correctness repair: the previous metric reconstruction retained the forward intensity scale; no strategy gate or new default |
+| `LinearSource::prepare_metric_reference`, still and animation frame paths | Metric source uses sRGB primaries after forward XYB; owned storage is reused, borrowed storage gets a fallible budgeted copy | Metric source and inverse-XYB output are both in the comparator's linear-sRGB domain | Correctness repair: previously non-sRGB source primaries were compared directly with sRGB reconstruction |
+
+No gate was introduced or changed, so registry metadata and gate counts are
+unchanged. This restores operand consistency; it does not qualify a new
+metric calibration or claim broad RD gain. [Contract and tests](PERCEPTUAL_COLOR_DOMAIN.md).
+
 ### 2026-09-24: JPEG CfL maximum tie selection (`d6bbdda2`)
 
 `vardct/chroma_from_luma.rs::jpeg_cfl_search` now uses libjxl v0.12's rounded
