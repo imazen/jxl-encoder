@@ -2066,6 +2066,22 @@ lookup, descriptors, metadata or compact/non-compact decisions.
 
 ## G. RESOLVED divergences (historical)
 
+### Gain-map alternate-color bundle validation (2026-11-04)
+
+`hdr/bundle.rs::serialized_size` refuses nonzero bundle versions and alternate
+ICC/`want_icc` mismatches before allocation or reserved output writes, following
+ISO/IEC 18181-2 clause 9.11. These fields describe the reconstructed alternate
+image, not the gain-value image. libjxl v0.12's extras helper serializes them
+without these consistency checks; this is deliberate validation beyond that
+helper. Profile contents and embedded/nested image structure remain outside
+this bounds/metadata validator. JPEG gain-map generation leaves both alternate
+fields empty. No public signature or strategy gate changes. The regression
+rejects all 15 previously accepted invalid cases while preserving valid layout
+checks. HDR/JPEG library, all five gain-map reconstruction checks, 81 selected
+unchanged lock/drift checks and strict HDR/JPEG library/integration Clippy pass.
+`~/tmp/jxl-gainmap-bundle-after.log`: rc0, 163 s, peak RSS 1.73 GiB.
+
+
 ### W44-AUDIT-8: strict DC CfL operation order (2026-11-04)
 
 The existing `dc_encode_libjxl_parity` permission preserves the reference's

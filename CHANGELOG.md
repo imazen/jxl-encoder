@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Reject gain-map bundle versions and alternate ICC/flag combinations that violate the file-format metadata contract, before writing output; correct alternate-image color documentation.
+
 - Preserve libjxl DC chroma subtraction order under the existing strict-parity gate; retain normal calibrated arithmetic and all existing byte expectations.
 
 - Ignore secondary gain-map ICC during rendering, retaining primary profiles and all original JPEG bytes for reconstruction.

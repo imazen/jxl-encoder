@@ -52,11 +52,11 @@ pub struct GainMapBundle {
     /// Must fit in a `u16` (≤ 65 535 bytes); the spec-defined metadata
     /// blob is always well under 1 KB so this is a practical no-op.
     pub iso21496_metadata: Vec<u8>,
-    /// Color encoding of the gain map itself.
+    /// Color encoding of the reconstructed alternate image.
     ///
-    /// `None` if the gain map inherits the base image's color encoding
-    /// (the typical case for single-channel luminance gain maps —
-    /// they're conceptually grayscale).
+    /// `None` with an empty [`Self::alt_icc`] inherits the baseline image's
+    /// encoding. This does not describe the gain-value codestream's colors.
+    /// Its `want_icc` flag must agree with whether [`Self::alt_icc`] is nonempty.
     pub color_encoding: Option<ColorEncoding>,
     /// Compressed ICC profile bytes for the gain map's alternate color
     /// space. Set when the HDR "alternate" image has an ICC profile
@@ -84,7 +84,7 @@ impl GainMapBundle {
         }
     }
 
-    /// Set an explicit color encoding for the gain-map plane. Optional.
+    /// Set an explicit color encoding for the reconstructed alternate image.
     #[must_use]
     pub fn with_color_encoding(mut self, ce: ColorEncoding) -> Self {
         self.color_encoding = Some(ce);
@@ -96,7 +96,8 @@ impl GainMapBundle {
     /// Pass the **compressed** ICC bytes (the output of the JXL
     /// `PredictICC + Huffman` encoder) — libjxl writes the bytes here
     /// verbatim; matching its wire format means matching its choice
-    /// of compressed bytes too. Most callers leave this empty.
+    /// of compressed bytes too. Most callers leave this empty. A nonempty
+    /// profile requires [`Self::color_encoding`] with `want_icc = true`.
     #[must_use]
     pub fn with_alt_icc(mut self, alt_icc: Vec<u8>) -> Self {
         self.alt_icc = alt_icc;
@@ -110,9 +111,20 @@ impl GainMapBundle {
     /// # Errors
     ///
     /// Returns [`EncodeError::InvalidInput`] if the metadata payload
-    /// exceeds the u16 limit, or if the color-encoding bits exceed
-    /// 255 bytes after byte-padding.
+    /// exceeds the u16 limit, the color-encoding bits exceed 255 bytes after
+    /// padding, the version is nonzero, or alternate ICC presence disagrees
+    /// with the color encoding's `want_icc` flag. Compressed profile contents
+    /// and the embedded image's structure are not validated by this helper.
     pub fn serialized_size(&self) -> Result<usize, EncodeError> {
+        if self.jhgm_version != 0 {
+            return Err(invalid("gain-map bundle version must be zero".into()));
+        }
+        let want_icc = self.color_encoding.as_ref().is_some_and(|ce| ce.want_icc);
+        if want_icc == self.alt_icc.is_empty() {
+            return Err(invalid(
+                "gain-map alternate ICC presence must match color_encoding.want_icc".into(),
+            ));
+        }
         if self.iso21496_metadata.len() > u16::MAX as usize {
             return Err(invalid(format!(
                 "gain_map_metadata too large: {} bytes (max {})",
@@ -260,6 +272,50 @@ mod tests {
     }
 
     #[test]
+    fn alternate_icc_flag_and_version_are_validated_before_writing() {
+        let mut failures = Vec::new();
+        for ce_kind in [None, Some(false), Some(true)] {
+            for has_icc in [false, true] {
+                for version in [0, 1, 255] {
+                    let mut bundle = GainMapBundle::new(vec![1], vec![0xff, 0x0a]);
+                    bundle.jhgm_version = version;
+                    if let Some(want_icc) = ce_kind {
+                        let mut ce = ColorEncoding::srgb();
+                        ce.want_icc = want_icc;
+                        bundle.color_encoding = Some(ce);
+                    }
+                    if has_icc {
+                        bundle.alt_icc = vec![42];
+                    }
+                    let valid = version == 0 && ce_kind.unwrap_or(false) == has_icc;
+                    let size = bundle.serialized_size();
+                    let bytes = bundle.serialize();
+                    let mut reserved = Vec::with_capacity(64);
+                    reserved.extend_from_slice(b"prefix");
+                    let before = reserved.clone();
+                    let appended = bundle.serialize_into_reserved(&mut reserved);
+                    if size.is_ok() != valid || bytes.is_ok() != valid || appended.is_ok() != valid
+                    {
+                        failures.push(format!("ce={ce_kind:?}, icc={has_icc}, version={version}"));
+                    }
+                    if !valid && appended.is_err() {
+                        assert_eq!(reserved, before);
+                    }
+                    if valid {
+                        assert_eq!(bytes.as_ref().unwrap().len(), size.unwrap());
+                        assert_eq!(&reserved[..6], b"prefix");
+                        assert_eq!(&reserved[6..], bytes.as_ref().unwrap());
+                    }
+                }
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "invalid metadata accepted: {failures:?}"
+        );
+    }
+
+    #[test]
     fn empty_bundle_layout_matches_libjxl_shape() {
         // jhgm_version + meta_size(=0) + cenc_size(=0) + alt_icc_size(=0)
         // = 1 + 2 + 1 + 4 = 8 bytes
@@ -295,11 +351,15 @@ mod tests {
     fn alt_icc_size_is_big_endian() {
         let codestream = vec![0xFFu8, 0x0A];
         let alt_icc = vec![0x42u8; 0x00010203];
-        let b = GainMapBundle::new(Vec::new(), codestream.clone()).with_alt_icc(alt_icc);
+        let mut ce = ColorEncoding::srgb();
+        ce.want_icc = true;
+        let b = GainMapBundle::new(Vec::new(), codestream.clone())
+            .with_color_encoding(ce)
+            .with_alt_icc(alt_icc);
         let bytes = b.serialize().unwrap();
-        // After: jhgm_ver(1) + meta_size(2,=0) + cenc_size(1,=0) = 4 bytes
-        // alt_icc_size at offset 4, 4 BE bytes
-        assert_eq!(&bytes[4..8], &[0x00, 0x01, 0x02, 0x03]);
+        // Skip the alternate ColorEncoding; the ICC length stays a BE u32.
+        let offset = 4 + usize::from(bytes[3]);
+        assert_eq!(&bytes[offset..offset + 4], &[0x00, 0x01, 0x02, 0x03]);
     }
 
     #[test]

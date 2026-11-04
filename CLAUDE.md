@@ -1314,8 +1314,10 @@ libjxl's `jxli` writer has wrong `T_i`/tick-unit/`F_i` semantics; libjxl's
 decoder never parses `jxll`; libjxl refuses a jbrd with four quant tables
 (`jpeg_data.cc`) although the field allows 1..4, so a 4-table JPEG transcoded
 by us will not reconstruct in djxl (we refuse only non-trivial unused
-tables). `GainMapBundle` does not enforce `want_icc ⇔ alt_icc` (9.11) —
-caller-constructed bundles only; the JPEG gain-map path never sets either.
+tables). `GainMapBundle` alternate ICC/flag validation was added on November 4
+(9.11), including version-zero enforcement. Caller-constructed profile contents
+and nested gain-map image structure still require separate validation; the JPEG
+gain-map path sets neither alternate-color field.
 `colr`/`hCdR` are not Part 2 boxes (legal as unknown boxes, parsed by no
 reader). `with_exif` still documents no payload contract (TIFF-first is
 assumed; an "Exif\0\0"-prefixed blob gets a wrong tiff_header_offset).
@@ -1730,6 +1732,20 @@ Empirical encoder-tuning chunks (W44-216 onward) follow nine rules distilled fro
 When spawning a sub-agent for a tuning chunk, the prompt MUST include reading the methodology memo + `docs/HYPOTHESIS_LEDGER.md` in "inputs to read FIRST" and acceptance criteria MUST include updating the ledger.
 
 ## Known Bugs (ACTIVE)
+
+### RESOLVED 2026-11-04: alternate-color gain-map bundle metadata consistency
+
+The bundle serializer accepted nonzero versions and all ICC/`want_icc`
+mismatches. Clause 9.11 requires version zero and matching ICC presence. Both
+checks now run in `serialized_size` before allocation or reserved writes.
+The color fields describe the reconstructed alternate image; docs are corrected.
+All 15 invalid regression cases failed before repair; valid byte-layout checks
+retain their field assertions with a matching ICC flag. HDR/JPEG library and
+five gain-map reconstruction checks, 81 unchanged lock/drift checks and strict
+HDR/JPEG library/integration Clippy pass. Existing ignores are unchanged.
+`~/tmp/jxl-gainmap-bundle-after.log`: rc0, 163 s, peak RSS 1.73 GiB. This
+validator does not parse compressed ICC contents or nested image structure.
+
 
 ### RESOLVED 2026-11-04: strict DC CfL post-scale cancellation crossed rounding boundaries
 
