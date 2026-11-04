@@ -1678,6 +1678,16 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
+### 2026-11-04: issue 138 current-main replay
+
+The 21 reported encoder-failure cells replay against the committed sibling
+closure: all seven seed-2964 cells and seed-2965 cell 28968 pass. Thirteen
+still fail the existing transfer-signal reference bound. Giving cjxl the
+same alpha channels and supported explicit options resolves three of them;
+ten remain quality failures, not decoder rejection. No threshold changes.
+[Evidence and reproduction](benchmarks/issue138_replay_2026-11-04.md).
+The matched-reference repair affects only the standalone test tool.
+
 ### RESOLVED 2026-10-19: Relative constructor header policy
 
 CI caught four VarDCT byte-lock failures after the Relative constructor change:

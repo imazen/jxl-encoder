@@ -1252,6 +1252,38 @@ fn check_one(
     Ok(err)
 }
 
+/// Reference raster with every source channel, including alpha.
+fn reference_pixels(cell: &Cell, want: &[f64]) -> Vec<u8> {
+    let (ch, kind, _, _) = describe(cell.layout);
+    let s = scale(kind);
+    // 8-bit layouts get their exact 8-bit samples; everything else 16 bits.
+    let maxval = if kind == Kind::U8 { 255u32 } else { 65535 };
+    // Preserve alpha: cjxl's SimplifyInvisible must see the same visibility
+    // mask, and the reference byte count must include the same channels.
+    let tuple = match ch {
+        1 => "GRAYSCALE",
+        2 => "GRAYSCALE_ALPHA",
+        3 => "RGB",
+        _ => "RGB_ALPHA",
+    };
+    let mut img = format!(
+        "P7\nWIDTH {}\nHEIGHT {}\nDEPTH {ch}\nMAXVAL {maxval}\nTUPLTYPE {tuple}\nENDHDR\n",
+        cell.w, cell.h
+    )
+    .into_bytes();
+    for i in 0..cell.w * cell.h {
+        for c in 0..ch {
+            let v = ((want[i * ch + c] / s).clamp(0.0, 1.0) * maxval as f64).round();
+            if maxval == 255 {
+                img.push(v as u8);
+            } else {
+                img.extend_from_slice(&(v as u16).to_be_bytes());
+            }
+        }
+    }
+    img
+}
+
 /// Mean error and size of libjxl's own encode of the same source, for the
 /// transfer-coded float layouts. Their lossy error spans too wide a range
 /// (PQ up to 0.17 mean on clean cells) for a fixed bound to catch real
@@ -1265,7 +1297,6 @@ fn cjxl_reference_error(
     extra: &[String],
 ) -> Result<(f64, usize), String> {
     let (ch, kind, _, linear) = describe(cell.layout);
-    let s = scale(kind);
     let gray = ch <= 2;
     let space = match cell.layout {
         PixelLayout::RgbPqF32 | PixelLayout::RgbaPqF32 => "RGB_D65_202_Rel_PeQ",
@@ -1277,23 +1308,9 @@ fn cjxl_reference_error(
         _ => "RGB_D65_SRG_Rel_SRG",
     };
     let tag = format!("ref{}", cell.index);
-    let ppm = dir.join(format!("{tag}.ppm"));
+    let ppm = dir.join(format!("{tag}.pam"));
     let jxl = dir.join(format!("{tag}.jxl"));
-    // 8-bit layouts get their exact 8-bit samples; everything else 16 bits.
-    let maxval = if kind == Kind::U8 { 255u32 } else { 65535 };
-    let color = if gray { 1 } else { 3 };
-    let magic = if gray { "P5" } else { "P6" };
-    let mut img = format!("{magic}\n{} {}\n{maxval}\n", cell.w, cell.h).into_bytes();
-    for i in 0..cell.w * cell.h {
-        for c in 0..color {
-            let v = ((want[i * ch + c] / s).clamp(0.0, 1.0) * maxval as f64).round();
-            if maxval == 255 {
-                img.push(v as u8);
-            } else {
-                img.extend_from_slice(&(v as u16).to_be_bytes());
-            }
-        }
-    }
+    let img = reference_pixels(cell, want);
     std::fs::write(&ppm, img).map_err(|e| e.to_string())?;
     let factor = lossy_config(cell).effective_resampling();
     let o = std::process::Command::new(jxl_encoder::test_helpers::cjxl_path())
@@ -1470,7 +1487,10 @@ fn run_cell(seed: u64, cell: &Cell, sources: &[Source], iccs: &[Icc], scratch: &
         && let Ok(d) = &dj
     {
         let ours = check_lossy(d, &want, cell, "djxl", false);
-        v_dj = match (ours, cjxl_reference_error(cell, &want, scratch, &[])) {
+        v_dj = match (
+            ours,
+            cjxl_reference_error(cell, &want, scratch, &cjxl_flags_for(cell)),
+        ) {
             (Ok(o), Ok((r, ref_len))) if o > 1.5 * r + 0.015 && len * 100 >= ref_len * 85 => {
                 Err(format!(
                     "djxl: mean error {o:.4} over 1.5x cjxl's {r:.4} + 0.015 at {len} B vs {ref_len} B"
@@ -1700,5 +1720,85 @@ fn main() {
     eprint!("{summary}");
     if failed > 0 {
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod reference_tests {
+    use super::*;
+
+    #[test]
+    fn cjxl_reference_keeps_all_source_channels() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = PathBuf::from(std::env::var_os("HOME").expect("HOME"))
+            .join("tmp")
+            .join(format!("jxl138-reference-{unique}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        for (index, layout) in [
+            PixelLayout::Gray8,
+            PixelLayout::GrayAlpha8,
+            PixelLayout::Rgb8,
+            PixelLayout::Rgba8,
+            PixelLayout::Gray16,
+            PixelLayout::GrayAlpha16,
+            PixelLayout::Rgb16,
+            PixelLayout::Rgba16,
+            PixelLayout::RgbaPqF32,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let cell = Cell {
+                index: index as u64,
+                src: 0,
+                w: 3,
+                h: 2,
+                layout,
+                lossless: false,
+                effort: 3,
+                distance: 1.0,
+                opts: vec![],
+                streaming: None,
+                icc: None,
+                exif_xmp: false,
+            };
+            let (ch, kind, _, _) = describe(layout);
+            let maxval = if kind == Kind::U8 { 255u32 } else { 65535 };
+            let samples: Vec<u32> = (0..6 * ch)
+                .map(|i| [0, maxval, maxval / 3, maxval - 1, 1][i % 5])
+                .collect();
+            let want: Vec<f64> = samples
+                .iter()
+                .map(|&v| v as f64 / maxval as f64 * scale(kind))
+                .collect();
+            let input = dir.join(format!("{index}.pam"));
+            let output = dir.join(format!("{index}.jxl"));
+            std::fs::write(&input, reference_pixels(&cell, &want)).unwrap();
+            let status = std::process::Command::new(jxl_encoder::test_helpers::cjxl_path())
+                .arg(&input)
+                .arg(&output)
+                .args(["-d", "0", "-e", "3", "--num_threads=1"])
+                .output()
+                .unwrap();
+            assert!(
+                status.status.success(),
+                "{layout:?}: {}",
+                String::from_utf8_lossy(&status.stderr)
+            );
+            let bytes = std::fs::read(output).unwrap();
+            for decoded in [decode_jxl_rs(&bytes).unwrap(), decode_zen(&bytes).unwrap()] {
+                assert_eq!((decoded.w, decoded.h, decoded.ch), (3, 2, ch), "{layout:?}");
+                for (i, (&actual, &expected)) in decoded.px.iter().zip(&samples).enumerate() {
+                    assert_eq!(
+                        (actual as f64 * maxval as f64).round() as u32,
+                        expected,
+                        "{layout:?} sample {i}"
+                    );
+                }
+            }
+        }
     }
 }

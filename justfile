@@ -93,6 +93,11 @@ fast-decode-conformance source +files:
 issue138-replay binary out corpus icc:
     python3 scripts/replay_issue138.py {{quote(binary)}} {{quote(out)}} {{quote(corpus)}} {{quote(icc)}}
 
+# Caller provides resource controls and verified CJXL_PATH/DJXL_PATH.
+issue138-reference-check manifest="tools/conformance-sweep/Cargo.toml":
+    cargo test --release --manifest-path {{quote(manifest)}}
+    cargo clippy --manifest-path {{quote(manifest)}} --all-targets -- -D warnings
+
 # Weekly conformance sweep (tools/conformance-sweep): random real-image
 # encodes checked by djxl v0.12, upstream jxl-rs and zenjxl-decoder.
 # `just conformance-sweep <out> <icc-dir> <images-or-dirs>... [--seed N] [--cells N] [--minutes N]`
