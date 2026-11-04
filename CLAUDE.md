@@ -862,6 +862,26 @@ checklist) were archived to [docs/CODE-HISTORY.md](docs/CODE-HISTORY.md)
 
 ## Resolved Bugs
 
+### RESOLVED 2026-11-04: strict faster-decoding DC quantizer selection
+
+`9a0f6931` extends the existing `dc_encode_libjxl_parity` permission to
+Gradient-relative nonlinear DC quantization when faster decoding is selected,
+matching libjxl v0.12 `AddVarDCTDC`. Normal policies retain Weighted-relative
+quantization. All four still/precomputed/animation/Butteraugli reconstruction
+sites share the selection. Six frozen vector families come from the unmodified
+reference `QuantizeGradient` object; offset regions and predictor separation
+are checked. This is not full encoder/CFL byte parity or a #138 quality fix.
+
+Library, unchanged normal/strict byte locks, divergence, animation, optional
+metric/minimal Clippy and tool checks pass. All ten default replay streams are
+byte-identical to baseline; all ten explicit parity-loop streams retain the
+oracle control hashes. The enclosing command subsequently fails on the
+separate subsampled metadata probes above (rc1 overall); do not label that
+whole run green. Log: `~/tmp/jxl138-gradient-strict.log` (317 seconds;
+build/test peak RSS 2.91 GiB, minimum available 17,094 MiB).
+The broader default experiment is preserved on `experiment/issue138-gradient-dc`.
+
+
 ### RESOLVED 2026-11-04: HDR regression assumed HOME on Windows
 
 The new PQ intensity test unwrapped an unset `HOME` in both Windows CI jobs.
@@ -1710,6 +1730,18 @@ Empirical encoder-tuning chunks (W44-216 onward) follow nine rules distilled fro
 When spawning a sub-agent for a tuning chunk, the prompt MUST include reading the methodology memo + `docs/HYPOTHESIS_LEDGER.md` in "inputs to read FIRST" and acceptance criteria MUST include updating the ledger.
 
 ## Known Bugs (ACTIVE)
+
+### 2026-11-04: optional subsampled RGB8 panics on partial MCU dimensions
+
+`chroma-subsampling,jpeg-reencoding` with a 32x17 RGB8 input and Sub420
+panics in `jpeg/encode.rs` AC collection (a three-row coefficient grid is
+indexed at row 3). The synthetic JPEG builder uses visible ceil-8 plane
+dimensions where the JPEG path expects complete MCU component grids.
+Both new metadata probes stop at this earlier panic; metadata forwarding is
+still under investigation. Existing 256x256 subsampling tests did not cover it.
+Reproduction log: `~/tmp/jxl138-gradient-strict.log`; no existing expectation
+was relaxed. Pad the synthetic components before testing header propagation.
+
 
 ### RESOLVED 2026-11-04: envelope parser misread floating-point exponent width
 

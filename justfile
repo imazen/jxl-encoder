@@ -120,6 +120,16 @@ issue138-reference-check manifest="tools/conformance-sweep/Cargo.toml":
 hdr-intensity-check manifest="Cargo.toml":
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --test hdr_intensity -- --nocapture
 
+# Linux object oracle from an unmodified libjxl v0.12 build.
+libjxl-gradient-dc-oracle include object out:
+    c++ -std=c++17 -O1 -no-pie -I{{quote(include)}} scripts/libjxl_gradient_dc.cc {{quote(object)}} -Wl,--unresolved-symbols=ignore-all -o {{quote(out)}}
+
+gradient-dc-reference oracle out:
+    python3 scripts/generate_gradient_dc_reference.py {{quote(oracle)}} {{quote(out)}}
+
+gradient-dc-check manifest="Cargo.toml":
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --lib gradient_dc_matches_unmodified_libjxl_object
+
 metric-domain-check manifest="Cargo.toml":
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __external_metric --test metric_color_domain --test external_metric
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --lib

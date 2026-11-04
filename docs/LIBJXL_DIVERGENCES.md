@@ -2066,7 +2066,7 @@ lookup, descriptors, metadata or compact/non-compact decisions.
 
 ## G. RESOLVED divergences (historical)
 
-### 2026-11-04: faster-decoding DC quantization in parity modes
+### 2026-11-04: faster-decoding DC quantization in parity modes (`9a0f6931`)
 
 The existing `dc_encode_libjxl_parity` permission now includes the predictor
 used by nonlinear DC quantization: Gradient when `decoding_speed_tier >= 1`,
