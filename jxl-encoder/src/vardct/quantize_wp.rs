@@ -496,4 +496,28 @@ mod tests {
             "oracle inputs must distinguish the two predictors"
         );
     }
+    #[test]
+    fn dc_cfl_quantization_matches_reference_operation_order() {
+        let fixture = include_str!("quantize_cfl_reference.txt");
+        let mut cases = 0;
+        for line in fixture.lines().filter(|line| !line.starts_with('#')) {
+            let fields: Vec<_> = line.split_whitespace().collect();
+            let global_scale: f32 = fields[0].parse().unwrap();
+            let quant_dc: f32 = fields[1].parse().unwrap();
+            let precision: u8 = fields[2].parse().unwrap();
+            let y = f32::from_bits(u32::from_str_radix(fields[3],16).unwrap());
+            let b = f32::from_bits(u32::from_str_radix(fields[4],16).unwrap());
+            let expected_y: i32 = fields[5].parse().unwrap();
+            let expected_b: i32 = fields[6].parse().unwrap();
+            let mut quantized = core::array::from_fn(|_| vec![vec![0;1];1]);
+            let floats = [vec![0.0],vec![y],vec![b]];
+            requantize_dc_group(&mut quantized,&floats,1,0,0,1,1,
+                (global_scale/65536.0)*quant_dc,precision,true);
+            assert_eq!(quantized[C_Y][0][0],expected_y,"Y: {line}");
+            assert_eq!(quantized[2][0][0],expected_b,"B: {line}");
+            cases += 1;
+        }
+        assert_eq!(cases,10);
+    }
+
 }
