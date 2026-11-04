@@ -6203,7 +6203,9 @@ impl<'a> EncodeRequest<'a> {
     /// Set the peak display luminance in nits (cd/m²) for HDR content.
     ///
     /// Written to the JXL codestream `ToneMapping.intensity_target` field.
-    /// Default is 255.0 (SDR). Set to e.g. 4000.0 or 10000.0 for HDR.
+    /// Lossy encoding defaults to 10000.0 for PQ, 1000.0 for HLG, and
+    /// 255.0 otherwise. PQ code values represent absolute light: choosing
+    /// another display target preserves their brightness.
     ///
     /// Pairs with [`Self::with_color_encoding`] for HDR signaling
     /// (e.g. [`ColorEncoding::bt2100_pq`] / [`ColorEncoding::bt2100_hlg`]).
@@ -8123,6 +8125,37 @@ impl<'a> EncodeRequest<'a> {
                 PixelLayout::RgbHlgF32 | PixelLayout::RgbaHlgF32
             );
         let mut linear_rgb = linear_rgb;
+        // PQ's EOTF returns absolute light normalized to 10,000 nits.
+        // XYB input instead uses 1.0 = the selected intensity target,
+        // matching libjxl TF_PQ::DisplayFromEncoded's 10000 / target.
+        // Plain linear float input already uses the caller's chosen units.
+        let is_pq_input = matches!(self.layout, PixelLayout::RgbPqF32 | PixelLayout::RgbaPqF32)
+            || (source_is_pq && !self.layout.is_f32() && !self.layout.is_f16());
+        if is_pq_input {
+            let output_tf = self
+                .color_encoding
+                .as_ref()
+                .map(|ce| ce.transfer_function)
+                .or_else(|| self.layout.implied_transfer_function());
+            let default_target = match output_tf {
+                Some(crate::TransferFunction::Pq) => 10_000.0,
+                Some(crate::TransferFunction::Hlg) => 1_000.0,
+                _ => 255.0,
+            };
+            let target = self
+                .intensity_target
+                .or_else(|| self.metadata.as_ref().and_then(|m| m.intensity_target))
+                .unwrap_or(default_target);
+            if target != 10_000.0 {
+                let scale = 10_000.0 / target;
+                for chunk in linear_rgb.chunks_mut(3 * 4096) {
+                    crate::error::check_stop(self.stop)?;
+                    for value in chunk {
+                        *value *= scale;
+                    }
+                }
+            }
+        }
         if is_hlg_input {
             let it = self
                 .intensity_target

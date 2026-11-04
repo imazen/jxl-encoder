@@ -157,7 +157,9 @@ impl<'a> ImageMetadata<'a> {
     /// Set the peak display luminance in nits (cd/m²) for HDR content.
     ///
     /// Written to the JXL codestream `ToneMapping.intensity_target` field.
-    /// Default is 255.0 (SDR). Set to e.g. 4000.0 or 10000.0 for HDR.
+    /// Lossy encoding defaults to 10000.0 for PQ, 1000.0 for HLG, and
+    /// 255.0 otherwise. PQ code values represent absolute light: choosing
+    /// another display target preserves their brightness.
     pub fn with_intensity_target(mut self, nits: f32) -> Self {
         self.intensity_target = Some(nits);
         self

@@ -114,6 +114,9 @@ issue138-reference-check manifest="tools/conformance-sweep/Cargo.toml":
     cargo clippy --manifest-path {{quote(manifest)}} --all-targets -- -D warnings
 
 # Caller supplies pinned siblings, reference tools, and run-heavy controls.
+hdr-intensity-check manifest="Cargo.toml":
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --test hdr_intensity -- --nocapture
+
 metric-domain-check manifest="Cargo.toml":
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __external_metric --test metric_color_domain --test external_metric
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --lib

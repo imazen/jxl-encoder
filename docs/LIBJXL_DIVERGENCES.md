@@ -2066,6 +2066,19 @@ lookup, descriptors, metadata or compact/non-compact decisions.
 
 ## G. RESOLVED divergences (historical)
 
+### 2026-11-04: PQ input uses the selected display-relative units
+
+| Site | Ours after repair | libjxl v0.12 | Status |
+|---|---|---|---|
+| `EncodeRequest::prepare_lossy_pixels`, PQ-coded integer/f32 input | Multiply normalized PQ EOTF output by `10000 / intensity_target`; request beats metadata, then output-TF default. At 10,000 nits skip arithmetic. Linear float input is already display-relative. | `cms/transfer_functions-inl.h::TF_PQ::DisplayFromEncoded` applies `10000 / display_intensity_target` | Correctness repair, no strategy gate. Previously overrides darkened absolute PQ samples. |
+
+The shared preparation serves still, streaming and integer animation. The
+80-case two-decoder regression fails on old code at PQ 0.4 -> 0.14059912 with
+255-nit metadata; all fixed cases pass. The 48 still cases also match streaming
+bytes. This does not change the default HDR loop policy or resolve #138's ten
+remaining default-intensity quality comparisons.
+
+
 ### 2026-11-04: diagnostic float bit-depth parsing (`fa1b084a`)
 
 `scripts/jxl_bitstream_diff.py::bit_depth` now reads the float exponent

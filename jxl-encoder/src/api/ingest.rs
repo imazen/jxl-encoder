@@ -347,9 +347,8 @@ pub(crate) fn bt709_u8_to_linear_f32(
 /// `srgb_u16_to_linear_f32` — the divisor for input normalization.
 /// Output is the normalized SMPTE ST 2084 EOTF: linear [0..1] where
 /// 1.0 = 10,000 nits (the PQ peak). The lossy path pairs this with
-/// `intensity_target = 10_000` (libjxl `SetIntensityTarget` parity —
-/// issue #73); with any other intensity_target the decoder
-/// misinterprets the scale. Closes PQ portion of #17.
+/// `intensity_target = 10_000` by default. The request pipeline scales
+/// this absolute light to the selected intensity target before XYB.
 pub(crate) fn pq_u16_to_linear_f32(
     data: &[u8],
     channels: usize,
@@ -475,8 +474,8 @@ pub(crate) fn srgb_to_linear_f(c: f32) -> f32 {
 }
 
 /// PQ (SMPTE ST 2084) EOTF: PQ-encoded normalized [0,1] → linear [0,1]
-/// where 1.0 = peak luminance (= the encoder's `intensity_target`,
-/// typically 10 000 nits for full-spec PQ). Closes PQ portion of #17.
+/// where 1.0 = 10,000 nits, independent of the selected intensity target.
+/// The request pipeline applies the display-relative scale afterward.
 ///
 /// Constants per SMPTE ST 2084-2014 (m1 / m2 / c1 / c2 / c3). Negative
 /// inputs are clamped to 0; outputs are non-negative by construction.

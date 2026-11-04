@@ -862,6 +862,29 @@ checklist) were archived to [docs/CODE-HISTORY.md](docs/CODE-HISTORY.md)
 
 ## Resolved Bugs
 
+### RESOLVED 2026-11-04: explicit PQ display intensity changed source brightness
+
+PQ ingest returns absolute light normalized to 10,000 nits, while XYB input
+is normalized to the selected display intensity. Request/metadata overrides
+previously changed only the forward XYB scale and header: PQ 0.4 decoded as
+0.14059912 with a 255-nit target in the new regression. Shared lossy pixel
+preparation now applies `10000 / intensity_target`, matching libjxl v0.12
+`TF_PQ::DisplayFromEncoded`. The default 10,000-nit path skips the multiplication;
+plain linear floats and lossless samples keep their existing units.
+
+`tests/hdr_intensity.rs` checks 80 RGB8/RGB16/PQ-f32 cases at 32x17 and 259x17,
+255/1000/4000/10000 nits, metadata/request precedence, still and two-frame
+integer animation. jxl-rs and djxl v0.12 check every sample of the first
+displayed frame; 48 still cases also require exact streaming byte equality.
+Float animation is outside the supported integer animation surface. This is
+separate from #138's ten default-intensity PQ quality failures.
+The 34 existing HDR integration checks, 1,664 library tests, unchanged normal/strict
+byte locks, divergence checks, metric-domain and animation contracts also pass,
+as does focused strict Clippy. The existing ignores and expected bytes remain
+unchanged. Combined before/after log: `~/tmp/jxl-pq-intensity-before.log`
+(rc0, 205 seconds; build/test peak RSS 2.78 GiB, minimum available 22,494 MiB).
+
+
 ### RESOLVED 2026-10-26: lossy premultiplied alpha stored straight colour under the associated flag
 
 [PROVEN] With `with_premultiplied_alpha(true)` (and the animation flag) the
