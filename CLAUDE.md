@@ -1688,6 +1688,12 @@ ten remain quality failures, not decoder rejection. No threshold changes.
 [Evidence and reproduction](benchmarks/issue138_replay_2026-11-04.md).
 The matched-reference repair affects only the standalone test tool.
 
+The sweep now checks float alpha too: in-range samples require exact f32
+bits; the documented out-of-range f32 plane fallback requires the exact
+clamped 16-bit sample codes. Non-finite decoder output is rejected before
+clamping or mean-error reduction, including the reference scorer. Previously
+float alpha was untested and a NaN mean could pass `error > bound`.
+
 ### RESOLVED 2026-10-19: Relative constructor header policy
 
 CI caught four VarDCT byte-lock failures after the Relative constructor change:

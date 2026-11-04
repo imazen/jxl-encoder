@@ -1113,6 +1113,20 @@ fn check_lossy(
     let (ch, kind, _, _) = describe(cell.layout);
     let s = scale(kind);
     let has_alpha = ch == 2 || ch == 4;
+    // The public f32-alpha contract falls back to clamped 16-bit integers
+    // when the plane contains out-of-range values and cannot be represented
+    // exactly as half floats. The generator deliberately perturbs f32 low
+    // bits, including values just above one.
+    let alpha_u16 = check_alpha
+        && has_alpha
+        && kind == Kind::F32
+        && want
+            .chunks_exact(ch)
+            .any(|p| !(0.0..=1.0).contains(&p[ch - 1]))
+        && !want.chunks_exact(ch).all(|p| {
+            let a = p[ch - 1] as f32;
+            f16_bits_to_f32(f32_to_f16_bits(a)).to_bits() == a.to_bits()
+        });
     let mut err_sum = 0f64;
     let mut n = 0usize;
     for i in 0..cell.w * cell.h {
@@ -1130,13 +1144,23 @@ fn check_lossy(
             let Some(v) = sample(d, i, c, ch) else {
                 return Err(format!("{who}: channel {c} missing"));
             };
+            if !v.is_finite() {
+                return Err(format!(
+                    "{who}: non-finite sample at pixel {i} channel {c}: {v}"
+                ));
+            }
             let v = clamp_for(cell, kind, v);
             let exp = want[i * ch + c] / s;
             if is_alpha {
-                if kind != Kind::F16
-                    && kind != Kind::F32
-                    && ((v as f64) * s).round() != want[i * ch + c]
-                {
+                let differs = if alpha_u16 {
+                    (v * 65535.0).round() as u16
+                        != ((exp as f32).clamp(0.0, 1.0) * 65535.0 + 0.5) as u16
+                } else if matches!(kind, Kind::F16 | Kind::F32) {
+                    v.to_bits() != (exp as f32).to_bits()
+                } else {
+                    ((v as f64) * s).round() != want[i * ch + c]
+                };
+                if differs {
                     return Err(format!(
                         "{who}: alpha differs at pixel {i}: {} vs {}",
                         (v as f64 * s).round(),
@@ -1214,6 +1238,12 @@ fn check_one(
 ) -> Result<f64, String> {
     if (d.w, d.h) != (cell.w, cell.h) {
         return Err(format!("{who}: decoded {}x{}", d.w, d.h));
+    }
+    // Check before clamping and error reduction: NaN otherwise propagates
+    // into the mean, making `error > bound` false, while infinity can be
+    // hidden by the signal-domain clamp. Generated source samples are finite.
+    if let Some((i, v)) = d.px.iter().enumerate().find(|(_, v)| !v.is_finite()) {
+        return Err(format!("{who}: non-finite sample {i}: {v}"));
     }
     if let Some(i) = cell.icc
         && d.icc.as_deref() != Some(&iccs[i].data[..])
@@ -1726,6 +1756,134 @@ fn main() {
 #[cfg(test)]
 mod reference_tests {
     use super::*;
+
+    #[test]
+    fn nonfinite_lossy_output_cannot_pass_the_error_gate() {
+        for layout in [
+            PixelLayout::Rgb8,
+            PixelLayout::RgbLinearF32,
+            PixelLayout::RgbPqF32,
+        ] {
+            let cell = Cell {
+                index: 0,
+                src: 0,
+                w: 1,
+                h: 1,
+                layout,
+                lossless: false,
+                effort: 3,
+                distance: 1.0,
+                opts: vec![],
+                streaming: None,
+                icc: None,
+                exif_xmp: false,
+            };
+            for v in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+                let decoded = Decoded {
+                    w: 1,
+                    h: 1,
+                    ch: 3,
+                    px: vec![v, 0.0, 0.0],
+                    icc: None,
+                };
+                assert!(
+                    check_one(&decoded, "test", &cell, &[0.0; 3], &[], false)
+                        .unwrap_err()
+                        .contains("non-finite sample"),
+                    "{layout:?}: {v}"
+                );
+                assert!(
+                    check_lossy(&decoded, &[0.0; 3], &cell, "reference", false)
+                        .unwrap_err()
+                        .contains("non-finite sample")
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn lossy_float_alpha_is_checked_at_source_precision() {
+        for layout in [
+            PixelLayout::RgbaLinearF16,
+            PixelLayout::RgbaLinearF32,
+            PixelLayout::RgbaPqF32,
+        ] {
+            let cell = Cell {
+                index: 0,
+                src: 0,
+                w: 1,
+                h: 1,
+                layout,
+                lossless: false,
+                effort: 3,
+                distance: 1.0,
+                opts: vec![],
+                streaming: None,
+                icc: None,
+                exif_xmp: false,
+            };
+            let want = [0.0, 0.0, 0.0, 0.5];
+            let mut decoded = Decoded {
+                w: 1,
+                h: 1,
+                ch: 4,
+                px: vec![0.0, 0.0, 0.0, 0.5],
+                icc: None,
+            };
+            assert!(check_lossy(&decoded, &want, &cell, "test", true).is_ok());
+            decoded.px[3] = f32::from_bits(0.5f32.to_bits() + 1);
+            assert!(
+                check_lossy(&decoded, &want, &cell, "test", true)
+                    .unwrap_err()
+                    .contains("alpha differs"),
+                "{layout:?}"
+            );
+            // Resampled alpha is explicitly inexact, selected by the caller.
+            assert!(check_lossy(&decoded, &want, &cell, "test", false).is_ok());
+        }
+    }
+
+    #[test]
+    fn out_of_range_f32_alpha_checks_the_documented_integer_fallback() {
+        let cell = Cell {
+            index: 0,
+            src: 0,
+            w: 2,
+            h: 1,
+            layout: PixelLayout::RgbaPqF32,
+            lossless: false,
+            effort: 3,
+            distance: 1.0,
+            opts: vec![],
+            streaming: None,
+            icc: None,
+            exif_xmp: false,
+        };
+        let want = [
+            0.0,
+            0.0,
+            0.0,
+            f32::from_bits(1.0f32.to_bits() + 1) as f64,
+            0.0,
+            0.0,
+            0.0,
+            0.1f32 as f64,
+        ];
+        let mut decoded = Decoded {
+            w: 2,
+            h: 1,
+            ch: 4,
+            px: vec![0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 6554.0 / 65535.0],
+            icc: None,
+        };
+        assert!(check_lossy(&decoded, &want, &cell, "test", true).is_ok());
+        decoded.px[7] = 6553.0 / 65535.0;
+        assert!(
+            check_lossy(&decoded, &want, &cell, "test", true)
+                .unwrap_err()
+                .contains("alpha differs")
+        );
+    }
 
     #[test]
     fn cjxl_reference_keeps_all_source_channels() {
