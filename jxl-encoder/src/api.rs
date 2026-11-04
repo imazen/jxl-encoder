@@ -5404,6 +5404,23 @@ impl LossyConfig {
             .unwrap_or_else(|| self.effort_schedule().butteraugli_iters)
     }
 
+    /// Apply the same HDR default/explicit-budget policy to every input path.
+    #[cfg(feature = "butteraugli-loop")]
+    pub(crate) fn butteraugli_iters_for_input(
+        &self,
+        layout: PixelLayout,
+        color_encoding: Option<&crate::headers::color_encoding::ColorEncoding>,
+    ) -> u32 {
+        if self.butteraugli_iters.is_none()
+            && self.is_hdr_pq_hlg(layout, color_encoding)
+            && matches!(self.resolve_hdr_loss(layout, color_encoding), HdrLoss::Vdp2)
+        {
+            0
+        } else {
+            self.butteraugli_iters()
+        }
+    }
+
     /// SSIM2 quantization loop iterations (internal accessor for validation).
     #[cfg(feature = "ssim2-loop")]
     pub(crate) fn ssim2_iters_value(&self) -> u32 {
@@ -6173,7 +6190,8 @@ impl<'a> EncodeRequest<'a> {
     /// loop into `trace` (a clone shares the same frames): the quant field
     /// each iteration encoded with and the one it adjusted to, the metric's
     /// diffmap and per-block distances, the score and target, and the
-    /// reconstruction. Encoded bytes are unchanged. Nothing is recorded when
+    /// reconstruction. Animation records append in encoded frame order.
+    /// Encoded bytes are unchanged. Nothing is recorded when
     /// the loop does not run (lossless, or a loop iteration count of 0).
     pub fn with_loop_trace(mut self, trace: &crate::LoopTrace) -> Self {
         self.loop_trace = Some(trace.clone());
@@ -8643,7 +8661,8 @@ impl<'a> EncodeRequest<'a> {
         enc.buffering = cfg.buffering;
         #[cfg(feature = "butteraugli-loop")]
         {
-            enc.butteraugli_iters = cfg.butteraugli_iters();
+            enc.butteraugli_iters =
+                cfg.butteraugli_iters_for_input(self.layout, self.color_encoding.as_ref());
             // EX-J11 chunk 4: resolve `HdrLoss::Auto` to a concrete
             // loss now (using caller's `with_color_encoding` if set,
             // else `PixelLayout::implied_transfer_function()`), so the
@@ -8675,12 +8694,6 @@ impl<'a> EncodeRequest<'a> {
             //  - explicit `with_hdr_loss(Vdp2)` on SDR (odd but legal) is guarded by
             //    the transfer check → keeps the loop.
             // See docs/LIBJXL_DIVERGENCES.md.
-            if cfg.butteraugli_iters.is_none()
-                && cfg.is_hdr_pq_hlg(self.layout, self.color_encoding.as_ref())
-                && matches!(enc.hdr_loss, crate::vardct::hdr_metrics::HdrLoss::Vdp2)
-            {
-                enc.butteraugli_iters = 0;
-            }
             // Multi-metric Phase 0 (RFC #3, 2026-05-25): propagate the
             // resolved perceptual-metric selection. The
             // [`crate::vardct::perceptual_backend::propagate_resolved_metric_to_encoder`]

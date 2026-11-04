@@ -763,14 +763,9 @@ pub(crate) fn encode_animation_lossy(
     enc.buffering = cfg.buffering;
     #[cfg(feature = "butteraugli-loop")]
     {
-        enc.butteraugli_iters = cfg.butteraugli_iters();
-        // EX-J11 chunk 4: see the still-image `encode_lossy` site
-        // for the resolution rationale. The animation API has no
-        // per-encode `with_color_encoding` (today), so resolution
-        // falls back to the layout's implied transfer function —
-        // PQ / HLG f32 layouts will route to `Vdp2`, everything
-        // else to `Butteraugli`.
-        enc.hdr_loss = cfg.resolve_hdr_loss(layout, None);
+        enc.butteraugli_iters =
+            cfg.butteraugli_iters_for_input(layout, request.color_encoding.as_ref());
+        enc.hdr_loss = cfg.resolve_hdr_loss(layout, request.color_encoding.as_ref());
         // Multi-metric Phase 0 (RFC #3, 2026-05-25): propagate the
         // resolved perceptual-metric selection (animation frame
         // encoder path). Same semantics as the still-image site above.
@@ -804,6 +799,7 @@ pub(crate) fn encode_animation_lossy(
     let bit_depth_16 = layout.is_16bit();
     enc.bit_depth_16 = bit_depth_16;
 
+    enc.loop_trace = request.loop_trace.clone();
     enc.source_gamma = request.source_gamma;
     enc.color_encoding = request.color_encoding.clone().or_else(|| {
         use crate::headers::color_encoding::{ColorEncoding, TransferFunction};

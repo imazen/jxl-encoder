@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Apply request color encoding and the shared HDR loop-budget policy to animation frames; forward requested loop traces in encoded frame order.
+
 - Honor explicit HDR loop iteration budgets while retaining the default no-loop policy. Correct VDP2 packed-reference stride handling on odd widths and identify VDP2 correctly in loop traces.
 
 - Reject gain-map bundle versions and alternate ICC/flag combinations that violate the file-format metadata contract, before writing output; correct alternate-image color documentation.

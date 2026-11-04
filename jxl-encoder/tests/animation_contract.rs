@@ -456,3 +456,128 @@ fn repeated_single_pixel_display_frames_have_valid_headers() {
         }
     }
 }
+
+#[cfg(feature = "butteraugli-loop")]
+#[test]
+fn animation_hdr_loss_and_loop_trace_follow_the_request() {
+    use jxl_encoder::{ColorEncoding, HdrLoss, LoopTrace};
+    let root = jxl_encoder::test_helpers::output_dir("animation-hdr-loop");
+    let dir = (0..)
+        .find_map(|i| {
+            let p = root.join(format!("run-{i}"));
+            match std::fs::create_dir(&p) {
+                Ok(()) => Some(p),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => None,
+                Err(e) => panic!("{}: {e}", p.display()),
+            }
+        })
+        .unwrap();
+    let mut failures = Vec::new();
+    let mut cell = 0;
+    for (w, h) in [(32_usize, 17_usize), (259, 17)] {
+        let first: Vec<u8> = (0..w * h * 3).map(|i| (i % 128) as u8).collect();
+        let second: Vec<u8> = first.iter().map(|&v| v + 31).collect();
+        for color in [ColorEncoding::bt2100_pq(), ColorEncoding::bt2100_hlg()] {
+            for loss in [HdrLoss::Auto, HdrLoss::Vdp2, HdrLoss::Butteraugli] {
+                let mut baseline = None;
+                for iters in [None, Some(0), Some(2)] {
+                    let mut config = LossyConfig::new(1.0).with_effort(8).with_hdr_loss(loss);
+                    if let Some(n) = iters {
+                        config = config.with_butteraugli_iters(n);
+                    }
+                    let trace = LoopTrace::new();
+                    let encoded = config
+                        .encode_request(w as u32, h as u32, PixelLayout::Rgb8)
+                        .with_color_encoding(color.clone())
+                        .with_loop_trace(&trace)
+                        .encode_animation(
+                            &AnimationParams::default(),
+                            &[
+                                AnimationFrame::new(&first, 10),
+                                AnimationFrame::new(&second, 20),
+                            ],
+                        )
+                        .unwrap();
+                    let records = trace.take();
+                    let wanted =
+                        if iters == Some(0) || (iters.is_none() && loss != HdrLoss::Butteraugli) {
+                            0
+                        } else {
+                            6
+                        };
+                    let label = format!(
+                        "{w}x{h} {:?} {loss:?} iters={iters:?}",
+                        color.transfer_function
+                    );
+                    if records.len() != wanted {
+                        failures.push(format!(
+                            "{label}: {} records, expected {wanted}",
+                            records.len()
+                        ));
+                    }
+                    for record in records {
+                        assert_eq!(
+                            record.metric,
+                            if loss == HdrLoss::Butteraugli {
+                                "butteraugli"
+                            } else {
+                                "vdp2"
+                            }
+                        );
+                        assert!(record.score.is_finite());
+                    }
+                    if iters.is_none() {
+                        baseline = Some(encoded.clone());
+                    }
+                    if iters == Some(0)
+                        && loss != HdrLoss::Butteraugli
+                        && baseline.as_ref() != Some(&encoded)
+                    {
+                        failures.push(format!("{label}: default HDR must equal explicit no-loop"));
+                    }
+                    let native = decode_rgb_f32(&encoded, 8);
+                    assert_eq!(native.len(), 2);
+                    assert!(
+                        native
+                            .iter()
+                            .all(|p| p.len() == w * h * 3 && p.iter().all(|v| v.is_finite()))
+                    );
+                    let output = dir.join(format!("cell-{cell}"));
+                    std::fs::create_dir(&output).unwrap();
+                    let input = output.join("input.jxl");
+                    std::fs::write(&input, &encoded).unwrap();
+                    let decoded =
+                        std::process::Command::new(jxl_encoder::test_helpers::djxl_path())
+                            .arg(&input)
+                            .arg(output.join("frame.pfm"))
+                            .args(["--num_threads=1", "--output_frames"])
+                            .output()
+                            .unwrap();
+                    assert!(
+                        decoded.status.success(),
+                        "{}",
+                        String::from_utf8_lossy(&decoded.stderr)
+                    );
+                    let mut rendered = Vec::new();
+                    for entry in std::fs::read_dir(&output).unwrap() {
+                        let path = entry.unwrap().path();
+                        if path.extension().is_some_and(|e| e == "pfm") {
+                            rendered.push(path);
+                        }
+                    }
+                    assert_eq!(rendered.len(), 2, "{label}");
+                    // PFM writes separate frame files; PNG may bundle APNG frames.
+                    for frame in rendered {
+                        assert!(std::fs::metadata(frame).unwrap().len() > (w * h * 3 * 4) as u64);
+                    }
+                    cell += 1;
+                }
+            }
+        }
+    }
+    assert_eq!(cell, 36);
+    assert!(
+        failures.is_empty(),
+        "animation HDR request mismatch: {failures:?}"
+    );
+}

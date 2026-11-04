@@ -488,6 +488,23 @@ VarDCT stream learner. See [lossless tracking](LIBJXL_PARITY_TRACKING.md).
 
 ## E. Per-API behavior divergences (opt-in)
 
+### Animation HDR loss dispatch and trace forwarding (2026-11-04)
+
+Lossy animations resolve the HDR loss from request color encoding and use the
+same private HDR default/explicit-budget policy as still images. The previous
+`resolve_hdr_loss(layout, None)` ignored the newer request color-encoding
+surface and let default PQ/HLG animations run a Butteraugli loop while their
+still-image equivalents skipped it. Caller-selected Butteraugli and explicit
+budgets retain their selection. The request's existing loop trace is forwarded
+and records frames in encoded order. libjxl uses its own Butteraugli loop;
+this is consistency of our existing API policy, not a new parity claim or gate.
+The 36 two-frame regression cases fail before repair (ignored traces and HDR
+default/zero mismatches), then pass through full Rust and djxl frame decoding.
+All 48 still-image controls retain their prior bytes. Existing animation/HDR,
+122 selected locks/trace checks, library, strict focused lint and minimal-feature
+gates pass; `~/tmp/jxl-animation-hdr-after.log`: rc0, 123 s, peak RSS 1.62 GiB.
+
+
 ### VDP2 packed reference stride (2026-11-04)
 
 `hdr_vdp2_lite::compare_vdp2_interleaved` reads source rows with `width`

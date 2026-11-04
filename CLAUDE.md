@@ -1733,6 +1733,24 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
+### RESOLVED 2026-11-04: animation ignored request HDR loss dispatch and loop traces
+
+Animation resolved HDR loss with `(layout, None)`, a stale assumption from
+before request color encoding existed, and never copied `request.loop_trace`.
+It now resolves the request encoding and shares the still-image private loop
+budget policy: default HDR Auto/VDP2 skips the loop, explicit budgets and
+Butteraugli retain their selection. Traces append in encoded frame order.
+Thirty-six two-frame cases fail before repair through missing records and
+HDR default/zero mismatches; afterward all 72 displayed frames decode fully
+through Rust and djxl. Use djxl `--output_frames` with PFM for separate float
+files; PNG may encode one APNG file with both frames.
+
+All 48 still-image controls retain their pre-refactor bytes. Existing animation
+and HDR tests, 122 selected unchanged locks/trace checks, 1,668 library tests,
+strict focused lint and minimal std/convenience checks pass. Existing ignores
+are unchanged. `~/tmp/jxl-animation-hdr-after.log`: rc0, 123 s, peak RSS 1.62 GiB.
+
+
 ### RESOLVED 2026-11-04: explicit HDR loop budgets were discarded; VDP2 packed rows used padded stride
 
 The HDR VDP2 suppression now applies only when the iteration budget is unset.

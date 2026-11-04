@@ -139,6 +139,10 @@ gain-map-bundle-check manifest="Cargo.toml":
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features hdr-gainmap,jpeg-reencoding --test it jpeg_gainmap::
     cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features hdr-gainmap,jpeg-reencoding --lib --test it -- -D warnings
 
+animation-hdr-loop-check manifest="Cargo.toml":
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features std,butteraugli-loop --test animation_contract
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --lib --test animation_contract -- -D warnings
+
 hdr-loop-override-check manifest="Cargo.toml":
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --lib packed_reference_matches_strided_reconstruction
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features std,butteraugli-loop --test hdr_loop_override
