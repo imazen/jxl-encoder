@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Preserve libjxl DC chroma subtraction order under the existing strict-parity gate; retain normal calibrated arithmetic and all existing byte expectations.
+
 - Ignore secondary gain-map ICC during rendering, retaining primary profiles and all original JPEG bytes for reconstruction.
 
 - Keep ISO gain maps aligned when primary JPEG EXIF is absent or invalid: apply its resolved Identity orientation and ignore conflicting secondary EXIF, while retaining exact JPEG reconstruction.

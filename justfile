@@ -131,6 +131,9 @@ libjxl-cfl-dc-oracle source build out:
 cfl-dc-reference oracle out:
     python3 scripts/generate_cfl_dc_reference.py {{quote(oracle)}} {{quote(out)}}
 
+cfl-dc-check manifest="Cargo.toml":
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --lib dc_cfl_quantization_matches_reference_operation_order
+
 # Linux object oracle from an unmodified libjxl v0.12 build.
 libjxl-gradient-dc-oracle include object out:
     c++ -std=c++17 -O1 -no-pie -I{{quote(include)}} scripts/libjxl_gradient_dc.cc {{quote(object)}} -Wl,--unresolved-symbols=ignore-all -o {{quote(out)}}

@@ -30,14 +30,13 @@
 //! already-quantized Y:
 //!
 //! ```text
-//! value_for_q = row[x] - quant_y_row[x] * y_factor * cfl_factor[c]
+//! value_for_q = row[x] - quant_y_row[x] * (y_factor * cfl_factor[c])
 //! ```
 //!
 //! where `y_factor = GetDcStep(1) / mul` and
-//! `inv_factor = GetInvDcStep(c) * mul`. Our existing inline path uses
-//! the algebraically-equivalent `dc_cfl_factor` shortcut
-//! (`vardct/transform.rs:847`), so we re-derive it here for parity
-//! with libjxl's formula.
+//! `inv_factor = GetInvDcStep(c) * mul`. Strict parity keeps this source-domain
+//! subtraction order. Normal mode retains the calibrated post-scale shortcut;
+//! cancelling these factors can change f32 rounding at quantization boundaries.
 //!
 //! Strict DC parity selects Gradient prediction when faster decoding is set,
 //! matching libjxl `AddVarDCTDC`. Normal policies retain Weighted prediction.
@@ -82,7 +81,7 @@ const DC_CFL_FACTOR: [f32; 3] = [0.0, 0.0, 0.5];
 /// `value * inv_factor` internally). Kept for the unit tests; callers
 /// in [`requantize_dc_group`] use [`quantize_wp_one_presvalued`]
 /// which takes the already-scaled `svalue_base` (allowing CFL
-/// subtraction in the scaled domain to match libjxl exactly).
+/// subtraction before prediction-relative residual quantization).
 ///
 /// Mirrors libjxl `QuantizeWP` (`enc_modular.cc:1542-1559`).
 ///
@@ -95,9 +94,7 @@ fn quantize_wp_one(value: f32, inv_factor: f32, pred: i32) -> i32 {
 
 /// QuantizeWP core, taking `svalue_base = value * inv_factor` already
 /// computed by the caller. Used by [`requantize_dc_group`] so the
-/// CFL pre-subtraction can apply in the same `inv_factor`-scaled
-/// domain libjxl uses (line 1668: `(row[x] - quant_y * y_factor *
-/// cfl_factor) * inv_factor`).
+/// caller can preserve the reference operation order before entering this core.
 #[inline]
 fn quantize_wp_one_presvalued(svalue_base: f32, pred: i32) -> i32 {
     let mut svalue = svalue_base - pred as f32;
@@ -203,6 +200,10 @@ fn dc_predict(
 /// `vardct/transform.rs` so callers can keep the existing inline
 /// quantization as a no-op fallback when the gate is off.
 ///
+/// `reference_y_factor` selects reference-domain CfL subtraction. It is the
+/// wire quantizer's `GetDcStep(Y) / mul`, computed without inverting a rounded
+/// inverse step. `None` retains the calibrated normal scaled-domain arithmetic.
+///
 /// Returns the number of values whose final integer differs from the
 /// pre-pass `quant_dc` value (diagnostic — used by tests / probes).
 #[allow(clippy::too_many_arguments)]
@@ -217,6 +218,7 @@ pub(crate) fn requantize_dc_group(
     scale_dc: f32,
     extra_dc_precision: u8,
     gradient: bool,
+    reference_y_factor: Option<f32>,
 ) -> usize {
     let mut changed = 0usize;
     let region_width = end_bx.saturating_sub(start_bx);
@@ -232,11 +234,9 @@ pub(crate) fn requantize_dc_group(
     for &c in &[C_Y, 0usize, 2usize] {
         let inv_factor = INV_DC_QUANT[c] * scale_dc * dc_mul;
 
-        // libjxl: y_factor = GetDcStep(1) / mul = 1 / (INV_DC_QUANT[1] * scale_dc * mul)
-        // → `y_factor * inv_factor[c]` simplifies to
-        // `INV_DC_QUANT[c] / INV_DC_QUANT[1]` (the mul / scale_dc terms cancel).
-        // Equivalently we use the same `dc_cfl_factor` constant the inline
-        // path uses; both are byte-identical at f32 precision.
+        // Normal mode retains its calibrated post-scale CfL factor. Strict
+        // parity subtracts quantized Y in the source domain before scaling;
+        // cancelling factors changes rounding at quantization boundaries.
         let dc_cfl_factor = DC_CFL_FACTOR[c];
 
         // Allocate a fresh WP state per channel (matches libjxl
@@ -273,18 +273,16 @@ pub(crate) fn requantize_dc_group(
 
             for (lx, gx) in (start_bx..end_bx).enumerate() {
                 let float_v = float_dc[c][gy * xsize_blocks + gx];
-                // Compute svalue directly, mirroring transform.rs's
-                // `dc * inv_factor - y_dc * dc_cfl_factor` shape.
-                // libjxl's QuantizeWP takes `value = row[x] - quant_y * y_factor * cfl_factor`
-                // then computes `svalue = value * inv_factor`, which expands to
-                // `row[x] * inv_factor - quant_y * (y_factor * cfl_factor * inv_factor)`.
-                // The bracketed product is the SAME constant as our `dc_cfl_factor`
-                // (e.g. 0.5 for B, 0.0 for X), so we incorporate it post-scale here.
                 let svalue_base = if c == C_Y {
                     float_v * inv_factor
                 } else {
                     let y_val = y_row.as_ref().unwrap()[lx] as f32;
-                    float_v * inv_factor - y_val * dc_cfl_factor
+                    if let Some(y_factor) = reference_y_factor {
+                        let cfl_factor = if c == 2 { 1.0 } else { 0.0 };
+                        (float_v - y_val * (y_factor * cfl_factor)) * inv_factor
+                    } else {
+                        float_v * inv_factor - y_val * dc_cfl_factor
+                    }
                 };
 
                 // WP prediction over already-updated `row[..lx]`.
@@ -400,6 +398,7 @@ mod tests {
             1.0,
             1,
             false,
+            None,
         );
         // Just check we didn't panic and Y channel got non-zero values
         // somewhere (input was 0..16, inv_factor = INV_DC_QUANT[1] * 1.0 * 2).
@@ -452,6 +451,7 @@ mod tests {
                     1.0,
                     0,
                     true,
+                    None,
                 );
                 for y in 0..height {
                     assert_eq!(
@@ -472,6 +472,7 @@ mod tests {
                     1.0,
                     0,
                     false,
+                    None,
                 );
                 separates_weighted |= weighted[C_Y] != quantized[C_Y];
                 for channel in &quantized {
@@ -495,5 +496,84 @@ mod tests {
             separates_weighted,
             "oracle inputs must distinguish the two predictors"
         );
+    }
+    #[test]
+    fn dc_cfl_quantization_matches_reference_operation_order() {
+        use crate::vardct::{encoder::VarDctEncoder, frame::DistanceParams};
+        let mut encoder = VarDctEncoder::new(1.0);
+        encoder.resolved_improvements.dc_encode_libjxl_parity = true;
+        let fixture = include_str!("quantize_cfl_reference.txt");
+        let mut cases = 0;
+        let mut separating_cases = 0;
+        for line in fixture.lines().filter(|line| !line.starts_with('#')) {
+            let f: Vec<_> = line.split_whitespace().collect();
+            let global_scale: f32 = f[0].parse().unwrap();
+            let quant_dc: f32 = f[1].parse().unwrap();
+            let precision: u8 = f[2].parse().unwrap();
+            let bits = |i: usize| u32::from_str_radix(f[i], 16).unwrap();
+            let y = f32::from_bits(bits(3));
+            let b = f32::from_bits(bits(4));
+            let expected_y: i32 = f[5].parse().unwrap();
+            let expected_b: i32 = f[6].parse().unwrap();
+            let legacy_b: i32 = f[7].parse().unwrap();
+            let scale = global_scale / 65536.0;
+            let scale_dc = scale * quant_dc;
+            let mul = (1u32 << precision) as f32;
+            let mut params = DistanceParams::compute(1.0);
+            params.global_scale = global_scale as i32;
+            params.quant_dc = quant_dc as i32;
+            params.scale = scale;
+            params.inv_scale = 1.0 / scale;
+            params.scale_dc = scale_dc;
+            params.extra_dc_precision = precision;
+            let y_factor = encoder.reference_dc_y_factor(&params).unwrap();
+            assert_eq!(y_factor.to_bits(), bits(9), "Y step: {line}");
+            assert_eq!((INV_DC_QUANT[C_Y] * scale_dc * mul).to_bits(), bits(8));
+            separating_cases += usize::from(expected_b != legacy_b);
+            for gradient in [false, true] {
+                for offset in [0, 2] {
+                    let stride = 1 + 2 * offset;
+                    for reference in [false, true] {
+                        let mut quantized =
+                            core::array::from_fn(|_| vec![vec![123456; stride]; stride]);
+                        let mut floats = core::array::from_fn(|_| vec![f32::NAN; stride * stride]);
+                        floats[0][offset * stride + offset] = 0.0;
+                        floats[C_Y][offset * stride + offset] = y;
+                        floats[2][offset * stride + offset] = b;
+                        requantize_dc_group(
+                            &mut quantized,
+                            &floats,
+                            stride,
+                            offset,
+                            offset,
+                            offset + 1,
+                            offset + 1,
+                            scale_dc,
+                            precision,
+                            gradient,
+                            reference.then_some(y_factor),
+                        );
+                        assert_eq!(quantized[C_Y][offset][offset], expected_y, "Y: {line}");
+                        assert_eq!(
+                            quantized[2][offset][offset],
+                            if reference { expected_b } else { legacy_b },
+                            "reference={reference}, gradient={gradient}: {line}"
+                        );
+                        for channel in &quantized {
+                            for (row, values) in channel.iter().enumerate() {
+                                for (col, &value) in values.iter().enumerate() {
+                                    if row != offset || col != offset {
+                                        assert_eq!(value, 123456);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            cases += 1;
+        }
+        assert_eq!(cases, 10);
+        assert_eq!(separating_cases, 5);
     }
 }

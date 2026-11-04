@@ -2694,6 +2694,7 @@ impl VarDctEncoder {
                 params.scale_dc,
                 params.extra_dc_precision,
                 self.uses_gradient_dc_quantization(),
+                self.reference_dc_y_factor(&params),
             );
         }
 

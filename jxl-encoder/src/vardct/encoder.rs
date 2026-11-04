@@ -2780,6 +2780,14 @@ impl VarDctEncoder {
         self.resolved_improvements.dc_encode_libjxl_parity && self.profile.decoding_speed_tier >= 1
     }
 
+    /// Reference GetDcStep(Y) / extra precision, preserving its rounding order.
+    pub(crate) fn reference_dc_y_factor(&self, params: &DistanceParams) -> Option<f32> {
+        self.resolved_improvements.dc_encode_libjxl_parity.then(|| {
+            (params.inv_scale / params.quant_dc as f32) * super::quant::DC_QUANT[1]
+                / (1u32 << params.extra_dc_precision) as f32
+        })
+    }
+
     pub(super) fn needs_metric_reference(&self) -> bool {
         #[allow(unused_mut)]
         let mut need = false;
@@ -6334,6 +6342,7 @@ impl VarDctEncoder {
                 params.scale_dc,
                 params.extra_dc_precision,
                 self.uses_gradient_dc_quantization(),
+                self.reference_dc_y_factor(&params),
             );
         }
         // W45-RECON part 20 probe: dump post-WP quant_dc.
@@ -7501,6 +7510,7 @@ impl VarDctEncoder {
                 params.scale_dc,
                 params.extra_dc_precision,
                 self.uses_gradient_dc_quantization(),
+                self.reference_dc_y_factor(&params),
             );
         }
 

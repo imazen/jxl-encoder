@@ -1731,6 +1731,20 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
+### RESOLVED 2026-11-04: strict DC CfL post-scale cancellation crossed rounding boundaries
+
+`requantize_dc_group` cancelled source-domain Y subtraction into a post-scale
+constant and claimed f32 identity. Ten controls from unmodified v0.12 Quantizer
+and QuantizeGradient objects distinguish five cases. Strict parity now keeps
+`(B - quant_Y * (GetDcStep(Y) / mul)) * inv_B`; normal calibrated arithmetic
+stays unchanged. Still, precomputed, animation and Butteraugli reconstruction
+passes share the same helper. Both predictor modes, offset strides and padding
+are checked. All 81 selected lock/drift checks, 1,667 library tests and strict
+library/test Clippy pass with existing ignores and expectations unchanged.
+`~/tmp/jxl-cfl-fix-check.log`: rc0, 85 s, run-heavy peak RSS 1.66 GiB.
+The ten remaining issue-138 PQ quality failures still require investigation.
+
+
 ### RESOLVED 2026-11-04: secondary gain-map ICC altered gain-value interpretation
 
 The private gain-map JPEG transcode now imports the primary's orientation
