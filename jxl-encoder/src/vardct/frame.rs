@@ -40,7 +40,7 @@ pub struct DistanceParams {
     pub epf_iters: u32,
     /// **W44-AUDIT-8 Phase 5**: extra DC precision (bitstream field).
     ///
-    /// Mirrors libjxl `nl_dc = speed_tier < kFalcon` (effort ≤ 7) →
+    /// Mirrors libjxl `nl_dc = speed_tier < kFalcon` (effort ≥ 4) →
     /// `extra_dc_precision = 1` → DC quantized at 2× the integer precision
     /// (encoder multiplies `inv_factor` by `1 << extra_dc_precision`;
     /// decoder applies the symmetric `mul = 1.0 / (1 << extra_dc_precision)`

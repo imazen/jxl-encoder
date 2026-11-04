@@ -2066,6 +2066,20 @@ lookup, descriptors, metadata or compact/non-compact decisions.
 
 ## G. RESOLVED divergences (historical)
 
+### 2026-11-04: experimental Gradient-relative DC control
+
+An isolated control selected Gradient instead of Weighted whenever existing
+nonlinear DC quantization was enabled and `decoding_speed_tier >= 1`.
+Six frozen vector families from unmodified libjxl v0.12 `QuantizeGradient`
+match every Y coefficient, including narrow images, deadzone/tie boundaries,
+strided reference rows and offset DC regions. This does not establish complete
+encoder byte parity. The thirty real-image ablation variants retain the same
+0/10 original, 3/10 loop-only and 8/10 DC-parity-loop passing counts; the two
+residuals remain. The experimental default policy is not adopted. A strict
+parity repair must use the existing `dc_encode_libjxl_parity` permission so
+normal calibrated policies retain their output.
+
+
 ### 2026-11-04: PQ input uses the selected display-relative units (`403263d5`)
 
 | Site | Ours after repair | libjxl v0.12 | Status |

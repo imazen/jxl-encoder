@@ -2683,7 +2683,7 @@ impl VarDctEncoder {
             || (std::env::var_os("JXL_W44_AUDIT_8_P6_FORCE_QUANTIZE_WP").is_some()
                 && self.profile.effort <= 7)
         {
-            super::quantize_wp::requantize_dc_group_wp(
+            super::quantize_wp::requantize_dc_group(
                 &mut transform_out.quant_dc,
                 &transform_out.float_dc,
                 xsize_blocks,
@@ -2693,6 +2693,7 @@ impl VarDctEncoder {
                 ysize_blocks,
                 params.scale_dc,
                 params.extra_dc_precision,
+                self.profile.decoding_speed_tier >= 1,
             );
         }
 

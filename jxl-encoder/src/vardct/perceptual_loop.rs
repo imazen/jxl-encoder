@@ -2164,11 +2164,11 @@ impl VarDctEncoder {
             // `quant_dc` with fresh round() values, so re-applying WP
             // per iter is safe — and the post-loop transform pass
             // produces a fresh pre-WP grid that the existing post-loop
-            // `requantize_dc_group_wp` call handles once.
+            // `requantize_dc_group` call handles once.
             // Env kill-switch `JXL_LOOP_WP_OFF=1` for A/B bisection only.
             if self.profile.use_libjxl_wp_dc_quant && std::env::var_os("JXL_LOOP_WP_OFF").is_none()
             {
-                super::quantize_wp::requantize_dc_group_wp(
+                super::quantize_wp::requantize_dc_group(
                     &mut transform_out.quant_dc,
                     &transform_out.float_dc,
                     xsize_blocks,
@@ -2178,6 +2178,7 @@ impl VarDctEncoder {
                     ysize_blocks,
                     current_params.scale_dc,
                     current_params.extra_dc_precision,
+                    self.profile.decoding_speed_tier >= 1,
                 );
             }
 
