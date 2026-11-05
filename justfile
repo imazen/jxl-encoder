@@ -96,6 +96,10 @@ issue138-replay binary out corpus icc:
 issue138-retained-replay binary out corpus icc:
     python3 scripts/replay_issue138.py {{quote(binary)}} {{quote(out)}} {{quote(corpus)}} {{quote(icc)}} --retain
 
+# Exact recorded cells; all source/encoded/reference artifacts remain retained.
+conformance-replay binary cases out corpus icc:
+    python3 scripts/replay_issue138.py {{quote(binary)}} {{quote(out)}} {{quote(corpus)}} {{quote(icc)}} --cases-tsv {{quote(cases)}} --retain
+
 issue138-ablate binary replay out corpus icc:
     python3 scripts/ablate_issue138.py {{quote(binary)}} {{quote(replay)}} {{quote(out)}} {{quote(corpus)}} {{quote(icc)}}
 
