@@ -197,6 +197,7 @@ jobs:
           path: |
             ${{ runner.temp }}/rd_monotonicity.tsv
             ${{ runner.temp }}/effort_monotonicity.tsv
+            ${{ runner.temp }}/effort_monotonicity.tsv.artifacts/
             ${{ runner.temp }}/rd_monotonicity.tsv.artifacts/
             ~/tmp/rd-gate-test-*/
             ~/tmp/lz77-keep-best-nightly/
