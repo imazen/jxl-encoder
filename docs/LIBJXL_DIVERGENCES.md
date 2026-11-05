@@ -353,7 +353,7 @@ sections match. The whole residual is inside the entropy-coded sections:
 
 | section | cjxl | ours | delta | pct |
 |---|---|---|---|---|
-| PQ pixel DC quantization (`VarDctEncoder::apply_pq_dc_precision`, W44-AUDIT-8) | Resolved PQ AND `dc_encode_libjxl_parity == false`: precision 3, nearest rounding | Precision 1 at effort >= 4, 0 below; prediction-relative shaping at effort >= 4 | Verified candidate; established PQ ramp fingerprint migration pending review | Same private policy for still, streaming and animation; AC, entropy predictors, HDR loop budgets and decoder pins unchanged |
+| PQ pixel DC quantization (`VarDctEncoder::apply_pq_dc_precision`, W44-AUDIT-8) | Resolved PQ AND `dc_encode_libjxl_parity == false`: precision 3, nearest rounding | Precision 1 at effort >= 4, 0 below; prediction-relative shaping at effort >= 4 | Verified repair; single PQ ramp fingerprint migration approved on November 5 | Same private policy for still, streaming and animation; AC, entropy predictors, HDR loop budgets and decoder pins unchanged |
 | HfGroup (AC coefficients) | 4 129 908 | 4 165 206 | +35 298 | **+0.9 %** |
 | all-in-one (single-group cells) | 334 360 | 357 653 | +23 293 | +7.0 % |
 | LfGroup (DC modular) | 286 909 | 304 803 | +17 894 | +6.2 % |

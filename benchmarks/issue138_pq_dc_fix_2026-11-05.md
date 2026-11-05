@@ -1,7 +1,7 @@
 # PQ DC quantization candidate, 2026-11-05
 
-Status: verified candidate; one established PQ byte fingerprint is held for
-owner review. No expected fingerprint, quality bound or ignore was changed.
+Status: verified repair; the owner approved the single PQ byte fingerprint
+update on November 5. Quality bounds and ignore annotations are unchanged.
 The product implementation matches source snapshot `99a4da7f`; later changes
 add retained artifacts and share the existing test decoder once per test binary.
 Baseline is orientation-integrated main `1989fb37`. All checks use the same
@@ -39,16 +39,17 @@ No public API or dependency changes.
   increase is a 3x2 progressive-DC file, 83 to 132 bytes. Timing is not a
   performance comparison.
 
-## The held fingerprint
+## The approved fingerprint
 
 `hash_lock_features::lossy_mg_rgb16_pq_512x512_ramp_e7_d1` changes from
 3189 to 5638 bytes. Its file-header fingerprint stays
 `0x739c20a36de9e959`; the new frame fingerprint is `0x51a9a261a072a71c`
-(previously `0x5f169307b2ba0537`). The old sidecar expectation is intact.
+(previously `0x5f169307b2ba0537`). Only this sidecar expectation changes,
+with owner approval.
 The complete hash run reports 68 other passes, this one failure and one
 pre-existing ignore. All five strict byte-lock tests and seven divergence
-checks pass separately. This is an expected encoding-policy change requiring
-review, not a claim that the unchanged fingerprint gate is green.
+checks pass separately. This was the expected encoding-policy change presented for
+review. Final validation after the approved update is recorded below.
 
 [Independent ramp measurement](issue138_pq_ramp_quality_2026-11-05.json)
 uses the exact same retained 512x512 RGB16 source, SHA256
@@ -78,8 +79,8 @@ Use the frozen exporter and unchanged pins, then run under
 `just issue138-retained-replay <binary> <new-out> <corpus> <icc>`,
 `just pq-dc-validation`, and
 `just issue138-pq-pairs <baseline> <candidate> <prior-results.tsv> <new-out> <corpus> <icc>`.
-The held hash expectation intentionally stops the full validation recipe;
-its failure and all later independent gate results are retained separately.
+The original held-fingerprint failure and subsequent independent gate results
+remain retained; the approved expectation permits the complete validation recipe.
 `just pq-ramp-quality <verified-djxl> <retained-before> <retained-after> <new-out>`
 recomputes the ramp comparison (NumPy required).
 
