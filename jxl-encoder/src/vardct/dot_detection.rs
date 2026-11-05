@@ -34,7 +34,7 @@
 //! components with `find_cc`, fits candidates with `fit_gaussian_fast`, and
 //! filters them with `compute_dot_losses`. The VarDCT encoder converts accepted
 //! dots with `PatchesData::from_dots` and runs this path when enabled, at effort
-//! >= 7 and distance >= 3.0, when no text-like patches were selected.
+//! 7 or above and distance 3.0 or above, when no text-like patches were selected.
 //! Further fitting or policy changes need separate parity/quality qualification.
 
 extern crate alloc;
