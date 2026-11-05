@@ -883,6 +883,7 @@ impl LosslessConfig {
         // Keep selection on the existing learned-ANS backward-reference
         // surface; explicit RLE/Huffman/LZ77-off choices retain their meaning.
         p.lz77_keep_best &= p.effort >= 8
+            && p.decoding_speed_tier == 0
             && p.lz77
             && p.use_ans
             && p.tree_learning

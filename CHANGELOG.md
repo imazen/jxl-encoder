@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Honor explicit faster-decoding settings before lossless LZ77 keep-best selection at every nonzero tier; preserve the default tier-zero policy.
+
 - Fetch the five hash-pinned nightly gate images from their matching PNG-v3 SDR URLs; retain all existing hashes, destination paths and explicit manifest URLs.
 
 - Fresh zeroed budget buffers request allocator-zeroed storage. Fallible refusal retries through Vec to preserve a real TryReserveError payload; size checks and budget accounting remain intact.

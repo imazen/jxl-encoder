@@ -1669,7 +1669,7 @@ jxl_encoder_macros::strategy_def! {
             divergence_row_ref = "lossless_tree_self_repair (cost-based randomized re-gather)",
         },
         /// Compare lossless LZ77 candidates by complete production coded size.
-        /// Requires effort >= 8, learned ANS and Greedy/Optimal LZ77.
+        /// Requires effort >= 8, decoding-speed tier 0, learned ANS and Greedy/Optimal LZ77.
         /// RLE, Huffman, LZ77-off and faster-decoding restrictions take precedence.
         /// This adds candidate construction and entropy coding work per encode.
         lossless_lz77_keep_best: bool {

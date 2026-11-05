@@ -115,6 +115,9 @@ fn run_arm(arm: &str) {
             .with_lz77_method(crate::entropy_coding::lz77::Lz77Method::Rle),
         enabled.clone().with_ans(false),
         enabled.clone().with_faster_decoding(1),
+        enabled.clone().with_faster_decoding(2),
+        enabled.clone().with_faster_decoding(3),
+        enabled.clone().with_faster_decoding(4),
         enabled.with_strategy(EncoderStrategy::Libjxl),
     ] {
         assert!(!disabled.effective_profile().lz77_keep_best);
