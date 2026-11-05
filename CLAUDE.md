@@ -1768,6 +1768,19 @@ misclassify that CLI limitation as an invalid stream or strip the ICC to hide it
 
 ## Known Bugs (ACTIVE)
 
+### RESOLVED 2026-11-05: concurrent version-bound update imported sibling lock drift
+
+`e7523108` widened the archmage/magetypes bounds but also recorded mutable
+local sibling dependencies in Cargo.lock, including a git beta archmage
+universe. Its current-main lock fails `cargo metadata --locked` against the
+frozen CI siblings. Resolving that exact pinned closure with the widened
+manifests reproduces the previous lock byte for byte (SHA256
+`e71fdbe9400fd3b8486a9f607ecbda8d3063e3df550b50650499470525b77f57`).
+The corrected lock keeps the authorized version bounds. Frozen sweep inputs
+and binaries are untouched. Metadata repair is verified; the broader checks
+and remote CI retain their separate verdicts.
+
+
 ### 2026-11-05: fresh sweep PQ agreement and lossless effort findings
 
 The ongoing frozen sweep has additional PQ near-black agreement failures;
