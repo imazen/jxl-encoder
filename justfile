@@ -129,6 +129,7 @@ pq-dc-validation manifest="Cargo.toml":
     just animation-hdr-loop-check {{quote(manifest)}}
     just hdr-intensity-check {{quote(manifest)}}
     just hdr-loop-override-check {{quote(manifest)}}
+    just pq-existing-hdr-check {{quote(manifest)}}
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --test it hash_lock
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --test it strategy_libjxl
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --test it divergence_table_drift
@@ -136,6 +137,12 @@ pq-dc-validation manifest="Cargo.toml":
     cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience --lib -- -D warnings
     cargo fmt -p jxl-encoder -- --check
     python3 -m unittest discover -s scripts -p test_jxl_bitstream_diff.py
+
+# Existing HDR quality, signaling, float-depth and fine-quantization contracts.
+pq-existing-hdr-check manifest="Cargo.toml":
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --test it hdr_
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --test it lossy_float_bitdepth
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --test it low_effort_static_codes
 
 conformance-build manifest="tools/conformance-sweep/Cargo.toml":
     cargo build --locked --release --manifest-path {{quote(manifest)}}

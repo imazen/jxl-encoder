@@ -39,6 +39,21 @@ No public API or dependency changes.
   increase is a 3x2 progressive-DC file, 83 to 132 bytes. Timing is not a
   performance comparison.
 
+## Why the ramp is not the acceptance case
+
+These failures are valid lossy streams exceeding the established signal-fidelity
+bounds. The repair does not address malformed streams or establish a
+matched-quality RD gain. The ramp is a byte-lock control with a costly tradeoff;
+the reported failing colors can improve much more at similar file sizes.
+
+For example, the retained original-option study for 2965/77723 records mean PQ
+signal error 0.079336 at 9283 bytes. The repaired stream is 0.007510 at 9294
+bytes, with reference error 0.011808. The source hash and repaired stream hash
+are in the [full replay table](issue138_pq_fixed_replay_2026-11-05.tsv);
+the earlier original-option measurement is in the
+[loop ablation table](issue138_loop_ablation_2026-11-04.tsv). These selected
+measurements do not imply that every PQ input improves.
+
 ## The approved fingerprint
 
 `hash_lock_features::lossy_mg_rgb16_pq_512x512_ramp_e7_d1` changes from
@@ -107,3 +122,20 @@ The independent ramp comparison reports rc0, peak RSS 0.06 GiB.
 Final shared-helper/lint log `~/tmp/jxl-pq-final-lint-20261105.log`: rc0,
 49s, peak RSS 1.00 GiB, minimum available 12910 MiB. This last change is
 test-only; product Rust sources match the all-21 passing `99a4da7f` snapshot.
+
+After the owner-approved single fingerprint update, `just pq-dc-validation`
+passes end to end on source `a73137ac`: 1668 library tests (29 existing
+ignores), 10 animation contracts, five HDR metadata/intensity tests, 20
+packed-reference/loop/VDP2 controls, 69 hash checks (one existing ignore),
+the strict selector (10 pass, one existing ignore), seven divergence checks,
+workspace and minimal strict Clippy, scoped formatting and three independent
+parser tests. No other expected fingerprint changed.
+Log: `~/tmp/jxl-pq-approved-validation-20261105.log`, rc0, 138s, peak RSS
+1.63 GiB, minimum available 12087 MiB, peak load 7.03. These are resource
+receipts, not an isolated performance comparison.
+
+The supplementary existing-contract selector also passes unchanged: 34 HDR
+quality/signaling/VDP2 tests, five lossy float bit-depth tests and two low-effort
+static-code tests. `just pq-existing-hdr-check` reproduces it and is now part
+of the full recipe. Log: `~/tmp/jxl-pq-existing-hdr-20261105.log`, rc0, 1s,
+peak RSS 0.21 GiB, minimum available 16803 MiB, peak load 1.76.
