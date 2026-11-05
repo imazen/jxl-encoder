@@ -628,6 +628,9 @@ streaming-admission-test *args:
 fuzz-encoder target corpus artifacts *args:
     TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 nice -n 19 cargo +nightly fuzz run --codegen-units 16 {{target}} {{corpus}} -- -artifact_prefix={{artifacts}}/ -rss_limit_mb=2048 {{args}}
 
+fuzz-replay input output manifest="Cargo.toml":
+    cargo run --locked --release --manifest-path {{quote(manifest)}} -p jxl-encoder --example streaming_fuzz_replay -- {{quote(input)}} {{quote(output)}}
+
 fuzz-regression:
     DJXL_PATH="{{justfile_directory()}}/.ci-libjxl/tools/djxl" TMPDIR="$HOME/tmp" nice -n 19 cargo test -p jxl-encoder -j 4 --test fuzz_regression
 

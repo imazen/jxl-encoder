@@ -3395,3 +3395,7 @@ required-features = ["std", "jpeg-reencoding"]
 name = "jpeg_coeff_dump"
 path = "examples/jpeg_coeff_dump.rs"
 required-features = ["std", "jpeg-reencoding"]
+
+[[example]]
+name = "streaming_fuzz_replay"
+required-features = ["std"]
