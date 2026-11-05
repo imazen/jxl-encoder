@@ -289,9 +289,8 @@ checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
 
 [[package]]
 name = "zenutils-apidoc"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "65a6d52c06c93b0b41541a5eb40dd397134981df6cb44c38298b160281079925"
+version = "0.1.2"
+source = "git+https://github.com/imazen/zenutils?rev=aad4ee3ed25b7f3fef09e2a172892ecfefc02873#aad4ee3ed25b7f3fef09e2a172892ecfefc02873"
 dependencies = [
  "public-api",
  "rustup-toolchain",

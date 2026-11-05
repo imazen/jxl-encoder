@@ -1,0 +1,27 @@
+# jxl-encoder-simd public API — additions from non-default features
+# features: avx512,std
+# (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
+# Encodings: crate-name prefix stripped; auto traits collapse to a
+# count + exceptions; trait impls collapse to one roster line per
+# type (method signatures live at the trait definition); blanket
+# impls omitted; re-export duplicates annotated `[also: path]`.
+# DO NOT EDIT BY HAND — commit regenerated changes with the code.
+
+(no additional public surface)
+## arch shapes (6 shapes: 6 on every recorded arch, 0 arch-unique)
+
+[x86_64] pub fn target_features::entropy_coeffs_<tier>(&[f32], &[f32], &[f32], &[f32], usize, f32, f32, f32, f32, bool, &mut [f32]) -> EntropyCoeffResult
+[x86_64] pub fn target_features::forward_xyb_<tier>(XybCubeRoot, &[f32], &[f32], &[f32], &mut [f32], &mut [f32], &mut [f32], usize)
+[x86_64] pub fn target_features::gaborish_5x5_<tier>(&mut [f32], &[f32], usize, usize, f32, f32, f32, f32, f32, f32)
+[x86_64] pub fn target_features::inverse_xyb_planar_<tier>(&[f32], &[f32], &[f32], &mut [f32], &mut [f32], &mut [f32], usize)
+[x86_64] pub fn target_features::pixel_domain_loss_<tier>(&[f32], &[f32], usize, usize, f32, usize, usize) -> f64
+[x86_64] pub fn target_features::shannon_entropy_<tier>(&[i32], usize) -> f32
+
+## arch surface: x86_64 (6 lines)
+
+pub fn target_features::entropy_coeffs_v4(&[f32], &[f32], &[f32], &[f32], usize, f32, f32, f32, f32, bool, &mut [f32]) -> EntropyCoeffResult
+pub fn target_features::forward_xyb_v4(XybCubeRoot, &[f32], &[f32], &[f32], &mut [f32], &mut [f32], &mut [f32], usize)
+pub fn target_features::gaborish_5x5_v4(&mut [f32], &[f32], usize, usize, f32, f32, f32, f32, f32, f32)
+pub fn target_features::inverse_xyb_planar_v4(&[f32], &[f32], &[f32], &mut [f32], &mut [f32], &mut [f32], usize)
+pub fn target_features::pixel_domain_loss_v4(&[f32], &[f32], usize, usize, f32, usize, usize) -> f64
+pub fn target_features::shannon_entropy_v4(&[i32], usize) -> f32

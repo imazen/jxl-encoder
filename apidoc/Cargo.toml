@@ -9,6 +9,6 @@ edition = "2024"
 publish = false
 
 [dependencies]
-zenutils-apidoc = "0.1.0"
+zenutils-apidoc = { git = "https://github.com/imazen/zenutils", rev = "aad4ee3ed25b7f3fef09e2a172892ecfefc02873" }
 
 [workspace]

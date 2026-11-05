@@ -1,0 +1,48 @@
+# jxl-encoder-simd public API — doc(hidden) items and excluded-feature surface
+# excluded features: (none)
+# (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
+# Encodings: crate-name prefix stripped; auto traits collapse to a
+# count + exceptions; trait impls collapse to one roster line per
+# type (method signatures live at the trait definition); blanket
+# impls omitted; re-export duplicates annotated `[also: path]`.
+# DO NOT EDIT BY HAND — commit regenerated changes with the code.
+
+## summary
+#
+#   pub modules                                 1
+#   free functions                              8
+#   trait roster entries (type × trait)         2
+#
+# per-module pub lines:
+#   (root)                            1
+#   bench_cbrt                        8
+
+## items (9 lines)
+
+pub fn bench_cbrt::cbrt_libjxl_batch(&[f32], &mut [f32])
+pub fn bench_cbrt::cbrt_libjxl_batch_impl_scalar(archmage::tokens::ScalarToken, &[f32], &mut [f32], usize)
+pub fn bench_cbrt::cbrt_lowp_batch(&[f32], &mut [f32])
+pub fn bench_cbrt::cbrt_lowp_batch_impl_scalar(archmage::tokens::ScalarToken, &[f32], &mut [f32], usize)
+pub fn bench_cbrt::cbrt_lowp_vecguess_batch(&[f32], &mut [f32])
+pub fn bench_cbrt::cbrt_lowp_vecguess_batch_impl_scalar(archmage::tokens::ScalarToken, &[f32], &mut [f32], usize)
+pub fn bench_cbrt::cbrt_midp_batch(&[f32], &mut [f32])
+pub fn bench_cbrt::cbrt_midp_batch_impl_scalar(archmage::tokens::ScalarToken, &[f32], &mut [f32], usize)
+pub mod bench_cbrt
+
+## trait impls (2 types)
+
+EntropyCoeffResult: TrivialClone
+XybCubeRoot: TrivialClone
+## arch shapes (4 shapes: 4 on every recorded arch, 0 arch-unique)
+
+[x86_64] pub fn bench_cbrt::cbrt_libjxl_batch_impl_<tier>(archmage::tokens::generated::<arch>::<ArchToken>, &[f32], &mut [f32], usize)
+[x86_64] pub fn bench_cbrt::cbrt_lowp_batch_impl_<tier>(archmage::tokens::generated::<arch>::<ArchToken>, &[f32], &mut [f32], usize)
+[x86_64] pub fn bench_cbrt::cbrt_lowp_vecguess_batch_impl_<tier>(archmage::tokens::generated::<arch>::<ArchToken>, &[f32], &mut [f32], usize)
+[x86_64] pub fn bench_cbrt::cbrt_midp_batch_impl_<tier>(archmage::tokens::generated::<arch>::<ArchToken>, &[f32], &mut [f32], usize)
+
+## arch surface: x86_64 (4 lines)
+
+pub fn bench_cbrt::cbrt_libjxl_batch_impl_v3(archmage::tokens::generated::x86::X64V3Token, &[f32], &mut [f32], usize)
+pub fn bench_cbrt::cbrt_lowp_batch_impl_v3(archmage::tokens::generated::x86::X64V3Token, &[f32], &mut [f32], usize)
+pub fn bench_cbrt::cbrt_lowp_vecguess_batch_impl_v3(archmage::tokens::generated::x86::X64V3Token, &[f32], &mut [f32], usize)
+pub fn bench_cbrt::cbrt_midp_batch_impl_v3(archmage::tokens::generated::x86::X64V3Token, &[f32], &mut [f32], usize)
