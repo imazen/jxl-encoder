@@ -1801,10 +1801,16 @@ The Linux x86 nightly job verifies the CPU flag before using that runtime.
 The GitHub rerun still times out on that same unmutated input (77-second
 slow unit, then a 67-second alarm); this local pass is insufficient. cc 1.9's
 new automatic ASan forwarding also instruments the C++ fuzzer engine. A
-wrapper scoped to pinned libfuzzer-sys 0.4.13 engine sources is under test;
+wrapper scoped to pinned libfuzzer-sys 0.4.13 engine sources passes locally;
 Rust and other dependency instrumentation remain unchanged. The rerun passes
 the repaired LZ77 gate. Its separate 72-pair faster-decoding replay passes
 every sample check in all three decoders; seven streams change bytes.
+The scoped runtime campaign passes 52 executions with 30 added corpus units
+and a 36-second slowest unit; all Rust sanitizer/coverage checks remain.
+Remote confirmation is pending. The rerun reaches a separate lossless effort
+failure on the 512-square Redouté crop: e3 180,557 bytes, e5 182,641. The
+rate gate remains unchanged; local stream verification and attribution are
+in progress. The final evidence upload now includes that effort table.
 
 
 ### RESOLVED 2026-11-05: nightly gate fetched raw originals for pinned SDR renders

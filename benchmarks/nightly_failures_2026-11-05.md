@@ -118,11 +118,39 @@ build uses a compiler wrapper that opts only the pinned engine's Fuzzer*.cpp
 files out of that automatic flag. Rust ASan/coverage and every other package
 retain their flags; compiler probes and unknown engine versions retain them
 too. Three scope-control tests pass. This restores the earlier engine build
-configuration; no timeout, RSS cap or codec expectation changes. Verification
-is in progress.
+configuration; no timeout, RSS cap or codec expectation changes.
+
+The scoped build retains all 499,904 Rust coverage counters. Its engine
+TracePC object has zero ASan report-symbol references (five before), while
+Rust's split-search disassembly retains 253 report calls. The fixed input
+passes both callback/leak-check executions in 72.68 seconds total, maximum
+RSS 401,224 KiB. The build/proof/replay wrapper passes: rc0, 125 seconds,
+peak RSS 1.72 GiB, minimum available 46,039 MiB. The binary SHA256 is
+`d85aa65a52bbcb33bd8e73901f05647ebfdc8efda9607b8ef7bf06d81dda0157`.
+Fuzz Cargo.lock remains
+`fb7388e17d083ba0185ee29a72dac0417ed0bb27ff1fb92f67f14a0a017d1104`.
+
+The original 16-seed/300-second campaign also passes: 52 executions,
+30 added corpus units, slowest unit 36 seconds, rc0. `/usr/bin/time -v`
+records 303.53 seconds and 611,892 KiB maximum RSS. `run-heavy`: rc0,
+304 seconds, peak RSS 0.58 GiB, minimum available 47,299 MiB, peak load 1.72.
+Logs are `fuzz-runtime-replay.log` and `fuzz-runtime-campaign.log` in the
+retained run root. GitHub runner confirmation remains required.
 
 [The independent 72-pair faster-decoding replay](faster_decoding_keep_best_2026-11-05.md)
 passes every original conformance check and verifies identical source samples.
 The two corpus iterator changes also pass their original canonicalization test
 and all five resource tests: `~/tmp/jxl-corpus-iterator-validation-20261105.log`,
 rc0, 106 seconds, peak RSS 2.13 GiB, minimum available 45,729 MiB.
+
+## Remaining effort-envelope failure
+
+The same GitHub rerun passes the repaired LZ77 gate, corpus decoder gates and
+distance gate, then reports one lossless effort regression: the 512-square
+center crop of `6824_scans-text_redoute-fr-description_p0052_2415x3528.png`
+grows from 180,557 bytes at effort 3 to 182,641 at effort 5. Its source PNG-v3
+SHA256 is `e0825408d8b880ea80385d9d28af238f636b9f997b33770d9473ddc0bccec22c`.
+The effort gate currently does not retain the encoded streams, so independent
+local pixel verification and RCT/patch/palette attribution are the next checks.
+The upload now runs after both RD gates and includes the effort TSV; the
+existing thresholds and allowlist remain unchanged.
