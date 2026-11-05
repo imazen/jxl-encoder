@@ -100,6 +100,9 @@ issue138-retained-replay binary out corpus icc:
 conformance-replay binary cases out corpus icc:
     python3 scripts/replay_issue138.py {{quote(binary)}} {{quote(out)}} {{quote(corpus)}} {{quote(icc)}} --cases-tsv {{quote(cases)}} --retain
 
+lossless-effort-ablate encoder decoder source out:
+    TMPDIR="$HOME/tmp" uv run --with pillow python scripts/ablate_lossless_effort.py {{quote(encoder)}} {{quote(decoder)}} {{quote(source)}} {{quote(out)}}
+
 issue138-ablate binary replay out corpus icc:
     python3 scripts/ablate_issue138.py {{quote(binary)}} {{quote(replay)}} {{quote(out)}} {{quote(corpus)}} {{quote(icc)}}
 
