@@ -980,3 +980,7 @@ effort-gate-evidence-check binary source before out:
 
 float-decode-evidence-check:
     uv run --with numpy python scripts/test_compare_float_decodes.py
+
+# Diagnostic copies only; retain the original failed PQ stream unchanged.
+pq-linear-control input out *args:
+    TMPDIR="$HOME/tmp" uv run --with numpy python scripts/pq_linear_control.py {{quote(input)}} {{quote(out)}} {{args}}

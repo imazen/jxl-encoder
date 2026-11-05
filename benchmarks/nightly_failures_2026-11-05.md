@@ -199,3 +199,22 @@ refusal in two tests. Final log on r5900xt:
 `~/tmp/jxl-effort-hardened-final-20261105.log`: rc0, 12 seconds, peak RSS
 0.48 GiB, minimum available 47480 MiB, peak load 1.39. No encoder policy,
 allowlist or expected fingerprint changes in this evidence repair.
+
+
+## Pinned lock repair after the concurrent dependency-bound update
+
+`e7523108` widened the accepted archmage/magetypes bounds and also recorded
+mutable sibling dependencies in Cargo.lock. Current-main metadata fails with
+`--locked` against the frozen CI sibling closure. Resolving those same sources
+with the widened manifests reproduces the earlier validated lock exactly:
+SHA256 `e71fdbe9400fd3b8486a9f607ecbda8d3063e3df550b50650499470525b77f57`.
+Repair `5587755f` preserves the widened bounds and uses that resolved lock.
+
+The repaired closure passes locked metadata, 1669 default library tests
+(29 existing ignores), 64 feature hash checks, ten strict-strategy controls
+(one existing ignore), seven divergence checks and workspace all-target Clippy.
+The lock hash remains unchanged afterward. Complete wrapper on r5900xt:
+`~/tmp/jxl-pinned-lock-check-20261105.log`, rc0, 389 seconds, peak RSS
+1.60 GiB, minimum available 45820 MiB, peak load 4.08. A subsequent complete
+hash filter passes all 69 checks (one existing ignore); see the PQ report.
+Remote platform CI has its own verdict; local checks do not establish it.

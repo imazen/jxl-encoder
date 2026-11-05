@@ -1,7 +1,7 @@
 # Fresh conformance sweep, November 5, 2026
 
-Status: running with three retained FAIL cells; this is not a clean-sweep verdict.
-[Exact numerical controls for all three PQ agreement findings](pq_agreement_2026-11-05.md).
+Status: running with four retained FAIL cells; this is not a clean-sweep verdict.
+[Exact numerical controls for all four PQ agreement findings](pq_agreement_2026-11-05.md).
 The run remains active.
 The six known RD cells have already completed; their two hard inversions and
 one advisory remain. [Exact results](rd_known_2026-11-05.md).
