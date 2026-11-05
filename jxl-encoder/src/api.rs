@@ -8866,6 +8866,13 @@ impl<'a> EncodeRequest<'a> {
                 {
                     enc.profile.use_libjxl_wp_dc_quant = true;
                 }
+                // Diagnostic experiment: isolate PQ DC precision without
+                // changing the AC field, prediction rule or loop budget.
+                if ce.transfer_function == TransferFunction::Pq
+                    && !matches!(cfg.strategy(), crate::api::EncoderStrategy::Libjxl)
+                {
+                    enc.profile.extra_dc_precision = 3;
+                }
             }
         }
         // Tone mapping and intrinsic size from metadata

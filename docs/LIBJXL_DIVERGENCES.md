@@ -2420,3 +2420,12 @@ callers retain their explicit long-form policy when
 `header_all_default_fast_paths` is disabled. Changing a constructor to Relative
 does not enable that separate VarDCT policy. This retains its existing byte locks
 without changing their expectations; explicitly Perceptual encodings stay long form.
+
+## Unshipped PQ DC precision experiment (2026-11-05)
+
+The `experiment/issue138-pq-dc3` source sets extra DC precision to 3 for
+PQ pixel input outside Libjxl strategy. Reference v0.12 uses 1 at effort
+4 and above. AC quantization, predictor selection and loop budgets are
+unchanged. This is an attribution control, not an adopted policy; the
+production schedule remains documented above. No registry permission or
+public API is added.
