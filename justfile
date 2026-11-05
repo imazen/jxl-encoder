@@ -968,3 +968,15 @@ simd-api-doc manifest="apidoc/Cargo.toml":
 
 simd-api-doc-check manifest="apidoc/Cargo.toml":
     ZEN_API_DOC=check cargo test --manifest-path "{{manifest}}" simd_public_api_surface
+
+# Export the exact CI sibling closure without modifying sibling checkouts.
+# Invoke through run-heavy; destination must be a new directory outside the repo.
+stage-ci-workspace destination revision:
+    python3 scripts/stage_ci_workspace.py "{{destination}}" "{{revision}}"
+
+review-inventory destination:
+    python3 scripts/inventory_review_state.py "{{destination}}"
+
+# Includes historical benchmark coverage, using the complete locked CI graph.
+simd-api-arm-all-targets manifest="Cargo.toml":
+    cargo clippy --locked --manifest-path "{{manifest}}" -p jxl-encoder-simd --all-targets --target aarch64-unknown-linux-gnu -- -D warnings
