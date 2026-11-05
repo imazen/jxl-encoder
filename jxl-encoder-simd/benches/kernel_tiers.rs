@@ -33,6 +33,10 @@ fn ramp(n: usize, seed: u32) -> Vec<f32> {
 }
 
 #[cfg(target_arch = "aarch64")]
+#[allow(
+    deprecated,
+    reason = "Compare retained token entry points with historical scalar arms without changing benchmark semantics."
+)]
 fn bench_kernels(suite: &mut Suite) {
     use archmage::SimdToken;
     let t = archmage::NeonToken::summon().expect("ARM kernel benchmarks require NEON");
