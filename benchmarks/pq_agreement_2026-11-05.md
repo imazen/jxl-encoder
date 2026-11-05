@@ -1,15 +1,16 @@
-# Two retained PQ decoder-agreement findings, November 5
+# Three retained PQ decoder-agreement findings, November 5
 
-The fresh seed-2966 sweep records two additional FAIL cells. Both reproduce
+The fresh seed-2966 sweep records three additional FAIL cells. Both reproduce
 with unchanged inputs, decoder pins and the 0.0200 clamped RGB agreement
 bound. Attribution remains open; this is not a clean-sweep verdict or a
 confirmed encoder defect. The newer native precision repair does not close
-these two comparisons.
+these comparisons.
 
 | Index | Input and settings | Maximum pinned Rust/static difference | Samples above bound | Ours source MAE | cjxl source MAE |
 |---|---|---:|---:|---:|---:|
 | 149042 | windows, 300×260 RGBA PQ f32, d10/e9, progressive DC/LF frame | 0.025484640151262283 | 1 | 0.011809754146257161 | 0.01240237939219034 |
 | 179212 | CID22 2190188, 1100×900 RGB PQ f32, d1.5/e3, streaming rows 261 | 0.020733240991830826 | 1 | 0.018990510774835222 | 0.02081343074479673 |
+| 194142 | windows95, 900×1100 RGB PQ f32, d4.5/e3, EPF off, faster decoding 2 | 0.024154406040906906 | 1 | 0.008867056717274911 | 0.009076828083822647 |
 
 Signal MAE uses clamped decoder RGB and excludes source alpha zero. It is a
 separate diagnostic from the maximum agreement gate. Both reference encodes
@@ -32,6 +33,16 @@ The precision flag does not change the newer native result. The two libjxl
 builds differ by at most 0.006637332495301962 elsewhere in this stream.
 The paired cjxl stream's static/new-native maximum is 0.014362006913870573.
 
+At zero-based red (683,171) in 194142, both libjxl builds return
+0.022196322679519653; both pinned Rust decoders return
+0.04635072872042656, and newer native returns 0.046546801924705505.
+The precision flag does not change this value. The two libjxl builds differ
+by at most 0.0002446472644805908 in this stream. Its paired cjxl stream's
+static/new-native maximum is 0.002582557499408722. The third replay retains
+its expected failing verdict and matches the frozen input and stream hashes.
+Its controller passes in five seconds, peak RSS 0.31 GiB, minimum available
+47562 MiB, peak load 0.53.
+
 Thus these are additional near-black numerical disagreements for
 [decoder issue 73](https://github.com/imazen/zenjxl-decoder/issues/73), with a
 different reference-build pattern from the older 2965/28968 stream. The
@@ -50,6 +61,7 @@ The replayed input and stream hashes exactly match the live sweep artifacts:
 |---|---|---|
 | 149042 | `392c38ef443cc97e6bf4281db2594a95d5dabd30e4c6777a5399d4e887ad2644` | `7fa3cdcc19627ff9fffeb7d9f397ddebe2f2192a602e830e433fccc6d4e4e223` |
 | 179212 | `211d1d60bc432ad0edab4f78beb276f53059dafdc81e92a23e0057a03f3f48c4` | `2a58028421693274290010d698fd658b06d9c37c91c32e9532b655d55d658851` |
+| 194142 | `ce9c26eeb0cab28c6452d24897697744c5aae66c54e1e08aec1e1925abc4d54d` | `d3ec0aa626d6b6e2ae9d14fe61749316269a23cbdc373a220bf8b2617adcdb15` |
 
 Static djxl SHA256 is
 `67bdc98fdca7f93d7b77f3473e818b251ba107109ee83b3b37ccbd90066f2454`;
@@ -63,7 +75,8 @@ It is not substituted for the sweep's pinned decoder.
 
 Raw decoder samples, JSON dimensions, comparison reports, all encoded streams,
 source inputs and complete logs are retained on r5900xt under
-`/mnt/v/output/jxl-encoder/nightly-timeout-20261105/pq-deviation-replay/`.
+`/mnt/v/output/jxl-encoder/nightly-timeout-20261105/pq-deviation-replay/`
+and its adjacent `pq-deviation-third/` directory.
 Use `just conformance-replay` with a TSV selecting these two seed/index pairs
 and `--retain`; use `just compare-float-decodes` to compare exact f32 samples.
 PFM byte order and bottom-up rows are honored. The diagnostic retention path

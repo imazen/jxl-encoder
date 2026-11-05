@@ -42,7 +42,7 @@ The [November 5 six-cell recheck](../benchmarks/rd_known_2026-11-05.md)
 reproduces two hard known inversions and one below-threshold advisory. All
 six source and encoder stream hashes match September 26 exactly. The fresh
 [four-hour conformance run](../benchmarks/conformance_2026-11-05.md) is in
-progress; its expanded ICC set is explicitly recorded. Two additional
+progress; its expanded ICC set is explicitly recorded. Three additional
 [PQ agreement failures](../benchmarks/pq_agreement_2026-11-05.md) reproduce
 with unchanged pins and bounds. Their numerical attribution remains open.
 The nightly effort gate also reproduces a lossless scan growing from 180557
