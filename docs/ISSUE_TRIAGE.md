@@ -38,6 +38,12 @@ tests before relying on a status below.
 
 ## Quality and performance after correctness
 
+The [November 5 six-cell recheck](../benchmarks/rd_known_2026-11-05.md)
+reproduces two hard known inversions and one below-threshold advisory. All
+six source and encoder stream hashes match September 26 exactly. A fresh
+[four-hour conformance run](../benchmarks/conformance_2026-11-05.md) is in
+progress; its expanded ICC set is explicitly recorded.
+
 - [#114](https://github.com/imazen/jxl-encoder/issues/114) and
   [#103](https://github.com/imazen/jxl-encoder/issues/103): retain the
   independently corroborated IQA inversions, screenshot matched-quality
