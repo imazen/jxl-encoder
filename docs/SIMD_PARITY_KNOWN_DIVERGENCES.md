@@ -7,9 +7,10 @@ here are **not bugs to silently tolerate** — they are open work items
 flagged so future agents can attack them with full context instead of
 re-discovering the divergence from scratch.
 
-Pattern: when adding a parity test that fails on real inputs, mark it
-`#[ignore = "FIXME(SIMD-parity): <id> — <one-line>; see docs/SIMD_PARITY_KNOWN_DIVERGENCES.md"]`
-and add a section here.  The id format is `<module>-NNN`.
+Record new parity failures here with the source/input evidence and a stable id.
+Do not weaken an established assertion, loosen its tolerance or add an ignore
+without explicit owner approval. The entries below preserve existing registered
+exceptions; listing an id is not permission for another skip.
 
 ## Test infrastructure
 

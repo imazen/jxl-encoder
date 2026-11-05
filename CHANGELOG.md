@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Document the pending SIMD migration, complete branch/issue/TODO inventory and preserved legacy contracts in [SIMD transition](docs/SIMD_TRANSITION.md).
+
 ### jxl-encoder-simd
 
 - Added token-free `target_features` kernels for V3, V4, NEON and WASM128; deprecated the original token-taking entry points without removing their signatures. Native calls require matching feature attributes; WASM validates features when the engine loads the module.

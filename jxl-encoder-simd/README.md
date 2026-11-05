@@ -65,3 +65,5 @@ kernels. The original token-taking functions remain available and are deprecated
 Existing scalar functions continue to work without tokens. There is no new speed
 or inlining guarantee. The AVX-512 validation uses magetypes 0.9.31-beta.2, which
 provides narrow-vector traits absent from 0.9.30.
+
+Migration status, dependency limits and remaining work: [SIMD transition](../docs/SIMD_TRANSITION.md).

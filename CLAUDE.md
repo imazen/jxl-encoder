@@ -5583,20 +5583,15 @@ on unpadded dimensions — the C++ reference pads first and never worries about 
 - Group size is 256x256 pixels
 - Block size is 8x8 for DCT
 
-### SIMD Target Feature Boundaries (Feb 13, 2026)
+### SIMD target-feature boundaries (2026-11-05)
 
-The performance bottleneck with SIMD dispatch is NOT `summon()` (it's a cached atomic load, ~1.3ns).
-The bottleneck is the **target feature mismatch at call boundaries**. When a function without
-`#[target_feature]` calls a function with `#[target_feature]`, LLVM cannot inline across that
-boundary — costing up to 4-6x on hot loops (measured in archmage benchmarks).
-
-**Fix**: Expose concrete `_avx2(token, ...)` / `_neon(token, ...)` / `_scalar(...)` variants
-from jxl_simd. Have jxl_encoder callers be `#[arcane]` functions that accept a concrete token
-type, then call the matching variant directly. The token type IS the performance benefit —
-it carries `#[target_feature]` through the call chain.
-
-**Do NOT** create a `SimdDispatch` struct that wraps `Option<Token>`. That just moves the
-dispatch inside the function and doesn't solve the boundary problem.
+Current API migration and branch/issue inventory: [docs/SIMD_TRANSITION.md](docs/SIMD_TRANSITION.md),
+[PR 141](https://github.com/imazen/jxl-encoder/pull/141). New consumer operation
+boundaries use arrays/slices in `target_features`, with tier suffixes and internal
+proof tokens. Preserve deprecated token signatures. Native callers need matching
+feature context; WASM permits safe baseline calls because the engine validates
+module features on load. V4 also requires aes and pclmulqdq. Array boundaries
+alone establish no inlining, copying or performance claim.
 
 ### SIMD parity testing (Phase S1-S4, 2026-05-25)
 
@@ -5627,14 +5622,13 @@ at every SIMD width (f32x4, f32x8, f32x16) plus edge-value input distributions
 (zeros, denormals, alternating sign, large/small magnitudes).
 
 **Archmage annotation rules**:
-- `#[arcane]`: Top-level SIMD entry points. Adds `#[target_feature]`.
-- `#[rite]`: Inner helpers called from `#[arcane]`. Adds `#[target_feature]` + `#[inline]`.
-  Requires a token parameter (macro derives features from token type).
-- `#[inline(always)]`: Only for helpers WITHOUT a token parameter (pure scalar code that
-  gets inlined into the `#[arcane]` caller). Works because inlining plain code INTO a
-  `#[target_feature]` context is fine; the reverse is not.
-- **Never call `#[arcane]` from `#[arcane]`** — use `#[rite]` for function-to-function calls
-  within SIMD code.
+- Use `#[rite]` for helpers and `#[rite(v3)]` (or the appropriate tier) for
+  token-free feature-context functions. Explicit-tier forms need no token parameter.
+- Use `#[arcane]` at dispatch/hot-loop entry points with their retained proof token.
+- Match full feature sets across native calls; runtime detection alone is not
+  compiler proof. Keep the passing WASM baseline-call exception covered.
+- Preserve exact arithmetic and existing assertions; new ignores or weaker
+  tolerances require explicit owner approval.
 
 ### Enhanced Clustering Cost Model Discovery (Jan 31, 2026)
 
@@ -5852,3 +5846,15 @@ fixed boundary and unchanged native F32 squeeze round-trip pass, including
 libjxl acceptance. The expert library suite passes (1717 passed, 29 existing
 ignored), and strict workspace/all-target Clippy passes. No pixel assertion
 or overflow check is disabled. Evidence: benchmarks/gradient_float_2026-10-29.md.
+
+## Known Bugs: resolved SIMD transition CI regressions (2026-11-05)
+
+The initial partial beta.2 root lock failed `--locked` CI. The exact pinned source
+closure resolves 0.9.30; pinned Butteraugli's magetypes requirement excludes beta.2.
+Lock repair `105d537d` restores that graph. Isolated beta.2 SIMD qualification does
+not qualify a full-workspace beta.2 upgrade.
+
+ARM all-target Clippy also compiled `benches/kernel_tiers.rs`, whose historical
+comparison deliberately calls retained deprecated NEON entry points. Repair
+`e03f919a` scopes a deprecation allowance to that comparison function without
+changing its arms or arithmetic; the all-target ARM check passed.
