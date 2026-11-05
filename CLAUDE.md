@@ -5858,3 +5858,8 @@ ARM all-target Clippy also compiled `benches/kernel_tiers.rs`, whose historical
 comparison deliberately calls retained deprecated NEON entry points. Repair
 `e03f919a` scopes a deprecation allowance to that comparison function without
 changing its arms or arithmetic; the all-target ARM check passed.
+
+The inventory comment update also exposed Clippy's `doc_lazy_continuation`: a
+module-doc line beginning with `>=` became a Markdown quote. `ce04addf` spells
+out the thresholds in prose. Direct Clippy validation of those module docs and
+scoped formatting passed; no executable behavior changed.
