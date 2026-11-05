@@ -1763,6 +1763,18 @@ misclassify that CLI limitation as an invalid stream or strip the ICC to hide it
 
 ## Known Bugs (ACTIVE)
 
+### 2026-11-05: PQ DC repair verified; one byte-fingerprint migration held
+
+Candidate `dfec8f05` uses finer nearest DC quantization for PQ pixel input
+outside strict parity, shared by still/streaming and animation. All 21
+reported records and 76 additional paired cases pass with unchanged decoder
+pins and tolerances. Existing HDR loop defaults are unchanged. The PQ
+RGB16 ramp fingerprint changes 3189 to 5638 bytes; independent mean PQ
+signal error improves from 0.0010578811 to 0.0009311982. That expectation
+is still intact pending owner review; this candidate is not yet on main.
+All other hash checks, strict locks, drift checks and focused/broad lint
+gates pass. [Complete evidence and tradeoffs](benchmarks/issue138_pq_dc_fix_2026-11-05.md).
+
 ### RESOLVED 2026-11-05: independent envelope parser lost extra-channel fields
 
 The diagnostic parser omitted nondefault alpha association, spot-color and CFA
