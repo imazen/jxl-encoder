@@ -19,8 +19,7 @@
 
 use jxl_encoder::api::{LosslessConfig, PixelLayout};
 
-#[path = "../../examples/distance_targeting_probe/decode.rs"]
-mod primary_decode;
+use super::primary_decode;
 
 /// Values that exercise the full width: 0, the maximum, powers of two either
 /// side of the 16-bit boundary, and a spread that is not byte-aligned.

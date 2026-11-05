@@ -13,6 +13,9 @@
 //! Select a former target with a module-path filter, e.g.
 //! `cargo test -p jxl-encoder --test it clic2025::test_rd_regression`.
 
+#[path = "../../examples/distance_targeting_probe/decode.rs"]
+mod primary_decode;
+
 mod afv_idct_parity;
 mod alloc_budget;
 mod alpha_squeeze_chunk1_framework;

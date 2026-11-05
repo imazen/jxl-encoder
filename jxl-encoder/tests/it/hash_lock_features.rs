@@ -24,6 +24,8 @@ use jxl_encoder::{ColorEncoding, LosslessConfig, LossyConfig, Lz77Method, PixelL
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
+use super::primary_decode as pq_ramp_decode;
+
 // ── Feature-gated helpers ────────────────────────────────────────────────────
 
 trait NoButterflyExt {
@@ -1297,12 +1299,43 @@ fn lossless_mg_gray_512x512_bilevel_e7() {
 /// structurally unchanged, which the rest of this suite pins).
 #[test]
 fn lossy_mg_rgb16_pq_512x512_ramp_e7_d1() {
+    let pixels = ramp_noise_rgb16_512x512();
     let data = LossyConfig::new(1.0)
         .with_effort(7)
         .encode_request(512, 512, PixelLayout::Rgb16)
         .with_color_encoding(ColorEncoding::bt2100_pq())
-        .encode(&ramp_noise_rgb16_512x512())
+        .encode(&pixels)
         .unwrap();
+    // Keep the original fingerprint assertion below. Retain its source and
+    // output so an intentional quantizer change can be independently assessed.
+    let root = jxl_encoder::test_helpers::output_dir("pq-ramp-fingerprint");
+    let directory = (0..)
+        .find_map(|i| {
+            let path = root.join(format!("run-{i}"));
+            match std::fs::create_dir(&path) {
+                Ok(()) => Some(path),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => None,
+                Err(error) => panic!("{}: {error}", path.display()),
+            }
+        })
+        .unwrap();
+    std::fs::write(directory.join("source.rgb16"), &pixels).unwrap();
+    std::fs::write(directory.join("encoded.jxl"), &data).unwrap();
+    let decoded = pq_ramp_decode::verify_jxl_rs(&data, 512, 512);
+    assert_eq!(decoded.len() * 2, pixels.len());
+    assert!(decoded.iter().all(|v| v.is_finite()));
+    let mean = decoded
+        .iter()
+        .zip(pixels.as_chunks::<2>().0)
+        .map(|(&v, &raw)| {
+            (f64::from(v.clamp(0.0, 1.0)) - f64::from(u16::from_ne_bytes(raw)) / 65535.0).abs()
+        })
+        .sum::<f64>()
+        / decoded.len() as f64;
+    eprintln!(
+        "PQ ramp: mean signal error {mean}; retained {}",
+        directory.display()
+    );
     assert_hashes(
         "lossy_mg_rgb16_pq_512x512_ramp_e7_d1",
         &data,

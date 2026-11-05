@@ -23,6 +23,8 @@ def main():
     parser.add_argument("out", type=Path)
     parser.add_argument("corpus", type=Path)
     parser.add_argument("icc", type=Path)
+    parser.add_argument("--retain", action="store_true",
+                        help="retain all encoded/source/reference artifacts and study rows")
     args = parser.parse_args()
     binary = args.binary.resolve(strict=True)
     photos = args.corpus / "CID22/CID22-512/validation"
@@ -40,6 +42,8 @@ def main():
                 command = [str(binary), "--images", str(photos), "--images", str(screens),
                            "--icc", str(args.icc), "--out", str(directory),
                            "--seed", str(seed), "--only", str(index), "--threads", "1"]
+                if args.retain:
+                    command.extend(["--retain", "--reference-study", "--study-max-pixels", "100000000"])
                 with (args.out / f"{seed}-{index}.log").open("x") as log:
                     log.write(f"command: {command!r}\n")
                     log.flush()

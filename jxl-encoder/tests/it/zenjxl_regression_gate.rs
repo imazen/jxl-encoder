@@ -111,8 +111,7 @@ use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-#[path = "../../examples/distance_targeting_probe/decode.rs"]
-mod decode;
+use super::primary_decode as decode;
 
 // ── Provenance ─────────────────────────────────────────────────────────────
 
