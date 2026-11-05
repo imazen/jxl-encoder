@@ -57,6 +57,7 @@ def linear_control(data):
     raw, chunks = codestream(data)
     before = Parser(raw)
     before.parse()
+    assert dict((name, value) for _, name, value in before.fields).get("metadata.xyb_encoded") == 1, "requires XYB reconstruction"
     fields = [f for f in before.fields if f[1] == "metadata.color_encoding.transfer_function"]
     assert len(fields) == 1 and fields[0][2] == "kPQ", "requires explicit PQ header"
     end = fields[0][0]

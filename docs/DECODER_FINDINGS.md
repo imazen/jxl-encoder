@@ -39,6 +39,15 @@ Status values: `triage` (not yet known whether it is the decoder), `confirmed`
 | Z1 note | 2026-10-27 triage result | Attributed: **policy-difference, not a decode bug.** All 46 cells' argmax-diff pixels sit at display-linear luminance \|Y\| ≲ 5e-8, exactly on the inverse-OOTF `Y^(-1/6)` singularity; both `FastPowf` implementations yield ~2.4e-12 (zeroing) on negative Y vs ~20x amplification on positive Y, and ~1e-7 decode noise flips the sign per pixel — each decoder wins some, loses some (in ~6 cells djxl is the amplified side). Linear-light outputs agree to <=6.4e-5 over all 46 cells; median bad-pixel count is 1. Secondary delta: jxl-rs clamps HLG signal to [-0.074, 1.1] (`color/tf.rs:195,528,555`); zenjxl/libjxl pass out-of-range values (e.g. -0.777 vs -0.074). The sweep's [0,1]-clamped metric hides that clamp — zen == rs in the measured domain. Full evidence and per-cell table: `~/tmp/handoff/upstream-lanes/z1/{verdict.md,analysis.tsv}`. | not a bug; keep HLG excluded from the cross-decoder gate, or compare in linear light / mask \|Y\|<1e-6 pixels | resolved |
 | Z2 | native `515f2c8a` and precision repair `c1d457d9`; upstream jxl 0.8 | Seed 2965/cell 28968 exceeds the unchanged 0.0200 PQ signal agreement gate against the static v0.12 reference. The repaired native output differs by 0.023695155046880245 at one sample; its maximum difference from historical dynamic v0.12 is 0.0008203834295272827. The two reference outputs themselves differ by 0.023304897360503674. | Identical JXL bytes across encoder `48ff5265`, `83c77813`, `2118c352`; full current replay is 10/21 with static reference, 11/21 with historical runtime. Static reports `4128790`/Clang18, historical `a7a9c78`/GNU15; advertised-source diff is workflow-only, historical complete provenance unresolved. [Exact identities and controls](../benchmarks/issue138_replay_2026-11-04.md#current-main-replay-and-reference-output-split). | triage; [native issue 73](https://github.com/imazen/zenjxl-decoder/issues/73); no threshold change or upstream report |
 
+November 5 continuation of Z2: five additional seed-2966 streams reproduce
+with unchanged decoder pins and the 0.0200 bound. Every pinned comparison
+exceeds it at one sample. Separate one-bit transfer-tag controls expose a
+linear RGB discrepancy before PQ; reapplying a common double-precision PQ
+formula reproduces the original split. The newer native precision flag does
+not close these cases. [Exact cases, source/reference identities and numerical
+controls](../benchmarks/pq_agreement_2026-11-05.md). Their reconstruction cause
+and required precision remain open; they retain FAIL verdicts.
+
 ## jxl-oxide
 
 | # | Version | Finding | Evidence | Status |

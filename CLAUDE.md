@@ -890,7 +890,9 @@ It now uses the existing portable output-directory helper with a fresh run
 subdirectory. The full 80-case test passes with `HOME` removed, and strict
 focused Clippy passes; pixel expectations and the production fix are unchanged.
 Log: `~/tmp/jxl-hdr-nohome-check.log` (rc0, 8 seconds; build/test peak RSS
-0.77 GiB, minimum available 19,592 MiB). Windows CI must still confirm the fix.
+0.77 GiB, minimum available 19,592 MiB). Both Windows x64 and ARM64 CI test jobs pass at `49365f4f` (run
+42092183445); the local HOME-removed control remains the direct portability
+regression.
 
 
 ### RESOLVED 2026-11-04: explicit PQ display intensity changed source brightness
@@ -1784,7 +1786,8 @@ The ongoing frozen sweep has additional PQ near-black agreement failures;
 the unchanged 0.0200 bound, decoder pins and both libjxl builds. Source MAE
 passes do not settle decoder agreement. Numerical attribution remains open
 under decoder issue 73; the newer native precision flag does not close the
-first two retained streams.
+five retained streams; independent linear controls localize the split before
+PQ transfer. The exact preceding arithmetic and precision contract remain open.
 
 The nightly effort gate independently reproduces scan 6824's lossless
 180557-byte e3 to 182641-byte e5 rise. Explicit tree learning produces
@@ -1938,7 +1941,8 @@ passes share the same helper. Both predictor modes, offset strides and padding
 are checked. All 81 selected lock/drift checks, 1,667 library tests and strict
 library/test Clippy pass with existing ignores and expectations unchanged.
 `~/tmp/jxl-cfl-fix-check.log`: rc0, 85 s, run-heavy peak RSS 1.66 GiB.
-The ten remaining issue-138 PQ quality failures still require investigation.
+Ten issue-138 PQ quality failures remained at this point; the November 5
+finer-DC repair and approved fingerprint update resolve the original replay.
 
 
 ### RESOLVED 2026-11-04: secondary gain-map ICC altered gain-value interpretation

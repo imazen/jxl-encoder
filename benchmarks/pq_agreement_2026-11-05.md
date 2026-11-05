@@ -1,6 +1,6 @@
-# Four retained PQ decoder-agreement findings, November 5
+# Five retained PQ decoder-agreement findings, November 5
 
-The fresh seed-2966 sweep records four additional FAIL cells. Both reproduce
+The fresh seed-2966 sweep records five additional FAIL cells. Both reproduce
 with unchanged inputs, decoder pins and the 0.0200 clamped RGB agreement
 bound. Attribution remains open; this is not a clean-sweep verdict or a
 confirmed encoder defect. The newer native precision repair does not close
@@ -12,6 +12,7 @@ these comparisons.
 | 179212 | CID22 2190188, 1100×900 RGB PQ f32, d1.5/e3, streaming rows 261 | 0.020733240991830826 | 1 | 0.018990510774835222 | 0.02081343074479673 |
 | 194142 | windows95, 900×1100 RGB PQ f32, d4.5/e3, EPF off, faster decoding 2 | 0.024154406040906906 | 1 | 0.008867056717274911 | 0.009076828083822647 |
 | 210357 | CID22 225228, 257×255 RGBA PQ f32, d10/e2, progressive DC, resampling 4, EXIF/XMP | 0.02735306601971388 | 1 | 0.029718000192512035 | 0.0305421486190807 |
+| 265927 | windows95, 513×769 RGBA PQ f32, d4.5/e9, progressive DC, strict Libjxl | 0.041053637862205505 | 1 | 0.010454885430777107 | 0.007305792339132613 |
 
 Signal MAE uses clamped decoder RGB and excludes source alpha zero. It is a
 separate diagnostic from the maximum agreement gate. Both reference encodes
@@ -52,6 +53,16 @@ static/new-native maximum is 0.0005341321229934692. Both pinned Rust
 comparisons exceed the bound at one sample; the table reports upstream's
 larger maximum. The replay exactly matches the frozen stream and input.
 
+At zero-based red (505,343) in 265927, static and historical djxl return
+-0.022046241909265518; both pinned Rust decoders return
+0.041053637862205505. New native returns 0.04050931707024574, unchanged
+by its precision flag. The two libjxl builds differ by at most
+0.0002100616693496704. The paired cjxl stream's static/new-native maximum
+is 0.009200789034366608. This strict-strategy cell has higher source MAE
+than cjxl, within the unchanged relative bound; the finer PQ DC policy
+intentionally excludes strict parity. Alpha is absent from reference coding,
+so its byte count cannot establish a matched-rate comparison.
+
 Thus these are additional near-black numerical disagreements for
 [decoder issue 73](https://github.com/imazen/zenjxl-decoder/issues/73), with a
 different reference-build pattern from the older 2965/28968 stream. The
@@ -72,6 +83,7 @@ The replayed input and stream hashes exactly match the live sweep artifacts:
 | 179212 | `211d1d60bc432ad0edab4f78beb276f53059dafdc81e92a23e0057a03f3f48c4` | `2a58028421693274290010d698fd658b06d9c37c91c32e9532b655d55d658851` |
 | 194142 | `ce9c26eeb0cab28c6452d24897697744c5aae66c54e1e08aec1e1925abc4d54d` | `d3ec0aa626d6b6e2ae9d14fe61749316269a23cbdc373a220bf8b2617adcdb15` |
 | 210357 | `0ee9d3a059c589d0e80aa1ae9e200b1e0ad1ea76d34a8ddab70567e88e327c8e` | `5ac33df32fc36e629aeacb5b508c303ec53f2904329091643aa9b7e204276b07` |
+| 265927 | `7dc64e8fa13f3162a9d9e28eee8573ea93195c01adb5de791db4fed619764162` | `474b9e1b98cacc54aea34bfa490d2001536744c8f60f306e9e4b0c1acf7c2e31` |
 
 Static djxl SHA256 is
 `67bdc98fdca7f93d7b77f3473e818b251ba107109ee83b3b37ccbd90066f2454`;
@@ -86,7 +98,8 @@ It is not substituted for the sweep's pinned decoder.
 Raw decoder samples, JSON dimensions, comparison reports, all encoded streams,
 source inputs and complete logs are retained on r5900xt under
 `/mnt/v/output/jxl-encoder/nightly-timeout-20261105/pq-deviation-replay/`
-and its adjacent `pq-deviation-third/` and `pq-deviation-fourth/` directories.
+and its adjacent `pq-deviation-third/`, `pq-deviation-fourth/` and
+`pq-deviation-fifth/` directories.
 Use `just conformance-replay` with a TSV selecting these two seed/index pairs
 and `--retain`; use `just compare-float-decodes` to compare exact f32 samples.
 PFM byte order and bottom-up rows are honored. The diagnostic retention path
@@ -101,7 +114,8 @@ controller observed the two expected failing replays, not that they passed.
 one bit inside the existing six-bit transfer enum, PQ to Linear. Every other
 bit, including container EXIF/XMP and frame payloads, remains identical;
 independent parsing requires that only the transfer field changes. The
-explicit 10000-nit intensity stays unchanged. Both decoders fully render
+explicit 10000-nit intensity stays unchanged. The helper requires XYB coding;
+it refuses a real non-XYB lossless control before writing a diagnostic copy. Both decoders fully render
 each copy, exposing linear RGB in units where 1.0 is the intensity target.
 The original failed streams are preserved and retain their FAIL verdicts.
 
@@ -111,10 +125,11 @@ The original failed streams are preserved and retain their FAIL verdicts.
 | 179212 | 9.313747568739927e-7 | -9.535416722883383e-8 | 1.0267289241028266e-6 |
 | 194142 | 1.0672372354747495e-6 | 5.1062779675703496e-6 | 4.0390407320956e-6 |
 | 210357 | 1.2087791390058555e-7 | 2.6317015908716712e-6 | 2.5108236769710857e-6 |
+| 265927 | -1.05282117601746e-6 | 3.7546365092566703e-6 | 4.80745768527413e-6 |
 
 Applying one signed double-precision inverse PQ EOTF to each decoder's linear
 output reproduces its original clamped PQ output with maximum difference
-0.00000373004877474159 over all four streams. This localizes the disagreement
+0.00000373004877474159 over all five streams. This localizes the disagreement
 to the reconstruction before transfer; evaluating the final PQ formula more
 precisely does not reconcile those linear samples. This control does not
 separate IDCT, filtering, upsampling and inverse-color arithmetic, or settle
@@ -138,3 +153,22 @@ expectation. Its wrapper is rc0, 25 seconds, peak RSS 0.21 GiB, minimum
 available 47762 MiB, peak load 2.08. An initial fourth-control attempt
 refused the container before writing output; the repaired diagnostic preserves
 container bytes and its failing setup log remains retained.
+
+
+All five controls also pass with the explicit XYB precondition. The real
+non-XYB e3 ablation stream is rejected with the required reason. Final
+`linear-control-qualified/` reports retain every original/control hash and
+raw output. Wrapper on r5900xt: `~/tmp/jxl-pq-linear-qualified-20261105.log`,
+rc0, 3 seconds, peak RSS 0.21 GiB, minimum available 47885 MiB, peak load
+0.23. The fifth replay/precision/reference wrapper separately passes in six
+seconds (peak RSS 0.21 GiB, minimum available 47526 MiB, peak load 0.97),
+while preserving its expected failing verdict. Python 3.14.3 and NumPy
+2.5.4 identities are retained in `pq-linear-environment.json`.
+
+One source difference still needs an independent numerical oracle: native
+[output-color setup](https://github.com/imazen/zenjxl-decoder/blob/c1d457d9/zenjxl-decoder/src/render/stages/xyb.rs)
+converts the folded f64 matrix to f32 before its f32 intensity scaling;
+[libjxl's setup](https://github.com/libjxl/libjxl/blob/v0.12.0/lib/jxl/opsin_params.cc)
+scales the f64 folded matrix before rounding to f32. This identifies an
+extra rounding point for non-sRGB output. It has not been attributed as the
+cause of these streams, and is not an accepted decoder fix.
