@@ -5,6 +5,25 @@ from jxl_bitstream_diff import BitReader, Parser
 
 
 class ReferenceFrameHeaderTest(unittest.TestCase):
+    def test_float_alpha_keeps_pq_metadata_aligned(self):
+        # Real issue-138 cell 2965/49033, rendered by jxl-rs and djxl.
+        # Full stream SHA256 e5ba20293607ebbad07de42001bc95e617b1037bbc6941a64b409a3eb0482d42.
+        data = bytes.fromhex(
+            "ff0a0008fc09e4841c0879f488c30100000020e01b5080000024019f3c40a65c047"
+            "1631500000a8d7d72dbaaaafa7f00ff0f600925c62df339399394d0a0015c1a340cd3300d6f43"
+        )
+        parser = Parser(data)
+        parser.br = BitReader(data, 2)
+        self.assertEqual(parser.size_header(), (255, 257))
+        parser.image_metadata()
+        fields = {name: value for _, name, value in parser.fields}
+        self.assertEqual(fields["metadata.extra_channel[0].bit_depth.bits_per_sample"], 32)
+        self.assertEqual(fields["metadata.extra_channel[0].alpha_associated"], 0)
+        self.assertEqual(fields["metadata.xyb_encoded"], 1)
+        self.assertEqual(fields["metadata.color_encoding.transfer_function"], "kPQ")
+        self.assertEqual(fields["metadata.tone_mapping.intensity_target"], 10000.0)
+        self.assertEqual(fields["metadata.tone_mapping.min_nits"], 0.0)
+
     def test_float_metadata_keeps_the_following_fields_aligned(self):
         # Real PQ F32 stream decoded by jxl-rs and djxl v0.12, SHA256
         # 09c4f34077e7fe011a82a0b0b3c0683470b2eeb4880953798c742b851a1ec2f4.

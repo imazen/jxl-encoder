@@ -225,15 +225,24 @@ class Parser:
         p = f"metadata.extra_channel[{i}]"
         if self.f(f"{p}.all_default", br.bit()):
             return
-        self.f(f"{p}.type", br.enum())
+        channel_type = self.f(f"{p}.type", br.enum())
         self.bit_depth(f"{p}.bit_depth")
         self.f(f"{p}.dim_shift",
                br.u32([("V", 0), ("V", 3), ("V", 4), ("O", (3, 1))]))
         nlen = self.f(f"{p}.name_len",
-                      br.u32([("V", 0), ("O", (4, 1)), ("O", (5, 17)),
-                              ("O", (10, 49))]))
+                      br.u32([("V", 0), ("B", 4), ("O", (5, 16)),
+                              ("O", (10, 48))]))
         for _ in range(nlen):
             br.bits(8)
+        if channel_type == 0:
+            self.f(f"{p}.alpha_associated", br.bit())
+        elif channel_type == 2:
+            for c in range(4):
+                self.f(f"{p}.spot_color[{c}]", br.f16())
+        elif channel_type == 5:
+            self.f(f"{p}.cfa_channel",
+                   br.u32([("V", 1), ("B", 2), ("O", (4, 3)),
+                           ("O", (8, 19))]))
 
     def tone_mapping(self, p="metadata.tone_mapping"):
         br = self.br

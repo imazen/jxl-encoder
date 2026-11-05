@@ -1733,6 +1733,15 @@ When spawning a sub-agent for a tuning chunk, the prompt MUST include reading th
 
 ## Known Bugs (ACTIVE)
 
+### RESOLVED 2026-11-05: independent envelope parser lost extra-channel fields
+
+The diagnostic parser omitted nondefault alpha association, spot-color and CFA
+payloads, and its nonempty extra-channel name-length offsets were one too high.
+A real float-alpha PQ header consequently reported a negative intensity instead
+of 10000 nits. Conditional fields and name-length coding now match the wire;
+the frozen issue-138 header fails before the repair and passes afterward. This
+changes only diagnostic parsing, not encoder bytes or sweep quality thresholds.
+
 ### RESOLVED 2026-11-04: animation ignored request HDR loss dispatch and loop traces
 
 Animation resolved HDR loss with `(layout, None)`, a stale assumption from
