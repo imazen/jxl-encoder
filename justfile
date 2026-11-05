@@ -628,6 +628,11 @@ streaming-admission-test *args:
 fuzz-encoder target corpus artifacts *args:
     TMPDIR="$HOME/tmp" CARGO_BUILD_JOBS=4 nice -n 19 cargo +nightly fuzz run --codegen-units 16 {{target}} {{corpus}} -- -artifact_prefix={{artifacts}}/ -rss_limit_mb=2048 {{args}}
 
+# Linux x86 runtime used by nightly; Rust sanitizer and coverage flags stay intact.
+fuzz-encoder-popcnt target corpus artifacts *args:
+    grep -qw popcnt /proc/cpuinfo
+    CXX=clang++ CXXFLAGS="${CXXFLAGS:-} -mpopcnt" just fuzz-encoder {{target}} {{corpus}} {{artifacts}} {{args}}
+
 fuzz-replay input output manifest="Cargo.toml":
     cargo run --locked --release --manifest-path {{quote(manifest)}} -p jxl-encoder --example streaming_fuzz_replay -- {{quote(input)}} {{quote(output)}}
 

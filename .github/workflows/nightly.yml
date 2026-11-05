@@ -208,8 +208,16 @@ jobs:
     env:
       CARGO_BUILD_JOBS: 4
       RAYON_NUM_THREADS: 4
+      # Keep all Rust ASan/coverage checks. Compile libFuzzer's C++ comparison
+      # callbacks with hardware population count instead of its software helper.
+      CXX: clang++
+      CXXFLAGS: -mpopcnt
     steps:
       - uses: actions/checkout@v7
+      - name: Verify fuzz runtime compiler and CPU
+        run: |
+          clang++ --version
+          grep -qw popcnt /proc/cpuinfo
       - uses: ./.github/actions/clone-siblings
       - uses: dtolnay/rust-toolchain@nightly
       - name: Prepare real-image fuzz corpus

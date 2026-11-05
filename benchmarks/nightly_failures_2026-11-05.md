@@ -67,7 +67,25 @@ libfuzzer-sys 0.4.13 makes its always-inline attribute conditional on Clang.
 Clang 21.1.8 alone also times out: 62.20 seconds wall, 385,228 KiB maximum
 RSS; its `Popcountll` remains a software bit-count sequence. Both instrumented
 builds report 499,904 coverage counters. No coverage or timeout setting has
-been changed. A hardware-POPCNT runtime build is the next controlled comparison.
+been changed.
+
+Clang plus `CXXFLAGS=-mpopcnt` completes the same fixed input, including the
+second callback used by leak detection, with the 60-second per-callback setting
+unchanged: two executed units, rc0, 109.15 seconds total, 397,192 KiB maximum
+RSS. The binary SHA256 is
+`9dc3bc9c5db79d510ec934b5d6fb45b7009fece92eb6d9b2b261c666f`.
+It still reports 499,904 coverage counters. The wrapper passes: 160 seconds,
+peak RSS 1.67 GiB, minimum available 45,855 MiB, peak load 3.43.
+The original 16-seed corpus and 300-second mutation campaign are now running
+with seed 653941640, unchanged 60-second/RSS/input-size limits and that same
+retained executable. This does not yet establish a passing full fuzz gate.
+
+The proposed nightly change sets the C++ runtime compiler/flag only in its
+Linux x86 fuzz job and explicitly checks POPCNT availability. Rust sanitizer,
+coverage and target flags remain unchanged. Reproduce with
+`just fuzz-encoder-popcnt streaming_roundtrip <corpus> <artifacts>
+-timeout=60 -max_total_time=300 -max_len=500000 -print_final_stats=1`.
+Clang alone is not the proposed repair: the hardware instruction is required.
 
 All inputs, binaries, profiles, compiler identities and complete logs remain
 under `/mnt/v/output/jxl-encoder/nightly-timeout-20261105/` on r5900xt.
