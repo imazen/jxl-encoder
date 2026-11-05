@@ -218,3 +218,41 @@ The lock hash remains unchanged afterward. Complete wrapper on r5900xt:
 1.60 GiB, minimum available 45820 MiB, peak load 4.08. A subsequent complete
 hash filter passes all 69 checks (one existing ignore); see the PQ report.
 Remote platform CI has its own verdict; local checks do not establish it.
+
+## Complete platform CI and current nightly evidence
+
+[CI 42092183445](https://github.com/imazen/jxl-encoder/actions/runs/42092183445)
+passes all 15 jobs at `49365f4f`, including Windows ARM64, macOS ARM64,
+i686, coverage and both Clippy lanes. This is the encoder implementation's
+platform verdict; later diagnostic/report updates are separate commits.
+
+[Nightly 42092347394](https://github.com/imazen/jxl-encoder/actions/runs/42092347394)
+on the same head passes the sanitizer fuzz job and every regression step
+before the unchanged effort gate's single scan-6824 violation. The new
+artifact upload preserves all 48 effort cells, their JXLs, decoder PNGs/logs,
+source crops and manifests. Every stream and crop SHA256 is independently
+verified after downloading; the scan's e3/e5 hashes match the local ablation
+exactly. The complete evidence is on NAS, checked on r5900xt, under
+`/mnt/v/output/jxl-encoder/nightly-49365f4f-20261105/`. The verification
+receipt is `effort-artifact-verification.json`. No allowlist or threshold
+is changed to turn that failure green.
+
+The fuzz logs report 2173 request-admission executions and 45 streaming
+executions, with the unchanged limits. Full logs and all retained data are
+on NAS under `/mnt/v/fuzzes/jxl-encoder/artifacts/nightly-49365f4f-20261105/`.
+The canonical corpus receives an additive copy: 383 request inputs, 34
+streaming inputs and the source manifest, all 418 file hashes verified.
+This preserves actual retained files; libFuzzer's in-memory corpus counters
+are not substituted for a filesystem inventory. The shared sync helper does
+not list this encoder, so the direct additive copy and its hash receipt are
+the preservation evidence. No unrelated repository was changed.
+
+Reproduce artifact retrieval with `just nightly-artifact-archive <run>
+<artifact-name> <new-NAS-directory>`, under the normal lock/resource wrapper.
+The combined fifth-PQ-control and RD-download wrapper passes: rc0, 72 seconds,
+peak RSS 0.11 GiB, minimum available 47822 MiB, peak load 0.45. The fuzz
+artifact download passes in six seconds (peak RSS 0.04 GiB); canonical copy
+and full hash verification pass in three seconds (peak RSS 0.03 GiB).
+Complete logs remain on r5900xt under `~/tmp/jxl-current-fuzz-archive-20261105.log`,
+`~/tmp/jxl-canonical-fuzz-copy-20261105.log` and
+`~/tmp/jxl-fifth-and-nightly-archive-20261105.log`.

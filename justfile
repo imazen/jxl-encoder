@@ -984,3 +984,8 @@ float-decode-evidence-check:
 # Diagnostic copies only; retain the original failed PQ stream unchanged.
 pq-linear-control input out *args:
     TMPDIR="$HOME/tmp" uv run --with numpy python scripts/pq_linear_control.py {{quote(input)}} {{quote(out)}} {{args}}
+
+# Caller supplies flock and run-heavy; refuse an existing destination.
+nightly-artifact-archive run name out:
+    mkdir {{quote(out)}}
+    gh run download {{quote(run)}} --repo imazen/jxl-encoder --name {{quote(name)}} --dir {{quote(out)}}
