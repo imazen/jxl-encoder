@@ -1779,8 +1779,10 @@ LZ77 arms. Existing assertions and selection rules remain unchanged; this
 repairs evidence retention. Local replay identifies the failing pre-encode
 assertion: explicit faster-decoding tier 1 left the keep-best permission
 enabled. The resolver now restricts it to tier zero, preserving the existing
-assertion and adding tiers 2–4 to the refusal controls. Full validation is
-in progress.
+assertion and adding tiers 2–4 to the refusal controls (`07e117f7`). The
+complete 70-pair grid, strict corpus-enabled Clippy, 1,667 library tests and
+all 69 hash/five strict/seven divergence checks pass unchanged. See the
+[current investigation](benchmarks/nightly_failures_2026-11-05.md).
 
 The separate streaming fuzz job exceeds its unchanged 60-second per-input
 limit on an unmutated 512x259 RGB8 lossless effort-8 seed (seven-row chunks),

@@ -1,0 +1,78 @@
+# Nightly failure investigation, November 5, 2026
+
+[Run 42066511463](https://github.com/imazen/jxl-encoder/actions/runs/42066511463)
+uses `eac33501`. The five gate-image downloads pass their unchanged checksums.
+Two later gates fail independently.
+
+## Lossless LZ77 faster-decoding precedence
+
+The `on` child fails before encoding: the existing assertion requires an
+explicit faster-decoding setting to disable keep-best selection, but tier 1
+leaves the permission enabled. The parent formerly printed only a runner-local
+path. `f4e50d76` includes the failed child's log and uploads both arms.
+Local reproduction retains that exact failing assertion in
+`/mnt/v/output/jxl-encoder/nightly-timeout-20261105/lz77-replay/on/test.log`
+on r5900xt.
+
+`07e117f7` restricts candidate selection to decoding-speed tier zero and adds
+tiers 2–4 to the existing refusal controls. The complete 70-pair regression
+grid passes: both decoders check all 140 outputs, including exact lossless
+samples; the existing streaming comparisons and strict/lossy hash controls
+remain. No assertion or expectation is relaxed.
+
+The follow-up verification passes strict corpus-enabled library/test Clippy,
+1,667 default library tests (29 existing ignores), all 69 hash checks (one
+existing ignore), five strict byte-lock tests and seven divergence checks.
+Four corpus-test iterator diagnostics are corrected without changing their
+samples or assertions (`c84c9cf3`, `5839d5d3`). The source uses the frozen
+16-sibling closure from the sweep; root Cargo.lock remains unchanged.
+
+Verification command sequence is retained in
+`~/tmp/jxl-lz77-nightly-validation-20261105.sh`, full log at the matching
+`.log` path on r5900xt. `run-heavy`: rc0, 117 seconds, peak RSS 1.83 GiB,
+minimum available 45,977 MiB, peak load 4.61. The preceding full grid log is
+`~/tmp/jxl-lz77-nightly-replay-fixed-lint-20261105.log`; that encompassing
+command subsequently fails at the two resource-test iterator diagnostics.
+
+## Streaming fuzz timeout
+
+The unmutated input is 397,832 bytes, SHA256
+`62102547b5d0582c8c563ca1983cb8b2cd4081cd0bca3deb6f16c9747a0fcc0f`.
+It encodes a 512x259 RGB8 lossless effort-8 crop of CID22 validation image
+1418519, streaming seven rows at a time. The distance byte is inert for
+lossless. The per-input timeout remains 60 seconds.
+
+The stable `streaming_fuzz_replay` example shares the actual fuzz entry:
+one-shot and streaming bytes agree, the Rust decoder reproduces every sample,
+and pinned djxl fully renders the retained 103,726-byte output. Its SHA256 is
+`dee9a29bca9ef23e9afddf5efbf8243b9e17fa5a8155e5bd87dacf9d9ee51ec0`.
+On r5900xt, `/usr/bin/time -v` records 2.26 seconds wall and 36,060 KiB
+maximum RSS. The build/Clippy/replay wrapper passes: 346 seconds, peak RSS
+0.88 GiB, minimum available 45,659 MiB. Stable execution does not qualify
+the instrumented gate.
+
+ASan/coverage replay with cargo-fuzz 0.13.2 and installed Rust
+1.100.0-nightly (`4aa1fbcf4`, September 8) also times out with the unchanged
+60-second limit. CI used Rust 1.101.0-nightly (`2d20b42b8`, November 4), so
+this is a reproduction of the symptom, not an identical compiler build.
+The retained instrumented binary SHA256 is
+`71005208e5a41479deb2b2fa3d4b18eaac96b227a8cc8e8f9fb72e66a05c07ec`.
+
+`perf record -g` records 248,331 samples without lost samples. Self costs
+include 26.46% in `__sanitizer_cov_trace_const_cmp1`, 25.60% in software
+`__popcountdi2`, 10.21% in `__sanitizer_cov_trace_cmp8`, 7.17% in
+`fuzzer::Popcountll`, and 6.66% in `fuzzer::Clzll`. Disassembly confirms
+`Popcountll` calls the software helper. The vendored libFuzzer source in
+libfuzzer-sys 0.4.13 makes its always-inline attribute conditional on Clang.
+Clang 21.1.8 alone also times out: 62.20 seconds wall, 385,228 KiB maximum
+RSS; its `Popcountll` remains a software bit-count sequence. Both instrumented
+builds report 499,904 coverage counters. No coverage or timeout setting has
+been changed. A hardware-POPCNT runtime build is the next controlled comparison.
+
+All inputs, binaries, profiles, compiler identities and complete logs remain
+under `/mnt/v/output/jxl-encoder/nightly-timeout-20261105/` on r5900xt.
+The profiler-wrapped replay exits 70; `/usr/bin/time -v` records 66.11 seconds
+and 382,892 KiB maximum RSS, including perf. The enclosing build/profile
+wrapper subsequently exits 255 because perf initially refused the NAS-owned
+profile. Reading that same retained profile with `perf report -f` succeeds;
+the ownership check is unrelated to the fuzz timeout.
