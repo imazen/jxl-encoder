@@ -1,0 +1,19 @@
+{
+  "decoder_version": "djxl v0.12.0 4128790 [_AVX2_,SSE4,SSE2] {Clang 18.1.3}\nCopyright (c) the JPEG XL Project",
+  "decoder_sha256": "67bdc98fdca7f93d7b77f3473e818b251ba107109ee83b3b37ccbd90066f2454",
+  "source_sha256": "11de60028b27db9a5f17a9d4b515d4314ac50b162e6ea15648d79c35d775f98e",
+  "outputs": {
+    "before": {
+      "bytes": 3189,
+      "sha256": "8165b9a16e3794daa58e0fcb4ca41e7e640d03eba9497ac097f1a71fa4f642da",
+      "pfm_sha256": "727ef10b3287adc3d6a06588f9d6136324b7256c6f5fc11bc46d2ab19a6a50e6",
+      "mean_pq_signal_error": 0.0010578811215463703
+    },
+    "after": {
+      "bytes": 5638,
+      "sha256": "0ea1e9b3a5e24ca8083c352a5985f3f074df49a6ed16f0d4c575bcf4788ec608",
+      "pfm_sha256": "f81d407f296fc1df0f29c6b86e5d361b08145c7fe74c331ce1c18b97c4be523b",
+      "mean_pq_signal_error": 0.0009311982179735402
+    }
+  }
+}
