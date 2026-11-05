@@ -93,7 +93,9 @@ fn concurrent_canonicalization_has_isolated_limits_and_identical_bytes() {
         .with_fallible_alloc(true);
     for transparent in [false, true] {
         let pixels: Vec<u8> = rgb
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .flat_map(|p| [p[0], p[1], p[2], if transparent { p[0] } else { 255 }])
             .collect();
         for canonical in [false, true] {
@@ -248,7 +250,7 @@ fn streaming_preserves_source_layout_and_color_metadata() {
                     | PixelLayout::GrayAlphaLinearF16
             );
             let mut pixels = Vec::new();
-            for p in rgb.chunks_exact(3) {
+            for p in rgb.as_chunks::<3>().0 {
                 let mut values = if gray { vec![p[0]] } else { p.to_vec() };
                 if matches!(layout, PixelLayout::Bgr8 | PixelLayout::Bgra8) {
                     values.swap(0, 2);
