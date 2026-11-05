@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Fresh zeroed budget buffers request allocator-zeroed storage. Fallible refusal retries through Vec to preserve a real TryReserveError payload; size checks and budget accounting remain intact.
+
 - Preserve PQ DC precision with nearest rounding across still, streaming and animation pixel encodes to prevent large near-black chroma errors; retain strict Libjxl precision and the existing HDR loop defaults (`dfec8f05`).
 
 - Apply request color encoding and the shared HDR loop-budget policy to animation frames; forward requested loop traces in encoded frame order.

@@ -386,27 +386,36 @@ pub(crate) fn vec_with_capacity_fallible<T>(fallible: bool, cap: usize) -> Resul
     }
 }
 
+/// Request zeroed storage directly. On a fallible refusal, retry through Vec's
+/// fallible API so OutOfMemory retains a real TryReserveError payload. A retry
+/// may succeed; in that case initialize the storage explicitly before returning.
+fn zeroed_vec<T: bytemuck::Zeroable>(fallible: bool, len: usize) -> Result<Vec<T>> {
+    match bytemuck::allocation::try_zeroed_vec(len) {
+        Ok(v) => Ok(v),
+        Err(()) if fallible => {
+            let mut v = Vec::new();
+            v.try_reserve_exact(len)?;
+            v.resize_with(len, T::zeroed);
+            Ok(v)
+        }
+        Err(()) => {
+            let layout = core::alloc::Layout::array::<T>(len).expect("capacity overflow");
+            alloc::alloc::handle_alloc_error(layout)
+        }
+    }
+}
+
 /// Allocate a zero-filled `Vec<f32>` of `len`, honoring a runtime
 /// fallible-allocation policy. Reserves nothing against a [`MemoryBudget`]
 /// — pair with a separate `reserve_opt`/`reserve_permanent_opt` for the
 /// accounting (callers that already hold a [`BudgetGuard`] for the bytes use
 /// this for the allocation only).
 ///
-/// - infallible (default): `vec![0.0f32; len]` — byte-identical to a bare
-///   `vec!`, lowered to a single `calloc`;
-/// - fallible: `try_reserve_exact` + `resize` — returns
-///   [`Error::OutOfMemory`] instead of aborting when the size cannot be
-///   satisfied (e.g. a cap raised above physical RAM for trusted batch).
+/// Both policies request allocator-zeroed storage; only failure handling differs.
+/// Fallible failure retains Error::OutOfMemory's TryReserveError payload.
 #[cfg_attr(not(feature = "butteraugli-loop"), allow(dead_code))]
 pub(crate) fn vec_f32_zeroed_fallible(fallible: bool, len: usize) -> Result<Vec<f32>> {
-    if fallible {
-        let mut v: Vec<f32> = Vec::new();
-        v.try_reserve_exact(len)?;
-        v.resize(len, 0.0);
-        Ok(v)
-    } else {
-        Ok(vec![0.0f32; len])
-    }
+    zeroed_vec(fallible, len)
 }
 
 /// Allocate a zero-filled `Vec<i64>` of `len`, honoring a runtime
@@ -417,14 +426,7 @@ pub(crate) fn vec_f32_zeroed_fallible(fallible: bool, len: usize) -> Result<Vec<
 /// the encode returns) rather than sustained working-set the budget
 /// tracks.
 pub(crate) fn vec_i64_zeroed_fallible(fallible: bool, len: usize) -> Result<Vec<i64>> {
-    if fallible {
-        let mut v: Vec<i64> = Vec::new();
-        v.try_reserve_exact(len)?;
-        v.resize(len, 0);
-        Ok(v)
-    } else {
-        Ok(vec![0i64; len])
-    }
+    zeroed_vec(fallible, len)
 }
 
 /// Grow `v` to `new_len` with zero-fill, honoring a runtime
@@ -449,29 +451,20 @@ pub(crate) fn resize_i64_zeroed_fallible(
 /// Reserve `len * size_of::<T>()` permanently against `budget`, then allocate a
 /// zeroed `Vec<T>`, honoring the budget's **runtime** fallible-allocation
 /// policy ([`MemoryBudget::is_fallible`]):
-/// - infallible (default): `vec![T::default(); len]` — LLVM lowers the zeroed
-///   case to a single `calloc`, the faster path for trusted sizes;
-/// - fallible: `try_reserve_exact` + `resize` — returns
-///   [`Error::OutOfMemory`] instead of aborting if the (untrusted-derived)
-///   size cannot be allocated.
+/// Both policies request allocator-zeroed storage. Fallible failure retries
+/// through Vec to preserve the typed allocator error; infallible failure invokes
+/// the allocator error handler (or panics for an invalid layout).
 ///
 /// `None` budget reserves nothing and uses the infallible path. Used for the
 /// JPEG-transcode coefficient buffers and the modular channel buffers, both
 /// sized from untrusted dimensions.
-pub(crate) fn try_alloc_zeroed_permanent<T: Copy + Default>(
+pub(crate) fn try_alloc_zeroed_permanent<T: Copy + bytemuck::Zeroable>(
     budget: Option<&Arc<MemoryBudget>>,
     len: usize,
 ) -> Result<Vec<T>> {
     let bytes = elem_bytes::<T>(len)?;
     MemoryBudget::reserve_permanent_opt(budget, bytes)?;
-    if budget.is_some_and(|b| b.is_fallible()) {
-        let mut v: Vec<T> = Vec::new();
-        v.try_reserve_exact(len)?;
-        v.resize(len, T::default());
-        Ok(v)
-    } else {
-        Ok(vec![T::default(); len])
-    }
+    zeroed_vec(budget.is_some_and(|b| b.is_fallible()), len)
 }
 
 /// Convenience macro: `try_alloc_plane_f32!(budget, w, h)` reserves and
@@ -501,6 +494,34 @@ macro_rules! try_alloc_plane_f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn zeroed_storage_preserves_typed_errors_bits_and_budget() {
+        for fallible in [false, true] {
+            for n in [0, 1, 4095, 4096, 4097] {
+                let v = vec_f32_zeroed_fallible(fallible, n).unwrap();
+                assert_eq!(v.len(), n);
+                assert!(v.iter().all(|v| v.to_bits() == 0));
+                let v = vec_i64_zeroed_fallible(fallible, n).unwrap();
+                assert!(v.iter().all(|&v| v == 0));
+            }
+            let v = zeroed_vec::<()>(fallible, usize::MAX).unwrap();
+            assert_eq!(v.len(), usize::MAX);
+            assert_eq!(v.capacity(), usize::MAX);
+        }
+        assert!(matches!(
+            zeroed_vec::<u16>(true, usize::MAX),
+            Err(Error::OutOfMemory(_))
+        ));
+        let budget = MemoryBudget::with_alloc_policy(16, true);
+        let v = try_alloc_zeroed_permanent::<i16>(Some(&budget), 8).unwrap();
+        assert_eq!(v, [0; 8]);
+        assert_eq!(budget.used(), 16);
+        assert!(matches!(
+            try_alloc_zeroed_permanent::<i16>(Some(&budget), 1),
+            Err(Error::AllocationLimit { .. })
+        ));
+    }
 
     #[test]
     fn under_cap_succeeds() {
