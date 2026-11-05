@@ -154,3 +154,48 @@ The effort gate currently does not retain the encoded streams, so independent
 local pixel verification and RCT/patch/palette attribution are the next checks.
 The upload now runs after both RD gates and includes the effort TSV; the
 existing thresholds and allowlist remain unchanged.
+
+## Remaining lossless effort regression and gate evidence repair
+
+[Run 42080897757](https://github.com/imazen/jxl-encoder/actions/runs/42080897757)
+passes the baseline, corpus, LZ77, distance and sanitizer-fuzz steps. Its
+effort-envelope step still fails on Redoute scan 6824: 512-square RGB8,
+e3 180557 bytes versus e5 182641 bytes. The existing 0.5% bar remains.
+Source SHA256: `e0825408d8b880ea80385d9d28af238f636b9f997b33770d9473ddc0bccec22c`.
+
+`just lossless-effort-ablate` retains 28 option controls and requires exact
+recovery in the independent decoder-conformance tool (jxl 0.7.4, jxl-oxide
+0.12.6 and static djxl v0.12). All 28 outputs reproduce source pixels.
+Forced RCT 10 preserves both original streams. Disabling patches, palette
+or squeeze is inert here; disabling trees produces 232232 bytes at both
+efforts. Explicit tree learning keeps e3 at 180557 but produces 175842
+bytes at e5. Its 0.05/0.15/0.25 fractions produce 177957/179485/175842.
+
+Source inspection separates the automatic budgets: e3 uses the low-effort
+profile's three properties, 32 buckets and 0.15 fraction; e5's implicit
+lift selects four properties, 32 buckets and 0.05 fraction. Explicit e5
+tree learning retains four properties, 48 buckets and 0.25 fraction. This
+isolates a tree-budget transition, not a pixel or decoder failure. It does
+not justify fitting or promoting a new default from one validation scan.
+The original TSVs and streams remain under `effort-tree-ablation/` in the
+retained r5900xt run directory. Both old and repaired gates still fail the
+same six-cell control with identical bytes and SSIM2 values.
+
+The original effort gate separately returned success on an empty corpus.
+It now refuses empty/missing/corrupt/undersized inputs, zero counts,
+invalid or duplicate ladder coordinates, non-finite scores, and existing
+outputs. Every measured stream and source crop is retained by SHA256;
+full Rust and pinned djxl decoding precede grading, with exact lossless
+RGB recovery. Repeated encodes must have identical stream hashes. All
+existing grading thresholds and timing rules remain unchanged. Equal
+lengths are now described as equal byte counts, not proof of byte identity.
+
+`just effort-gate-evidence-check` passes ten invalid-input/output controls
+and an injected djxl failure. The six real control cells retain their old
+bytes and scores and their expected failing verdict. Strict example Clippy
+and scoped format checks pass. The same wrapper verifies PFM byte order,
+row order, raw/NPY sample preservation and non-finite/truncated diagnostic
+refusal in two tests. Final log on r5900xt:
+`~/tmp/jxl-effort-hardened-final-20261105.log`: rc0, 12 seconds, peak RSS
+0.48 GiB, minimum available 47480 MiB, peak load 1.39. No encoder policy,
+allowlist or expected fingerprint changes in this evidence repair.

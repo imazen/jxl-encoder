@@ -1,6 +1,10 @@
 # Fresh conformance sweep, November 5, 2026
 
-Status: running; this is a run record, not a clean-sweep verdict.
+Status: running with three retained FAIL cells; this is not a clean-sweep verdict.
+[Exact controls for the first two PQ agreement findings](pq_agreement_2026-11-05.md).
+A third cell, 2966/194142 (windows95, 900×1100 RGB PQ f32, d4.5/e3,
+EPF off, faster decoding 2), exceeds the same agreement bound by 0.0242
+and is queued for identical numerical attribution. The run remains active.
 The six known RD cells have already completed; their two hard inversions and
 one advisory remain. [Exact results](rd_known_2026-11-05.md).
 

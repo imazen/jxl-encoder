@@ -40,9 +40,14 @@ tests before relying on a status below.
 
 The [November 5 six-cell recheck](../benchmarks/rd_known_2026-11-05.md)
 reproduces two hard known inversions and one below-threshold advisory. All
-six source and encoder stream hashes match September 26 exactly. A fresh
+six source and encoder stream hashes match September 26 exactly. The fresh
 [four-hour conformance run](../benchmarks/conformance_2026-11-05.md) is in
-progress; its expanded ICC set is explicitly recorded.
+progress; its expanded ICC set is explicitly recorded. Two additional
+[PQ agreement failures](../benchmarks/pq_agreement_2026-11-05.md) reproduce
+with unchanged pins and bounds. Their numerical attribution remains open.
+The nightly effort gate also reproduces a lossless scan growing from 180557
+bytes at e3 to 182641 at e5; explicit tree learning produces 175842 bytes.
+That isolated ablation does not qualify a new default.
 
 - [#114](https://github.com/imazen/jxl-encoder/issues/114) and
   [#103](https://github.com/imazen/jxl-encoder/issues/103): retain the

@@ -7,11 +7,11 @@
 //!
 //! Three gradings, and they are deliberately not the same severity:
 //!
-//! - **INVERSION (hard).** Effort N produces MORE bytes than N-1 at equal or
-//!   worse quality, or worse quality at equal bytes. Higher effort spending
-//!   more to deliver less is a bug in every mode.
+//! - **INVERSION (hard).** Effort N produces more bytes and worse quality
+//!   than N-1 beyond the existing grading slack; a lossless byte rise alone
+//!   fails. The lossy check requires both axes to worsen.
 //! - **DOMINATED (hard for lossless, advisory for lossy).** Effort N produces
-//!   byte-identical output to N-1 while costing measurably more wall. The
+//!   equal byte counts to N-1 while costing measurably more wall. The
 //!   caller paid for effort that did nothing. Measured instance this exists to
 //!   catch: on the f32 lossless path e3 and e5 are byte-identical on 26/26
 //!   (image, size) pairs, so e5 is e5 time for e3 bytes. Advisory on the lossy
@@ -20,6 +20,8 @@
 //!   byte gain. Not wrong, but it is what an effort ladder should not look
 //!   like, and it is the shape that makes an effort level un-recommendable.
 //!
+//! Every selected input must complete its ladder. Streams and source crops
+//! are retained beside the new output, with full Rust and djxl decoding.
 //! Lossless has no quality axis, so its grading is bytes-and-wall only. Lossy
 //! is scored with SSIMULACRA2 (fast-ssim2, PINNED 0.7.1; sRGB in, since
 //! `compute_ssimulacra2` linearises internally).
@@ -31,6 +33,11 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
+
+#[path = "distance_targeting_probe/decode.rs"]
+mod decode;
+#[path = "effort_monotonicity_gate/evidence.rs"]
+mod evidence;
 
 use jxl_encoder::api::{LosslessConfig, LossyConfig, PixelLayout};
 
@@ -46,8 +53,9 @@ fn walk(d: &Path) -> Vec<PathBuf> {
     let mut v = Vec::new();
     let mut st = vec![d.to_path_buf()];
     while let Some(p) = st.pop() {
-        if let Ok(rd) = std::fs::read_dir(&p) {
-            for e in rd.flatten() {
+        {
+            for e in std::fs::read_dir(&p).expect("read corpus directory") {
+                let e = e.expect("read corpus entry");
                 let q = e.path();
                 if q.is_dir() { st.push(q) } else { v.push(q) }
             }
@@ -64,24 +72,27 @@ struct Cell {
     bytes: usize,
     ssim2: f64,
     ms: f64,
+    source_sha256: String,
+    encoded_sha256: String,
 }
 
 fn score(encoded: &[u8], src: &[u8], n: u32) -> f64 {
     use fast_ssim2::compute_ssimulacra2;
     use imgref::ImgVec;
-    let Ok(image) = jxl_oxide::JxlImage::builder().read(std::io::Cursor::new(encoded)) else {
-        return f64::NAN;
-    };
-    let Ok(render) = image.render_frame(0) else {
-        return f64::NAN;
-    };
+    let image = jxl_oxide::JxlImage::builder()
+        .read(std::io::Cursor::new(encoded))
+        .expect("scoring header");
+    let render = image.render_frame(0).expect("scoring frame");
     let fb = render.image_all_channels();
     let buf = fb.buf();
+    assert_eq!((fb.width(), fb.height()), (n as usize, n as usize));
+    assert!(
+        buf.iter().all(|v| v.is_finite()),
+        "non-finite scoring pixels"
+    );
     let px = (n * n) as usize;
     let ch = fb.channels();
-    if ch < 3 || buf.len() < px * ch {
-        return f64::NAN;
-    }
+    assert!(ch >= 3 && buf.len() == px * ch, "scoring shape");
     let dec: Vec<[u8; 3]> = (0..px)
         .map(|i| {
             let o = i * ch;
@@ -93,18 +104,22 @@ fn score(encoded: &[u8], src: &[u8], n: u32) -> f64 {
         })
         .collect();
     let orig: Vec<[u8; 3]> = src.as_chunks::<3>().0.to_vec();
-    if orig.len() != px {
-        return f64::NAN;
-    }
-    compute_ssimulacra2(
+    assert_eq!(orig.len(), px, "source shape");
+    let value = compute_ssimulacra2(
         ImgVec::new(orig, n as usize, n as usize).as_ref(),
         ImgVec::new(dec, n as usize, n as usize).as_ref(),
     )
-    .unwrap_or(f64::NAN)
+    .expect("SSIMULACRA2 score");
+    assert!(value.is_finite(), "non-finite score");
+    value
 }
 
 fn main() {
     let a: Vec<String> = std::env::args().collect();
+    assert!(
+        a.len() >= 3,
+        "usage: effort_monotonicity_gate <corpus> <out.tsv> [options]"
+    );
     let corpus = PathBuf::from(&a[1]);
     let out_path = PathBuf::from(&a[2]);
     let max_images: usize = arg("--images", "6").parse().unwrap();
@@ -118,6 +133,26 @@ fn main() {
         .map(|s| s.parse().unwrap())
         .collect();
     let reps: u32 = arg("--reps", "3").parse().unwrap();
+
+    assert!(
+        max_images > 0 && reps > 0 && n >= 8,
+        "positive images/repetitions and size >= 8 required"
+    );
+    assert!(
+        efforts.len() >= 2 && efforts.iter().all(|e| (1..=11).contains(e)),
+        "requires at least two valid efforts"
+    );
+    assert!(
+        efforts.windows(2).all(|w| w[0] < w[1]),
+        "efforts must increase without duplicates"
+    );
+    assert!(
+        !distances.is_empty() && distances.iter().all(|d| d.is_finite() && *d > 0.0),
+        "requires finite positive distances"
+    );
+    for (i, d) in distances.iter().enumerate() {
+        assert!(!distances[..i].contains(d), "duplicate distance");
+    }
 
     // Stratify so one content class cannot decide the verdict.
     let mut by_class: std::collections::BTreeMap<String, Vec<PathBuf>> = Default::default();
@@ -151,13 +186,24 @@ fn main() {
         i += 1;
     }
 
+    assert!(!picks.is_empty(), "no PNG inputs selected");
+    let mut names = std::collections::HashSet::new();
+    for path in &picks {
+        assert!(
+            names.insert(path.file_name().unwrap()),
+            "duplicate input basename"
+        );
+    }
+    let evidence = evidence::Evidence::new(&out_path, &a);
     let mut cells: Vec<Cell> = Vec::new();
     for path in &picks {
-        let Ok(img) = image::open(path) else { continue };
+        let img = image::open(path).expect("open selected PNG");
         let rgb = img.to_rgb8();
-        if rgb.width() < n || rgb.height() < n {
-            continue;
-        }
+        assert!(
+            rgb.width() >= n && rgb.height() >= n,
+            "selected PNG too small: {}",
+            path.display()
+        );
         let (x0, y0) = ((rgb.width() - n) / 2, (rgb.height() - n) / 2);
         let src: Vec<u8> = image::imageops::crop_imm(&rgb, x0, y0, n, n)
             .to_image()
@@ -165,10 +211,22 @@ fn main() {
             .clone();
         let name = path.file_name().unwrap().to_string_lossy().to_string();
 
+        let source_sha256 = evidence.retain(&src, "rgb8");
+        let original_hash =
+            evidence.retain(&std::fs::read(path).expect("source PNG"), "source.png");
+        evidence.retain(
+            &serde_json::to_vec(&serde_json::json!({
+                "source": path, "source_png_sha256": original_hash,
+                "crop_rgb8_sha256": source_sha256, "crop_origin": [x0, y0], "size": n
+            }))
+            .unwrap(),
+            "source.json",
+        );
         for &e in &efforts {
             // Lossless: bytes and wall only, no quality axis.
             let mut best = f64::INFINITY;
             let mut bytes = 0usize;
+            let mut encoded_sha256 = String::new();
             for _ in 0..reps {
                 let t = Instant::now();
                 let d = LosslessConfig::new()
@@ -177,6 +235,12 @@ fn main() {
                     .expect("lossless");
                 best = best.min(t.elapsed().as_secs_f64() * 1000.0);
                 bytes = d.len();
+                let key = evidence.verify(&d, &src, n, true);
+                assert!(
+                    encoded_sha256.is_empty() || encoded_sha256 == key,
+                    "nondeterministic lossless repeat"
+                );
+                encoded_sha256 = key;
             }
             cells.push(Cell {
                 image: name.clone(),
@@ -185,12 +249,15 @@ fn main() {
                 bytes,
                 ssim2: f64::NAN,
                 ms: best,
+                source_sha256: source_sha256.clone(),
+                encoded_sha256,
             });
 
             for &dist in &distances {
                 let mut best = f64::INFINITY;
                 let mut bytes = 0usize;
                 let mut ss = f64::NAN;
+                let mut encoded_sha256 = String::new();
                 for _ in 0..reps {
                     let t = Instant::now();
                     let enc = LossyConfig::new(dist)
@@ -200,6 +267,12 @@ fn main() {
                         .expect("lossy");
                     best = best.min(t.elapsed().as_secs_f64() * 1000.0);
                     bytes = enc.len();
+                    let key = evidence.verify(&enc, &src, n, false);
+                    assert!(
+                        encoded_sha256.is_empty() || encoded_sha256 == key,
+                        "nondeterministic lossy repeat"
+                    );
+                    encoded_sha256 = key;
                     if ss.is_nan() {
                         ss = score(&enc, &src, n);
                     }
@@ -211,19 +284,41 @@ fn main() {
                     bytes,
                     ssim2: ss,
                     ms: best,
+                    source_sha256: source_sha256.clone(),
+                    encoded_sha256,
                 });
             }
         }
         eprintln!("{name} done");
     }
 
-    let mut out = std::fs::File::create(&out_path).unwrap();
-    writeln!(out, "image\tpath\teffort\tbytes\tssim2\tms").unwrap();
+    assert_eq!(
+        cells.len(),
+        picks.len() * efforts.len() * (1 + distances.len()),
+        "incomplete grid"
+    );
+    let mut out = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&out_path)
+        .unwrap();
+    writeln!(
+        out,
+        "image\tpath\teffort\tbytes\tssim2\tms\tsource_sha256\tencoded_sha256"
+    )
+    .unwrap();
     for c in &cells {
         writeln!(
             out,
-            "{}\t{}\t{}\t{}\t{:.4}\t{:.2}",
-            c.image, c.path_kind, c.effort, c.bytes, c.ssim2, c.ms
+            "{}\t{}\t{}\t{}\t{:.4}\t{:.2}\t{}\t{}",
+            c.image,
+            c.path_kind,
+            c.effort,
+            c.bytes,
+            c.ssim2,
+            c.ms,
+            c.source_sha256,
+            c.encoded_sha256
         )
         .unwrap();
     }
@@ -309,7 +404,7 @@ fn grade(cells: &[Cell]) -> (Vec<String>, Vec<String>) {
             // DOMINATED: identical bytes, measurably more time.
             if hi.bytes == lo.bytes && hi.ms > lo.ms * 1.10 {
                 let msg = format!(
-                    "{img} [{kind}]: e{} -> e{} byte-IDENTICAL ({} B) but {:.1}x the wall ({:.1} -> {:.1} ms)",
+                    "{img} [{kind}]: e{} -> e{} equal byte counts ({} B) but {:.1}x the wall ({:.1} -> {:.1} ms)",
                     lo.effort,
                     hi.effort,
                     hi.bytes,

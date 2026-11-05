@@ -1768,6 +1768,23 @@ misclassify that CLI limitation as an invalid stream or strip the ICC to hide it
 
 ## Known Bugs (ACTIVE)
 
+### 2026-11-05: fresh sweep PQ agreement and lossless effort findings
+
+The ongoing frozen sweep has additional PQ near-black agreement failures;
+[retained numerical controls](benchmarks/pq_agreement_2026-11-05.md) preserve
+the unchanged 0.0200 bound, decoder pins and both libjxl builds. Source MAE
+passes do not settle decoder agreement. Numerical attribution remains open
+under decoder issue 73; the newer native precision flag does not close the
+first two retained streams.
+
+The nightly effort gate independently reproduces scan 6824's lossless
+180557-byte e3 to 182641-byte e5 rise. Explicit tree learning produces
+175842 bytes; the 28-control ablation isolates the automatic tree budgets,
+without qualifying a replacement default. The gate's empty-corpus false
+success is repaired, and its six-cell control retains the original failing
+verdict. [Evidence and reproduction](benchmarks/nightly_failures_2026-11-05.md#remaining-lossless-effort-regression-and-gate-evidence-repair).
+
+
 ### 2026-11-05: nightly LZ77 child diagnostics and streaming timeout
 
 [Nightly run 42066511463](https://github.com/imazen/jxl-encoder/actions/runs/42066511463)

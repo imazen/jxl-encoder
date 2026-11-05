@@ -973,3 +973,10 @@ zeroed-alloc-check:
     cargo metadata --locked --format-version 1 > /dev/null
     cargo test --locked -p jxl-encoder --lib budget::
     cargo clippy --locked -p jxl-encoder --lib -- -D warnings
+
+# Require complete effort ladders and preserve the known inversion unchanged.
+effort-gate-evidence-check binary source before out:
+    python3 scripts/check_effort_gate.py '{{binary}}' '{{source}}' '{{before}}' '{{out}}'
+
+float-decode-evidence-check:
+    uv run --with numpy python scripts/test_compare_float_decodes.py
