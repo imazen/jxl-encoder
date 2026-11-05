@@ -937,3 +937,34 @@ libjxl-original-profile-oracle source build out:
 
 native-orientation-icc-check manifest oracle:
     LIBJXL_ORIGINAL_PROFILE_ORACLE={{quote(oracle)}} cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features corpus-tests,butteraugli-loop --test native_orientation original_icc_orientation_control -- --exact
+
+# Isolate SIMD checks from optional sibling/workspace dependencies.
+simd-api-stage destination:
+    python3 scripts/stage_simd_api.py "{{destination}}"
+
+# Run through run-heavy on an eligible host; the manifest may be an isolated stage.
+simd-api-check manifest="Cargo.toml":
+    cargo fmt --manifest-path "{{manifest}}" -p jxl-encoder-simd -- --check
+    cargo clippy --manifest-path "{{manifest}}" -p jxl-encoder-simd --all-targets --all-features -- -D warnings
+    cargo test --manifest-path "{{manifest}}" -p jxl-encoder-simd --all-features
+    cargo clippy --manifest-path "{{manifest}}" -p jxl-encoder-simd --all-targets --no-default-features -- -D warnings
+    cargo test --manifest-path "{{manifest}}" -p jxl-encoder-simd --no-default-features
+
+simd-api-generate:
+    python3 scripts/generate_simd_api_parity.py
+
+simd-api-gate:
+    python3 scripts/check_simd_api.py
+
+simd-api-target target manifest="Cargo.toml":
+    cargo clippy --manifest-path "{{manifest}}" -p jxl-encoder-simd --all-features --tests --target "{{target}}" -- -D warnings
+
+simd-api-wasm manifest="Cargo.toml":
+    JXL_REQUIRE_TOKEN=Wasm128Token CARGO_TARGET_WASM32_WASIP1_RUNNER="${CARGO_TARGET_WASM32_WASIP1_RUNNER:-wasmtime}" cargo test --manifest-path "{{manifest}}" -p jxl-encoder-simd --all-features --target wasm32-wasip1
+
+# Regenerate or check only this architecture's complete SIMD inventory.
+simd-api-doc manifest="apidoc/Cargo.toml":
+    cargo test --manifest-path "{{manifest}}" simd_public_api_surface
+
+simd-api-doc-check manifest="apidoc/Cargo.toml":
+    ZEN_API_DOC=check cargo test --manifest-path "{{manifest}}" simd_public_api_surface
