@@ -250,7 +250,9 @@ mod tests {
             for gray in [false, true] {
                 for alpha in [0_u8, 255] {
                     let rgba: Vec<u8> = rgb
-                        .chunks_exact(3)
+                        .as_chunks::<3>()
+                        .0
+                        .iter()
                         .flat_map(|p| {
                             [
                                 p[0],
@@ -262,7 +264,9 @@ mod tests {
                         .collect();
                     let (manual, manual_layout) = if gray {
                         (
-                            rgba.chunks_exact(4)
+                            rgba.as_chunks::<4>()
+                                .0
+                                .iter()
                                 .flat_map(|p| {
                                     if alpha == 255 {
                                         vec![p[0]]
