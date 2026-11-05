@@ -1798,7 +1798,13 @@ C++ callbacks passes the original 16 seeds and 300-second mutation campaign:
 42 executions, 20 added corpus units, slowest 53 seconds. Rust ASan/coverage,
 all 499,904 counters, timeout, RSS cap and input-size limits stay unchanged.
 The Linux x86 nightly job verifies the CPU flag before using that runtime.
-Remote nightly confirmation is still required; this is bounded fuzz evidence.
+The GitHub rerun still times out on that same unmutated input (77-second
+slow unit, then a 67-second alarm); this local pass is insufficient. cc 1.9's
+new automatic ASan forwarding also instruments the C++ fuzzer engine. A
+wrapper scoped to pinned libfuzzer-sys 0.4.13 engine sources is under test;
+Rust and other dependency instrumentation remain unchanged. The rerun passes
+the repaired LZ77 gate. Its separate 72-pair faster-decoding replay passes
+every sample check in all three decoders; seven streams change bytes.
 
 
 ### RESOLVED 2026-11-05: nightly gate fetched raw originals for pinned SDR renders

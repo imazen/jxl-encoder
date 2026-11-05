@@ -635,7 +635,10 @@ fuzz-encoder target corpus artifacts *args:
 # Linux x86 runtime used by nightly; Rust sanitizer and coverage flags stay intact.
 fuzz-encoder-popcnt target corpus artifacts *args:
     grep -qw popcnt /proc/cpuinfo
-    CXX=clang++ CXXFLAGS="${CXXFLAGS:-} -mpopcnt" just fuzz-encoder {{target}} {{corpus}} {{artifacts}} {{args}}
+    CXX="{{justfile_directory()}}/scripts/fuzz_cxx.py" CXXFLAGS="${CXXFLAGS:-} -mpopcnt" just fuzz-encoder {{target}} {{corpus}} {{artifacts}} {{args}}
+
+fuzz-runtime-check:
+    python3 -m unittest discover -s scripts -p test_fuzz_cxx.py
 
 fuzz-replay input output manifest="Cargo.toml":
     cargo run --locked --release --manifest-path {{quote(manifest)}} -p jxl-encoder --example streaming_fuzz_replay -- {{quote(input)}} {{quote(output)}}

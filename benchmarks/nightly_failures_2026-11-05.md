@@ -101,3 +101,28 @@ and 382,892 KiB maximum RSS, including perf. The enclosing build/profile
 wrapper subsequently exits 255 because perf initially refused the NAS-owned
 profile. Reading that same retained profile with `perf report -f` succeeds;
 the ownership check is unrelated to the fuzz timeout.
+
+## GitHub rerun and runtime sanitizer forwarding
+
+[Run 42075753188](https://github.com/imazen/jxl-encoder/actions/runs/42075753188)
+passes the LZ77 gate after the precedence repair. Its request-limits fuzz
+job passes 763 executions. Streaming still times out on the same unmutated
+input: a 77-second slow unit precedes a 67-second alarm during the repeated
+initialization execution. The local POPCNT pass does not establish a CI fix.
+
+The frozen fuzz graph has exactly one consumer of cc 1.11.0: libfuzzer-sys
+0.4.13. cc 1.9 added automatic forwarding of Rust's AddressSanitizer flag
+to C/C++ compilers ([current documented behavior](https://docs.rs/cc/1.11.0/cc/)).
+The recorded C++ command contains `-fsanitize=address`. The next controlled
+build uses a compiler wrapper that opts only the pinned engine's Fuzzer*.cpp
+files out of that automatic flag. Rust ASan/coverage and every other package
+retain their flags; compiler probes and unknown engine versions retain them
+too. Three scope-control tests pass. This restores the earlier engine build
+configuration; no timeout, RSS cap or codec expectation changes. Verification
+is in progress.
+
+[The independent 72-pair faster-decoding replay](faster_decoding_keep_best_2026-11-05.md)
+passes every original conformance check and verifies identical source samples.
+The two corpus iterator changes also pass their original canonicalization test
+and all five resource tests: `~/tmp/jxl-corpus-iterator-validation-20261105.log`,
+rc0, 106 seconds, peak RSS 2.13 GiB, minimum available 45,729 MiB.

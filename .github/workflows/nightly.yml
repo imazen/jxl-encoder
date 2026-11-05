@@ -209,8 +209,9 @@ jobs:
       CARGO_BUILD_JOBS: 4
       RAYON_NUM_THREADS: 4
       # Keep all Rust ASan/coverage checks. Compile libFuzzer's C++ comparison
-      # callbacks with hardware population count instead of its software helper.
-      CXX: clang++
+      # callbacks with hardware population count. The compiler wrapper keeps
+      # cc's new ASan forwarding off only the pinned C++ libFuzzer engine.
+      CXX: ${{ github.workspace }}/scripts/fuzz_cxx.py
       CXXFLAGS: -mpopcnt
     steps:
       - uses: actions/checkout@v7
@@ -218,6 +219,7 @@ jobs:
         run: |
           clang++ --version
           grep -qw popcnt /proc/cpuinfo
+          python3 -m unittest discover -s scripts -p test_fuzz_cxx.py
       - uses: ./.github/actions/clone-siblings
       - uses: dtolnay/rust-toolchain@nightly
       - name: Prepare real-image fuzz corpus
