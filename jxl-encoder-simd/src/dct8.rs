@@ -382,6 +382,10 @@ pub fn idct_8x8_avx2(token: archmage::X64V3Token, input: &[f32; 64], output: &mu
 #[cfg(target_arch = "x86_64")]
 #[archmage::rite]
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
+#[allow(
+    deprecated,
+    reason = "Preserve the legacy magetypes mul_add rounding contract; do not change arithmetic during API migration."
+)]
 pub(crate) fn vectorized_dct1d_8(
     token: archmage::X64V3Token,
     r0: magetypes::simd::f32x8,
@@ -858,6 +862,10 @@ pub fn idct_8x8_neon(token: archmage::NeonToken, input: &[f32; 64], output: &mut
 #[cfg(target_arch = "aarch64")]
 #[archmage::rite]
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
+#[allow(
+    deprecated,
+    reason = "Preserve the legacy magetypes mul_add rounding contract; do not change arithmetic during API migration."
+)]
 fn neon_dct1d_8(
     token: archmage::NeonToken,
     r0: magetypes::simd::f32x4,
@@ -1264,6 +1272,10 @@ pub fn idct_8x8_wasm128(token: archmage::Wasm128Token, input: &[f32; 64], output
 #[cfg(target_arch = "wasm32")]
 #[archmage::rite]
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
+#[allow(
+    deprecated,
+    reason = "Preserve the legacy magetypes mul_add rounding contract; do not change arithmetic during API migration."
+)]
 fn wasm128_dct1d_8(
     token: archmage::Wasm128Token,
     r0: magetypes::simd::f32x4,

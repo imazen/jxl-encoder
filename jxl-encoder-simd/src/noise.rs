@@ -192,6 +192,10 @@ pub fn denoise_channel_scalar(
 
 #[cfg(target_arch = "x86_64")]
 #[archmage::arcane]
+#[allow(
+    deprecated,
+    reason = "Preserve the legacy magetypes mul_add rounding contract; do not change arithmetic during API migration."
+)]
 pub fn denoise_channel_avx2(
     token: archmage::X64V3Token,
     dest: &mut [f32],
@@ -315,6 +319,10 @@ pub fn denoise_channel_avx2(
 
 #[cfg(target_arch = "aarch64")]
 #[archmage::arcane]
+#[allow(
+    deprecated,
+    reason = "Preserve the legacy magetypes mul_add rounding contract; do not change arithmetic during API migration."
+)]
 pub fn denoise_channel_neon(
     token: archmage::NeonToken,
     dest: &mut [f32],
@@ -426,6 +434,10 @@ pub fn denoise_channel_neon(
 
 #[cfg(target_arch = "wasm32")]
 #[archmage::arcane]
+#[allow(
+    deprecated,
+    reason = "Preserve the legacy magetypes mul_add rounding contract; do not change arithmetic during API migration."
+)]
 pub fn denoise_channel_wasm128(
     token: archmage::Wasm128Token,
     dest: &mut [f32],

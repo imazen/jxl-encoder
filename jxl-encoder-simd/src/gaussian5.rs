@@ -13,8 +13,8 @@
 
 use archmage::prelude::*;
 
-/// Horizontal pass: `dst[y][x] = w0*src[y][x] + w1*(src[y][x-1]+src[y][x+1])
-/// + w2*(src[y][x-2]+src[y][x+2])`, x-clamped taps at the edges.
+/// Horizontal pass: `dst[y][x] = w0*src[y][x] + w1*(src[y][x-1]+src[y][x+1])`
+/// `+ w2*(src[y][x-2]+src[y][x+2])`, x-clamped taps at the edges.
 #[inline]
 pub fn gaussian5_horizontal(
     src: &[f32],
@@ -28,8 +28,8 @@ pub fn gaussian5_horizontal(
     incant!(gaussian5_h_impl(src, dst, width, height, taps));
 }
 
-/// Vertical pass: `dst[y][x] = w0*src[y][x] + w1*(src[y-1][x]+src[y+1][x])
-/// + w2*(src[y-2][x]+src[y+2][x])`, y-clamped taps at the edge rows.
+/// Vertical pass: `dst[y][x] = w0*src[y][x] + w1*(src[y-1][x]+src[y+1][x])`
+/// `+ w2*(src[y-2][x]+src[y+2][x])`, y-clamped taps at the edge rows.
 #[inline]
 pub fn gaussian5_vertical(
     src: &[f32],

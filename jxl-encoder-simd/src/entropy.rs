@@ -214,6 +214,10 @@ pub fn entropy_coeffs_scalar(
 
 #[magetypes(define(f32x8), v4, v3, neon, wasm128, -scalar)]
 #[allow(clippy::too_many_arguments)]
+#[allow(
+    deprecated,
+    reason = "Preserve the legacy magetypes mul_add rounding contract; do not change arithmetic during API migration."
+)]
 pub fn entropy_coeffs_impl(
     token: Token,
     block_c: &[f32],
@@ -596,6 +600,10 @@ pub fn shannon_entropy_scalar(counts: &[i32], total_count: usize) -> f32 {
 }
 
 #[magetypes(define(f32x8, i32x8), v4, v3, neon, wasm128, scalar)]
+#[allow(
+    deprecated,
+    reason = "Preserve the legacy magetypes mul_add rounding contract; do not change arithmetic during API migration."
+)]
 pub fn shannon_entropy_impl(token: Token, counts: &[i32], total_count: usize) -> f32 {
     let inv_total_v = f32x8::splat_t(token, 1.0 / total_count as f32);
     let total_f_v = f32x8::splat_t(token, total_count as f32);
@@ -727,6 +735,10 @@ pub fn estimate_bits_scalar_f64(counts: &[u32], total: u32) -> f64 {
 }
 
 #[magetypes(define(f32x8, i32x8, u32x8), v4, v3, neon, wasm128, scalar)]
+#[allow(
+    deprecated,
+    reason = "Preserve the legacy magetypes mul_add rounding contract; do not change arithmetic during API migration."
+)]
 pub fn estimate_bits_u32_impl(token: Token, counts: &[u32], total: u32) -> f64 {
     let total_f = total as f32;
     let inv_total = f32x8::splat_t(token, 1.0 / total_f);

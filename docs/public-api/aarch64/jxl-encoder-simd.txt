@@ -1,0 +1,303 @@
+# jxl-encoder-simd public API — supported surface (default features)
+# (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
+# Encodings: crate-name prefix stripped; auto traits collapse to a
+# count + exceptions; trait impls collapse to one roster line per
+# type (method signatures live at the trait definition); blanket
+# impls omitted; re-export duplicates annotated `[also: path]`.
+# DO NOT EDIT BY HAND — commit regenerated changes with the code.
+#
+# files: jxl-encoder-simd.txt 142 lines (supported surface) | jxl-encoder-simd.features.txt 0 added (features: avx512,std) | jxl-encoder-simd.internal.txt 11 lines (16 hidden + 0 excluded-feature)
+# arch-unique surface: aarch64 61
+
+## summary
+#
+#   pub modules                                 2
+#   pub types (struct/enum/trait/alias)         2
+#   pub consts/statics                          6
+#   free functions                            120
+#   struct fields                               4
+#   enum variants                               4
+#   re-exports                                  1
+#   trait roster entries (type × trait)         8
+#   auto-trait-complete types                   2
+#
+# per-module pub lines:
+#   (root)                          139
+
+## items (139 lines)
+
+pub mod jxl_encoder_simd
+pub use SimdToken
+pub mod target_features
+pub enum XybCubeRoot
+pub XybCubeRoot::Libjxl
+pub XybCubeRoot::LibjxlUnfused
+pub XybCubeRoot::LowP
+pub XybCubeRoot::MidP
+pub struct EntropyCoeffResult
+pub EntropyCoeffResult::entropy_sum: f32
+pub EntropyCoeffResult::info_loss2_sum: f32
+pub EntropyCoeffResult::info_loss_sum: f32
+pub EntropyCoeffResult::nzeros_sum: f32
+pub const EntropyCoeffResult::ZERO: Self
+pub const K_MIN_SIGMA: f32
+pub const NEWTON_EPS_DEFAULT: f32
+pub const NEWTON_EPS_LIBJXL: f32
+pub const NEWTON_MAX_ITERS_DEFAULT: usize
+pub const NEWTON_MAX_ITERS_LIBJXL: usize
+pub fn cfl_find_best_multiplier(&[f32], &[f32], usize, f32, f32) -> i8
+pub fn cfl_find_best_multiplier_newton(&[f32], &[f32], usize, f32, f32, f32, usize, bool, bool) -> i8
+pub fn cfl_find_best_multiplier_newton_scalar(&[f32], &[f32], usize, f32, f32, f32, usize, bool, bool) -> i8
+pub fn cfl_find_best_multiplier_scalar(&[f32], &[f32], usize, f32, f32) -> i8
+pub fn compute_block_l2_errors([&[f32]; 3], [&[f32]; 3], &[f32], usize, usize) -> alloc::vec::Vec<f32>
+pub fn compute_block_l2_errors_scalar([&[f32]; 3], [&[f32]; 3], &[f32], usize, usize, usize, usize) -> alloc::vec::Vec<f32>
+pub fn compute_mask1x1(&[f32], usize, usize, &mut [f32])
+pub fn compute_mask1x1_scalar(&[f32], usize, usize, &mut [f32])
+pub fn compute_pre_erosion(&[f32], usize, usize, usize, usize, usize, usize) -> (alloc::vec::Vec<f32>, usize, usize)
+pub fn compute_pre_erosion_scalar(&[f32], usize, usize, usize, usize, usize, usize) -> (alloc::vec::Vec<f32>, usize, usize)
+pub fn dct2x2_from_pixels(&[f32; 64], &mut [f32; 64])
+pub fn dct2x2_from_pixels_scalar(&[f32; 64], &mut [f32; 64])
+pub fn dct2x2_to_pixels(&[f32; 64], &mut [f32; 64])
+pub fn dct2x2_to_pixels_scalar(&[f32; 64], &mut [f32; 64])
+pub fn dct_16x16(&[f32; 256], &mut [f32; 256])
+pub fn dct_16x16_scalar(&[f32; 256], &mut [f32; 256])
+pub fn dct_16x32(&[f32; 512], &mut [f32; 512])
+pub fn dct_16x32_scalar(&[f32; 512], &mut [f32; 512])
+pub fn dct_16x8(&[f32; 128], &mut [f32; 128])
+pub fn dct_16x8_scalar(&[f32; 128], &mut [f32; 128])
+pub fn dct_32x16(&[f32; 512], &mut [f32; 512])
+pub fn dct_32x16_scalar(&[f32; 512], &mut [f32; 512])
+pub fn dct_32x32(&[f32; 1024], &mut [f32; 1024])
+pub fn dct_32x32_scalar(&[f32; 1024], &mut [f32; 1024])
+pub fn dct_32x64(&[f32; 2048], &mut [f32; 2048])
+pub fn dct_32x64_scalar(&[f32; 2048], &mut [f32; 2048])
+pub fn dct_4x4_full(&[f32; 64], &mut [f32; 64])
+pub fn dct_4x4_full_scalar(&[f32; 64], &mut [f32; 64])
+pub fn dct_4x8_full(&[f32; 64], &mut [f32; 64])
+pub fn dct_4x8_full_scalar(&[f32; 64], &mut [f32; 64])
+pub fn dct_64x32(&[f32; 2048], &mut [f32; 2048])
+pub fn dct_64x32_scalar(&[f32; 2048], &mut [f32; 2048])
+pub fn dct_64x64(&[f32; 4096], &mut [f32; 4096])
+pub fn dct_64x64_scalar(&[f32; 4096], &mut [f32; 4096])
+pub fn dct_8x16(&[f32; 128], &mut [f32; 128])
+pub fn dct_8x16_scalar(&[f32; 128], &mut [f32; 128])
+pub fn dct_8x4_full(&[f32; 64], &mut [f32; 64])
+pub fn dct_8x4_full_scalar(&[f32; 64], &mut [f32; 64])
+pub fn dct_8x8(&[f32; 64], &mut [f32; 64])
+pub fn dct_8x8_scalar(&[f32; 64], &mut [f32; 64])
+pub fn denoise_channel(&mut [f32], &[f32], &[f32], usize, usize, &[f32; 8], f32)
+pub fn denoise_channel_scalar(&mut [f32], &[f32], &[f32], usize, usize, &[f32; 8], f32)
+pub fn dequant_block_dct8(&[i32; 64], &[i32; 64], &[i32; 64], &[f32; 64], &[f32; 64], &[f32; 64], [f32; 3], f32, f32, &mut [f32; 64], &mut [f32; 64], &mut [f32; 64])
+pub fn dequant_dct8_scalar(&[i32; 64], &[i32; 64], &[i32; 64], &[f32; 64], &[f32; 64], &[f32; 64], [f32; 3], f32, f32, &mut [f32; 64], &mut [f32; 64], &mut [f32; 64])
+pub fn entropy_coeffs_scalar(&[f32], &[f32], &[f32], &[f32], usize, f32, f32, f32, f32, bool, &mut [f32]) -> EntropyCoeffResult
+pub fn entropy_estimate_coeffs(&[f32], &[f32], &[f32], &[f32], usize, f32, f32, f32, f32, bool, &mut [f32]) -> EntropyCoeffResult
+pub fn epf_step1(&[f32], &[f32], &[f32], &mut [f32], &mut [f32], &mut [f32], &[f32], usize, usize, usize, usize, usize, f32, f32)
+pub fn epf_step1_scalar(&[f32], &[f32], &[f32], &mut [f32], &mut [f32], &mut [f32], &[f32], usize, usize, usize, usize, usize, f32, f32)
+pub fn epf_step2(&[f32], &[f32], &[f32], &mut [f32], &mut [f32], &mut [f32], &[f32], usize, usize, usize, usize, usize, f32, f32)
+pub fn epf_step2_scalar(&[f32], &[f32], &[f32], &mut [f32], &mut [f32], &mut [f32], &[f32], usize, usize, usize, usize, usize, f32, f32)
+pub fn estimate_bits_scalar_f64(&[u32], u32) -> f64
+pub fn estimate_bits_u32(&[u32], u32) -> f64
+pub fn fast_log2f(f32) -> f32
+pub fn fast_pow2f(f32) -> f32
+pub fn fast_powf(f32, f32) -> f32
+pub fn forward_xyb_scalar(XybCubeRoot, &[f32], &[f32], &[f32], &mut [f32], &mut [f32], &mut [f32], usize)
+pub fn fused_dct8_entropy(&[f32], usize, usize, usize, &[f32; 64], &[f32; 64], &[f32; 64], f32, f32, f32, &mut [f32; 64], core::option::Option<&mut [f32; 64]>) -> EntropyCoeffResult
+pub fn fused_dct8_entropy_fallback(&[f32], usize, usize, usize, &[f32; 64], &[f32; 64], &[f32; 64], f32, f32, f32, &mut [f32; 64], core::option::Option<&mut [f32; 64]>) -> EntropyCoeffResult
+pub fn gab_smooth_channel(&mut [f32], &mut [f32], usize, usize, f32, f32, f32)
+pub fn gab_smooth_scalar(&mut [f32], &[f32], usize, usize, f32, f32, f32)
+pub fn gaborish_5x5_channel(&mut [f32], &mut [f32], usize, usize, f32, f32, f32, f32, f32, f32)
+pub fn gaborish_5x5_channel_libjxl(&mut [f32], &mut [f32], usize, usize, f32, f32, f32, f32, f32, f32)
+pub fn gaborish_5x5_into(&mut [f32], &[f32], usize, usize, f32, f32, f32, f32, f32, f32)
+pub fn gaborish_5x5_scalar(&mut [f32], &[f32], usize, usize, f32, f32, f32, f32, f32, f32)
+pub fn gaussian5_horizontal(&[f32], &mut [f32], usize, usize, [f32; 3])
+pub fn gaussian5_vertical(&[f32], &mut [f32], usize, usize, [f32; 3])
+pub fn idct_16x16(&[f32; 256], &mut [f32; 256])
+pub fn idct_16x16_scalar(&[f32; 256], &mut [f32; 256])
+pub fn idct_16x32(&[f32; 512], &mut [f32; 512])
+pub fn idct_16x32_scalar(&[f32; 512], &mut [f32; 512])
+pub fn idct_16x8(&[f32; 128], &mut [f32; 128])
+pub fn idct_16x8_scalar(&[f32; 128], &mut [f32; 128])
+pub fn idct_32x16(&[f32; 512], &mut [f32; 512])
+pub fn idct_32x16_scalar(&[f32; 512], &mut [f32; 512])
+pub fn idct_32x32(&[f32; 1024], &mut [f32; 1024])
+pub fn idct_32x32_scalar(&[f32; 1024], &mut [f32; 1024])
+pub fn idct_32x64(&[f32; 2048], &mut [f32; 2048])
+pub fn idct_32x64_scalar(&[f32; 2048], &mut [f32; 2048])
+pub fn idct_4x4_full(&[f32; 64], &mut [f32; 64])
+pub fn idct_4x4_full_scalar(&[f32; 64], &mut [f32; 64])
+pub fn idct_4x8_full(&[f32; 64], &mut [f32; 64])
+pub fn idct_4x8_full_scalar(&[f32; 64], &mut [f32; 64])
+pub fn idct_64x32(&[f32; 2048], &mut [f32; 2048])
+pub fn idct_64x32_scalar(&[f32; 2048], &mut [f32; 2048])
+pub fn idct_64x64(&[f32; 4096], &mut [f32; 4096])
+pub fn idct_64x64_scalar(&[f32; 4096], &mut [f32; 4096])
+pub fn idct_8x16(&[f32; 128], &mut [f32; 128])
+pub fn idct_8x16_scalar(&[f32; 128], &mut [f32; 128])
+pub fn idct_8x4_full(&[f32; 64], &mut [f32; 64])
+pub fn idct_8x4_full_scalar(&[f32; 64], &mut [f32; 64])
+pub fn idct_8x8(&[f32; 64], &mut [f32; 64])
+pub fn idct_8x8_scalar(&[f32; 64], &mut [f32; 64])
+pub fn identity_from_pixels(&[f32; 64], &mut [f32; 64])
+pub fn identity_from_pixels_scalar(&[f32; 64], &mut [f32; 64])
+pub fn identity_to_pixels(&[f32; 64], &mut [f32; 64])
+pub fn identity_to_pixels_scalar(&[f32; 64], &mut [f32; 64])
+pub fn inverse_xyb_planar_scalar(&[f32], &[f32], &[f32], &mut [f32], &mut [f32], &mut [f32], usize)
+pub fn inverse_xyb_scalar(&[f32], &[f32], &[f32], &mut [f32], usize)
+pub fn is_finite_plane(&[f32]) -> bool
+pub fn is_finite_plane_scalar(&[f32]) -> bool
+pub fn linear_rgb_to_xyb_batch(XybCubeRoot, &[f32], &[f32], &[f32], &mut [f32], &mut [f32], &mut [f32])
+pub fn pad_plane(&[f32], usize, usize, usize) -> alloc::vec::Vec<f32>
+pub fn per_block_modulations(&[f32], &[f32], &[f32], usize, f32, f32, usize, usize, usize, usize, &mut [f32], usize)
+pub fn per_block_modulations_scalar(&[f32], &[f32], &[f32], usize, f32, f32, usize, usize, usize, usize, &mut [f32], usize)
+pub fn pixel_domain_loss(&[f32], &[f32], usize, usize, f32, usize, usize) -> f64
+pub fn pixel_domain_loss_scalar(&[f32], &[f32], usize, usize, f32, usize, usize) -> f64
+pub fn quantize_block_dct8(&[f32; 64], &[f32; 64], f32, &[f32; 4], &mut [i32; 64])
+pub fn quantize_block_dct8_libjxl(&[f32; 64], &[f32; 64], f32, &[f32; 4], &mut [i32; 64])
+pub fn quantize_block_large(&[f32], &[f32], f32, &[f32; 4], usize, usize, usize, usize, &mut [i32])
+pub fn quantize_block_large_libjxl(&[f32], &[f32], f32, &[f32; 4], usize, usize, usize, usize, &mut [i32])
+pub fn quantize_dct8_scalar(&[f32; 64], &[f32; 64], f32, &[f32; 4], &mut [i32; 64])
+pub fn quantize_large_scalar(&[f32], &[f32], f32, &[f32; 4], usize, usize, usize, usize, &mut [i32])
+pub fn sanitize_finite(&mut [f32]) -> bool
+pub fn sanitize_finite_scalar(&mut [f32]) -> bool
+pub fn shannon_entropy_bits(&[i32], usize) -> f32
+pub fn shannon_entropy_scalar(&[i32], usize) -> f32
+pub fn transpose_8x8(&[f32], &mut [f32])
+pub fn vec_f32_dirty(usize) -> alloc::vec::Vec<f32>
+pub fn xyb_to_linear_rgb_batch(&[f32], &[f32], &[f32], &mut [f32], usize)
+pub fn xyb_to_linear_rgb_planar(&[f32], &[f32], &[f32], &mut [f32], &mut [f32], &mut [f32], usize)
+
+## trait impls (2 types)
+
+EntropyCoeffResult: Clone, Copy, Debug
+XybCubeRoot: Clone, Copy, Debug, Eq, PartialEq
+
+## auto traits
+
+2 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
+## arch shapes (61 shapes: 61 on every recorded arch, 0 arch-unique)
+
+[aarch64] pub fn cfl_find_best_multiplier_<tier>(archmage::tokens::generated::<arch>::<ArchToken>, &[f32], &[f32], usize, f32, f32) -> i8
+[aarch64] pub fn compute_block_l2_errors_<tier>(archmage::tokens::generated::<arch>::<ArchToken>, [&[f32]; 3], [&[f32]; 3], &[f32], usize, usize, usize, usize) -> alloc::vec::Vec<f32>
+[aarch64] pub fn compute_mask1x1_<tier>(archmage::tokens::generated::<arch>::<ArchToken>, &[f32], usize, usize, &mut [f32])
+[aarch64] pub fn compute_pre_erosion_<tier>(archmage::tokens::generated::<arch>::<ArchToken>, &[f32], usize, usize, usize, usize, usize, usize) -> (alloc::vec::Vec<f32>, usize, usize)
+[aarch64] pub fn dct_16x16_<tier>(archmage::tokens::generated::<arch>::<ArchToken>, &[f32; 256], &mut [f32; 256])
+[aarch64] pub fn dct_16x8_<tier>(archmage::tokens::generated::<arch>::<ArchToken>, &[f32; 128], &mut [f32; 128])
+[aarch64] pub fn dct_8x16_<tier>(archmage::tokens::generated::<arch>::<ArchToken>, &[f32; 128], &mut [f32; 128])
+[aarch64] pub fn dct_8x8_<tier>(archmage::tokens::generated::<arch>::<ArchToken>, &[f32; 64], &mut [f32; 64])
+[aarch64] pub fn denoise_channel_<tier>(archmage::tokens::generated::<arch>::<ArchToken>, &mut [f32], &[f32], &[f32], usize, usize, &[f32; 8], f32)
+[aarch64] pub fn dequant_dct8_<tier>(archmage::tokens::generated::<arch>::<ArchToken>, &[i32; 64], &[i32; 64], &[i32; 64], &[f32; 64], &[f32; 64], &[f32; 64], [f32; 3], f32, f32, &mut [f32; 64], &mut [f32; 64], &mut [f32; 64])
+[aarch64] pub fn entropy_coeffs_<tier>(archmage::tokens::generated::<arch>::<ArchToken>, &[f32], &[f32], &[f32], &[f32], usize, f32, f32, f32, f32, bool, &mut [f32]) -> EntropyCoeffResult
+[aarch64] pub fn epf_step1_<tier>(archmage::tokens::generated::<arch>::<ArchToken>, &[f32], &[f32], &[f32], &mut [f32], &mut [f32], &mut [f32], &[f32], usize, usize, usize, usize, usize, f32, f32)
+[aarch64] pub fn epf_step2_<tier>(archmage::tokens::generated::<arch>::<ArchToken>, &[f32], &[f32], &[f32], &mut [f32], &mut [f32], &mut [f32], &[f32], usize, usize, usize, usize, usize, f32, f32)
+[aarch64] pub fn forward_xyb_<tier>(archmage::tokens::generated::<arch>::<ArchToken>, XybCubeRoot, &[f32], &[f32], &[f32], &mut [f32], &mut [f32], &mut [f32], usize)
+[aarch64] pub fn gab_smooth_<tier>(archmage::tokens::generated::<arch>::<ArchToken>, &mut [f32], &[f32], usize, usize, f32, f32, f32)
+[aarch64] pub fn gaborish_5x5_<tier>(archmage::tokens::generated::<arch>::<ArchToken>, &mut [f32], &[f32], usize, usize, f32, f32, f32, f32, f32, f32)
+[aarch64] pub fn idct_16x16_<tier>(archmage::tokens::generated::<arch>::<ArchToken>, &[f32; 256], &mut [f32; 256])
+[aarch64] pub fn idct_16x8_<tier>(archmage::tokens::generated::<arch>::<ArchToken>, &[f32; 128], &mut [f32; 128])
+[aarch64] pub fn idct_8x16_<tier>(archmage::tokens::generated::<arch>::<ArchToken>, &[f32; 128], &mut [f32; 128])
+[aarch64] pub fn idct_8x8_<tier>(archmage::tokens::generated::<arch>::<ArchToken>, &[f32; 64], &mut [f32; 64])
+[aarch64] pub fn inverse_xyb_<tier>(archmage::tokens::generated::<arch>::<ArchToken>, &[f32], &[f32], &[f32], &mut [f32], usize)
+[aarch64] pub fn inverse_xyb_planar_<tier>(archmage::tokens::generated::<arch>::<ArchToken>, &[f32], &[f32], &[f32], &mut [f32], &mut [f32], &mut [f32], usize)
+[aarch64] pub fn is_finite_plane_<tier>(archmage::tokens::generated::<arch>::<ArchToken>, &[f32]) -> bool
+[aarch64] pub fn per_block_modulations_<tier>(archmage::tokens::generated::<arch>::<ArchToken>, &[f32], &[f32], &[f32], usize, f32, f32, usize, usize, usize, usize, &mut [f32], usize)
+[aarch64] pub fn pixel_domain_loss_<tier>(archmage::tokens::generated::<arch>::<ArchToken>, &[f32], &[f32], usize, usize, f32, usize, usize) -> f64
+[aarch64] pub fn quantize_dct8_<tier>(archmage::tokens::generated::<arch>::<ArchToken>, &[f32; 64], &[f32; 64], f32, &[f32; 4], &mut [i32; 64])
+[aarch64] pub fn quantize_large_<tier>(archmage::tokens::generated::<arch>::<ArchToken>, &[f32], &[f32], f32, &[f32; 4], usize, usize, usize, usize, &mut [i32])
+[aarch64] pub fn sanitize_finite_<tier>(archmage::tokens::generated::<arch>::<ArchToken>, &mut [f32]) -> bool
+[aarch64] pub fn shannon_entropy_<tier>(archmage::tokens::generated::<arch>::<ArchToken>, &[i32], usize) -> f32
+[aarch64] pub fn target_features::cfl_find_best_multiplier_<tier>(&[f32], &[f32], usize, f32, f32) -> i8
+[aarch64] pub fn target_features::compute_block_l2_errors_<tier>([&[f32]; 3], [&[f32]; 3], &[f32], usize, usize, usize, usize) -> alloc::vec::Vec<f32>
+[aarch64] pub fn target_features::compute_mask1x1_<tier>(&[f32], usize, usize, &mut [f32])
+[aarch64] pub fn target_features::compute_pre_erosion_<tier>(&[f32], usize, usize, usize, usize, usize, usize) -> (alloc::vec::Vec<f32>, usize, usize)
+[aarch64] pub fn target_features::dct_16x16_<tier>(&[f32; 256], &mut [f32; 256])
+[aarch64] pub fn target_features::dct_16x8_<tier>(&[f32; 128], &mut [f32; 128])
+[aarch64] pub fn target_features::dct_8x16_<tier>(&[f32; 128], &mut [f32; 128])
+[aarch64] pub fn target_features::dct_8x8_<tier>(&[f32; 64], &mut [f32; 64])
+[aarch64] pub fn target_features::denoise_channel_<tier>(&mut [f32], &[f32], &[f32], usize, usize, &[f32; 8], f32)
+[aarch64] pub fn target_features::dequant_dct8_<tier>(&[i32; 64], &[i32; 64], &[i32; 64], &[f32; 64], &[f32; 64], &[f32; 64], [f32; 3], f32, f32, &mut [f32; 64], &mut [f32; 64], &mut [f32; 64])
+[aarch64] pub fn target_features::entropy_coeffs_<tier>(&[f32], &[f32], &[f32], &[f32], usize, f32, f32, f32, f32, bool, &mut [f32]) -> EntropyCoeffResult
+[aarch64] pub fn target_features::epf_step1_<tier>(&[f32], &[f32], &[f32], &mut [f32], &mut [f32], &mut [f32], &[f32], usize, usize, usize, usize, usize, f32, f32)
+[aarch64] pub fn target_features::epf_step2_<tier>(&[f32], &[f32], &[f32], &mut [f32], &mut [f32], &mut [f32], &[f32], usize, usize, usize, usize, usize, f32, f32)
+[aarch64] pub fn target_features::forward_xyb_<tier>(XybCubeRoot, &[f32], &[f32], &[f32], &mut [f32], &mut [f32], &mut [f32], usize)
+[aarch64] pub fn target_features::gab_smooth_<tier>(&mut [f32], &[f32], usize, usize, f32, f32, f32)
+[aarch64] pub fn target_features::gaborish_5x5_<tier>(&mut [f32], &[f32], usize, usize, f32, f32, f32, f32, f32, f32)
+[aarch64] pub fn target_features::idct_16x16_<tier>(&[f32; 256], &mut [f32; 256])
+[aarch64] pub fn target_features::idct_16x8_<tier>(&[f32; 128], &mut [f32; 128])
+[aarch64] pub fn target_features::idct_8x16_<tier>(&[f32; 128], &mut [f32; 128])
+[aarch64] pub fn target_features::idct_8x8_<tier>(&[f32; 64], &mut [f32; 64])
+[aarch64] pub fn target_features::inverse_xyb_<tier>(&[f32], &[f32], &[f32], &mut [f32], usize)
+[aarch64] pub fn target_features::inverse_xyb_planar_<tier>(&[f32], &[f32], &[f32], &mut [f32], &mut [f32], &mut [f32], usize)
+[aarch64] pub fn target_features::is_finite_plane_<tier>(&[f32]) -> bool
+[aarch64] pub fn target_features::per_block_modulations_<tier>(&[f32], &[f32], &[f32], usize, f32, f32, usize, usize, usize, usize, &mut [f32], usize)
+[aarch64] pub fn target_features::pixel_domain_loss_<tier>(&[f32], &[f32], usize, usize, f32, usize, usize) -> f64
+[aarch64] pub fn target_features::quantize_dct8_<tier>(&[f32; 64], &[f32; 64], f32, &[f32; 4], &mut [i32; 64])
+[aarch64] pub fn target_features::quantize_large_<tier>(&[f32], &[f32], f32, &[f32; 4], usize, usize, usize, usize, &mut [i32])
+[aarch64] pub fn target_features::sanitize_finite_<tier>(&mut [f32]) -> bool
+[aarch64] pub fn target_features::shannon_entropy_<tier>(&[i32], usize) -> f32
+[aarch64] pub fn target_features::transpose_8x8_<tier>(&[f32], &mut [f32])
+[aarch64] pub fn transpose_8x8_<tier>(archmage::tokens::generated::<arch>::<ArchToken>, &[f32], &mut [f32])
+[aarch64] pub use <ArchToken>
+
+## arch surface: aarch64 (61 lines)
+
+pub fn cfl_find_best_multiplier_neon(archmage::tokens::generated::arm::NeonToken, &[f32], &[f32], usize, f32, f32) -> i8
+pub fn compute_block_l2_errors_neon(archmage::tokens::generated::arm::NeonToken, [&[f32]; 3], [&[f32]; 3], &[f32], usize, usize, usize, usize) -> alloc::vec::Vec<f32>
+pub fn compute_mask1x1_neon(archmage::tokens::generated::arm::NeonToken, &[f32], usize, usize, &mut [f32])
+pub fn compute_pre_erosion_neon(archmage::tokens::generated::arm::NeonToken, &[f32], usize, usize, usize, usize, usize, usize) -> (alloc::vec::Vec<f32>, usize, usize)
+pub fn dct_16x16_neon(archmage::tokens::generated::arm::NeonToken, &[f32; 256], &mut [f32; 256])
+pub fn dct_16x8_neon(archmage::tokens::generated::arm::NeonToken, &[f32; 128], &mut [f32; 128])
+pub fn dct_8x16_neon(archmage::tokens::generated::arm::NeonToken, &[f32; 128], &mut [f32; 128])
+pub fn dct_8x8_neon(archmage::tokens::generated::arm::NeonToken, &[f32; 64], &mut [f32; 64])
+pub fn denoise_channel_neon(archmage::tokens::generated::arm::NeonToken, &mut [f32], &[f32], &[f32], usize, usize, &[f32; 8], f32)
+pub fn dequant_dct8_neon(archmage::tokens::generated::arm::NeonToken, &[i32; 64], &[i32; 64], &[i32; 64], &[f32; 64], &[f32; 64], &[f32; 64], [f32; 3], f32, f32, &mut [f32; 64], &mut [f32; 64], &mut [f32; 64])
+pub fn entropy_coeffs_neon(archmage::tokens::generated::arm::NeonToken, &[f32], &[f32], &[f32], &[f32], usize, f32, f32, f32, f32, bool, &mut [f32]) -> EntropyCoeffResult
+pub fn epf_step1_neon(archmage::tokens::generated::arm::NeonToken, &[f32], &[f32], &[f32], &mut [f32], &mut [f32], &mut [f32], &[f32], usize, usize, usize, usize, usize, f32, f32)
+pub fn epf_step2_neon(archmage::tokens::generated::arm::NeonToken, &[f32], &[f32], &[f32], &mut [f32], &mut [f32], &mut [f32], &[f32], usize, usize, usize, usize, usize, f32, f32)
+pub fn forward_xyb_neon(archmage::tokens::generated::arm::NeonToken, XybCubeRoot, &[f32], &[f32], &[f32], &mut [f32], &mut [f32], &mut [f32], usize)
+pub fn gab_smooth_neon(archmage::tokens::generated::arm::NeonToken, &mut [f32], &[f32], usize, usize, f32, f32, f32)
+pub fn gaborish_5x5_neon(archmage::tokens::generated::arm::NeonToken, &mut [f32], &[f32], usize, usize, f32, f32, f32, f32, f32, f32)
+pub fn idct_16x16_neon(archmage::tokens::generated::arm::NeonToken, &[f32; 256], &mut [f32; 256])
+pub fn idct_16x8_neon(archmage::tokens::generated::arm::NeonToken, &[f32; 128], &mut [f32; 128])
+pub fn idct_8x16_neon(archmage::tokens::generated::arm::NeonToken, &[f32; 128], &mut [f32; 128])
+pub fn idct_8x8_neon(archmage::tokens::generated::arm::NeonToken, &[f32; 64], &mut [f32; 64])
+pub fn inverse_xyb_neon(archmage::tokens::generated::arm::NeonToken, &[f32], &[f32], &[f32], &mut [f32], usize)
+pub fn inverse_xyb_planar_neon(archmage::tokens::generated::arm::NeonToken, &[f32], &[f32], &[f32], &mut [f32], &mut [f32], &mut [f32], usize)
+pub fn is_finite_plane_neon(archmage::tokens::generated::arm::NeonToken, &[f32]) -> bool
+pub fn per_block_modulations_neon(archmage::tokens::generated::arm::NeonToken, &[f32], &[f32], &[f32], usize, f32, f32, usize, usize, usize, usize, &mut [f32], usize)
+pub fn pixel_domain_loss_neon(archmage::tokens::generated::arm::NeonToken, &[f32], &[f32], usize, usize, f32, usize, usize) -> f64
+pub fn quantize_dct8_neon(archmage::tokens::generated::arm::NeonToken, &[f32; 64], &[f32; 64], f32, &[f32; 4], &mut [i32; 64])
+pub fn quantize_large_neon(archmage::tokens::generated::arm::NeonToken, &[f32], &[f32], f32, &[f32; 4], usize, usize, usize, usize, &mut [i32])
+pub fn sanitize_finite_neon(archmage::tokens::generated::arm::NeonToken, &mut [f32]) -> bool
+pub fn shannon_entropy_neon(archmage::tokens::generated::arm::NeonToken, &[i32], usize) -> f32
+pub fn target_features::cfl_find_best_multiplier_neon(&[f32], &[f32], usize, f32, f32) -> i8
+pub fn target_features::compute_block_l2_errors_neon([&[f32]; 3], [&[f32]; 3], &[f32], usize, usize, usize, usize) -> alloc::vec::Vec<f32>
+pub fn target_features::compute_mask1x1_neon(&[f32], usize, usize, &mut [f32])
+pub fn target_features::compute_pre_erosion_neon(&[f32], usize, usize, usize, usize, usize, usize) -> (alloc::vec::Vec<f32>, usize, usize)
+pub fn target_features::dct_16x16_neon(&[f32; 256], &mut [f32; 256])
+pub fn target_features::dct_16x8_neon(&[f32; 128], &mut [f32; 128])
+pub fn target_features::dct_8x16_neon(&[f32; 128], &mut [f32; 128])
+pub fn target_features::dct_8x8_neon(&[f32; 64], &mut [f32; 64])
+pub fn target_features::denoise_channel_neon(&mut [f32], &[f32], &[f32], usize, usize, &[f32; 8], f32)
+pub fn target_features::dequant_dct8_neon(&[i32; 64], &[i32; 64], &[i32; 64], &[f32; 64], &[f32; 64], &[f32; 64], [f32; 3], f32, f32, &mut [f32; 64], &mut [f32; 64], &mut [f32; 64])
+pub fn target_features::entropy_coeffs_neon(&[f32], &[f32], &[f32], &[f32], usize, f32, f32, f32, f32, bool, &mut [f32]) -> EntropyCoeffResult
+pub fn target_features::epf_step1_neon(&[f32], &[f32], &[f32], &mut [f32], &mut [f32], &mut [f32], &[f32], usize, usize, usize, usize, usize, f32, f32)
+pub fn target_features::epf_step2_neon(&[f32], &[f32], &[f32], &mut [f32], &mut [f32], &mut [f32], &[f32], usize, usize, usize, usize, usize, f32, f32)
+pub fn target_features::forward_xyb_neon(XybCubeRoot, &[f32], &[f32], &[f32], &mut [f32], &mut [f32], &mut [f32], usize)
+pub fn target_features::gab_smooth_neon(&mut [f32], &[f32], usize, usize, f32, f32, f32)
+pub fn target_features::gaborish_5x5_neon(&mut [f32], &[f32], usize, usize, f32, f32, f32, f32, f32, f32)
+pub fn target_features::idct_16x16_neon(&[f32; 256], &mut [f32; 256])
+pub fn target_features::idct_16x8_neon(&[f32; 128], &mut [f32; 128])
+pub fn target_features::idct_8x16_neon(&[f32; 128], &mut [f32; 128])
+pub fn target_features::idct_8x8_neon(&[f32; 64], &mut [f32; 64])
+pub fn target_features::inverse_xyb_neon(&[f32], &[f32], &[f32], &mut [f32], usize)
+pub fn target_features::inverse_xyb_planar_neon(&[f32], &[f32], &[f32], &mut [f32], &mut [f32], &mut [f32], usize)
+pub fn target_features::is_finite_plane_neon(&[f32]) -> bool
+pub fn target_features::per_block_modulations_neon(&[f32], &[f32], &[f32], usize, f32, f32, usize, usize, usize, usize, &mut [f32], usize)
+pub fn target_features::pixel_domain_loss_neon(&[f32], &[f32], usize, usize, f32, usize, usize) -> f64
+pub fn target_features::quantize_dct8_neon(&[f32; 64], &[f32; 64], f32, &[f32; 4], &mut [i32; 64])
+pub fn target_features::quantize_large_neon(&[f32], &[f32], f32, &[f32; 4], usize, usize, usize, usize, &mut [i32])
+pub fn target_features::sanitize_finite_neon(&mut [f32]) -> bool
+pub fn target_features::shannon_entropy_neon(&[i32], usize) -> f32
+pub fn target_features::transpose_8x8_neon(&[f32], &mut [f32])
+pub fn transpose_8x8_neon(archmage::tokens::generated::arm::NeonToken, &[f32], &mut [f32])
+pub use NeonToken

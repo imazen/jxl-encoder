@@ -498,6 +498,8 @@ cargo clippy --workspace -- -D warnings    # lint
 - **Claude** (Anthropic) — AI-assisted development. Not all code has been
   manually reviewed; review critical paths before production use.
 
+SIMD consumer migration and current review/backlog: [SIMD transition](docs/SIMD_TRANSITION.md).
+
 ## License
 
 Dual-licensed:

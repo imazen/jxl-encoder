@@ -1,6 +1,11 @@
-# magetypes 0.5 & archmage 0.5 — NEON Implementation Guide
+# Historical NEON implementation notes — magetypes/archmage 0.5
 
-> **Version note:** This guide was written for archmage 0.5. The current version is 0.9.x. Core patterns (`#[archmage::arcane]`, token-based dispatch) remain the same, but some API details may differ.
+> **Historical API examples:** These notes describe 0.5-era internal kernels.
+> Consumer API work follows [the SIMD transition](SIMD_TRANSITION.md) and
+> [PR 141](https://github.com/imazen/jxl-encoder/pull/141): arrays/slices in
+> `target_features`, internal proof tokens, retained deprecated legacy calls,
+> and the native-context/WASM module-load distinction. Do not copy these old
+> token-taking signatures or constructor names into new consumer boundaries.
 
 ## Quick Reference
 
@@ -51,7 +56,8 @@ pub fn my_function(input: &[f32], output: &mut [f32]) {
 }
 ```
 
-This is the pattern used throughout jxl_simd (see dct8.rs, quantize.rs, etc.).
+This was the dispatch pattern in the 0.5 notes. Internal kernels still use
+proofs; current consumer calls follow [the transition guide](SIMD_TRANSITION.md).
 
 ---
 

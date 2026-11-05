@@ -4231,8 +4231,8 @@ impl VarDctEncoder {
         // Dot detection (refs #19). libjxl gates at speed_tier <= kSquirrel
         // (effort >= 7) AND distance >= 3.0, AND only when text-like
         // patches haven't been found. We mirror the gating exactly.
-        // Feature is off by default — niche (astronomy / specular highlights);
-        // enable via `LossyConfig::with_dot_detection(true)`.
+        // LossyConfig enables this by default; direct VarDctEncoder construction
+        // defaults it off. The effort/distance/patch gates below still apply.
         if self.enable_dot_detection
             && self.effort >= 7
             && self.distance >= 3.0

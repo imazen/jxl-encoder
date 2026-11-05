@@ -182,6 +182,10 @@ pub fn gaborish_5x5_scalar(
 
 #[magetypes(define(f32x8), v4, v3, neon, wasm128, -scalar)]
 #[allow(clippy::too_many_arguments)]
+#[allow(
+    deprecated,
+    reason = "Preserve the legacy magetypes mul_add rounding contract; do not change arithmetic during API migration."
+)]
 pub fn gaborish_5x5_impl(
     token: Token,
     output: &mut [f32],
@@ -639,10 +643,8 @@ pub use gaborish_5x5_impl_v3 as gaborish_5x5_avx2;
 #[cfg(target_arch = "aarch64")]
 pub use gaborish_5x5_impl_neon as gaborish_5x5_neon;
 
-// wasm128 is NEW (no pre-consolidation alias existed). Export under the
-// magetypes-generated name so wasm32 callers can reach it directly if needed.
-#[cfg(target_arch = "wasm32")]
-pub use gaborish_5x5_impl_wasm128 as gaborish_5x5_wasm128;
+// WASM dispatch uses the generated gaborish_5x5_impl_wasm128 directly;
+// this private module has no historical crate-root WASM alias.
 
 #[cfg(test)]
 mod tests {

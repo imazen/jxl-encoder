@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+- Document the pending SIMD migration, complete branch/issue/TODO inventory and preserved legacy contracts in [SIMD transition](docs/SIMD_TRANSITION.md).
+
+### jxl-encoder-simd
+
+- Added token-free `target_features` kernels for V3, V4, NEON and WASM128; deprecated the original token-taking entry points without removing their signatures. Native calls require matching feature attributes; WASM validates features when the engine loads the module.
+- Allow published archmage/magetypes beta.2 for existing V4 narrow-vector operations, retain legacy SIMD multiply-add rounding, and route scalar cube-root/FMA fallbacks through the no-std math policy.
+
+
 - Preserve PQ DC precision with nearest rounding across still, streaming and animation pixel encodes to prevent large near-black chroma errors; retain strict Libjxl precision and the existing HDR loop defaults (`dfec8f05`).
 
 - Apply request color encoding and the shared HDR loop-budget policy to animation frames; forward requested loop traces in encoded frame order.

@@ -47,3 +47,23 @@ Upstream code from [libjxl/libjxl](https://github.com/libjxl/libjxl) is licensed
 Our additions and improvements are dual-licensed (AGPL-3.0 or commercial) as above.
 
 Algorithms and constants derived from [libjxl](https://github.com/libjxl/libjxl) (BSD-3-Clause).
+
+## Calling from feature-enabled code
+
+Ordinary callers use the crate-root runtime-dispatched functions. Code already
+compiled with the full CPU feature set can call `target_features` functions with
+plain arrays and slices, such as `target_features::dct_8x8_v3(input, output)`.
+Rust checks the calling function's `#[target_feature]` attributes. A native baseline
+caller gets E0133 and should use the runtime-dispatched entry point.
+
+WASM also permits safe baseline calls, with module features validated by the
+engine at load time; SIMD128 requires engine support.
+
+The module documents all required features and provides safe composition
+examples. Its `_v3`, `_v4`, `_neon` and `_wasm128` functions call the existing
+kernels. The original token-taking functions remain available and are deprecated.
+Existing scalar functions continue to work without tokens. There is no new speed
+or inlining guarantee. The AVX-512 validation uses magetypes 0.9.31-beta.2, which
+provides narrow-vector traits absent from 0.9.30.
+
+Migration status, dependency limits and remaining work: [SIMD transition](../docs/SIMD_TRANSITION.md).
