@@ -6,7 +6,9 @@
 # HTTPS (imazen-26/ACCESS.md). Every file is sha256-pinned here; a hash
 # mismatch fails loudly (R2 drift or truncation must never silently
 # change gate pixels). Used by .github/workflows/nightly.yml AND local
-# gate runs. All five are 8-bit RGB (color-type 2) PNGs with only
+# gate runs. The five default hashes identify PNG-v3 SDR renders, not the
+# unprocessed originals. Optional manifests retain their explicit source URLs.
+# All five are 8-bit RGB (color-type 2) PNGs with only
 # IHDR/IDAT/IEND(+pHYs) chunks — safe for cjxl 0.12 and loaded
 # identically by the gate's to_rgb8() path (verified 2026-08-20).
 set -euo pipefail
@@ -35,14 +37,20 @@ if [ "$#" -eq 1 ]; then
   exit 0
 fi
 
-fetch ff4cd87728467925a9ec9013d9b71b6fc5458acee2692ce3087fc7d3b20b1373 \
+fetch_gate() {
+  local sha="$1" rel="$2"
+  fetch "$sha" "$rel" \
+    "https://codec-corpus.r2.imazen.org/imazen-26-png-v3/${rel%.png}.sdr.png"
+}
+
+fetch_gate ff4cd87728467925a9ec9013d9b71b6fc5458acee2692ce3087fc7d3b20b1373 \
   "5300-noaa-hurricane-documents/5308_noaa_nhc-al022024-beryl_p01_2550x3300.png"
-fetch 786737436f55090e58ba85b6a92fdac02dfe6cacb8718d62a7c1faf4f3a66daf \
+fetch_gate 786737436f55090e58ba85b6a92fdac02dfe6cacb8718d62a7c1faf4f3a66daf \
   "7000-lilith-plots/aliased-polygons/7026_plots_line-00081-s68404bb1_1024x1024.png"
-fetch 97cb57c03b01bd634c4129fb42cd8f4be1afe6de3d5b50b076cc23a163734694 \
+fetch_gate 97cb57c03b01bd634c4129fb42cd8f4be1afe6de3d5b50b076cc23a163734694 \
   "8100-lilith-web-screenshots/1440x900/8106_web-screenshots_climate-news_dpr1_page1_1440x900.png"
-fetch bd161a7d566c80d14230bbf4346f413210d93e9f4183fe204d4cb9be4d6e1c62 \
+fetch_gate bd161a7d566c80d14230bbf4346f413210d93e9f4183fe204d4cb9be4d6e1c62 \
   "9226-lilith-ai-products/grocery/9678_gen_products-grocery_cereal-box-coral_p0439_1024x1536.png"
-fetch e0825408d8b880ea80385d9d28af238f636b9f997b33770d9473ddc0bccec22c \
+fetch_gate e0825408d8b880ea80385d9d28af238f636b9f997b33770d9473ddc0bccec22c \
   "6800-ia-scans-manuscript-text/6824_scans-text_redoute-fr-description_p0052_2415x3528.png"
 echo "imazen-26 gate files present + sha-verified in $DIR/imazen-26/"

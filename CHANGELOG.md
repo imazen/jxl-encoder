@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Fetch the five hash-pinned nightly gate images from their matching PNG-v3 SDR URLs; retain all existing hashes, destination paths and explicit manifest URLs.
+
 - Fresh zeroed budget buffers request allocator-zeroed storage. Fallible refusal retries through Vec to preserve a real TryReserveError payload; size checks and budget accounting remain intact.
 
 - Preserve PQ DC precision with nearest rounding across still, streaming and animation pixel encodes to prevent large near-black chroma errors; retain strict Libjxl precision and the existing HDR loop defaults (`dfec8f05`).

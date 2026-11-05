@@ -1767,6 +1767,19 @@ misclassify that CLI limitation as an invalid stream or strip the ICC to hide it
 
 ## Known Bugs (ACTIVE)
 
+### RESOLVED 2026-11-05: nightly gate fetched raw originals for pinned SDR renders
+
+Nightly run `41995258239` stopped before encoding because the NOAA 5308
+fixture failed its existing SHA256. All five default hashes in
+`scripts/hunt/fetch_imazen26_gate_files.sh` identify published PNG-v3 SDR
+renders, while the default URL pointed at unprocessed originals. The source
+URL now selects the matching `.sdr.png` object; local destination names,
+all five expected hashes and explicit optional-manifest URLs are unchanged.
+A fresh five-file download passes every checksum; shell syntax and the
+hash/path preservation check pass. No fixture bytes or quality expectation
+were replaced. Reproduce with `just gate-fixtures <new-corpus-dir>`.
+
+
 ### RESOLVED 2026-11-05: PQ DC quantization exceeded existing signal-fidelity bounds
 
 Repair `dfec8f05` uses finer nearest DC quantization for PQ pixel input

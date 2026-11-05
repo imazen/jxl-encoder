@@ -144,6 +144,9 @@ pq-existing-hdr-check manifest="Cargo.toml":
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --test it lossy_float_bitdepth
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --test it low_effort_static_codes
 
+gate-fixtures corpus:
+    CODEC_CORPUS_DIR={{quote(corpus)}} bash scripts/hunt/fetch_imazen26_gate_files.sh
+
 conformance-progress root:
     python3 scripts/conformance_progress.py {{quote(root)}}
 
