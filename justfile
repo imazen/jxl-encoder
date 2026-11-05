@@ -93,6 +93,9 @@ fast-decode-conformance source +files:
 issue138-replay binary out corpus icc:
     python3 scripts/replay_issue138.py {{quote(binary)}} {{quote(out)}} {{quote(corpus)}} {{quote(icc)}}
 
+issue138-retained-replay binary out corpus icc:
+    python3 scripts/replay_issue138.py {{quote(binary)}} {{quote(out)}} {{quote(corpus)}} {{quote(icc)}} --retain
+
 issue138-ablate binary replay out corpus icc:
     python3 scripts/ablate_issue138.py {{quote(binary)}} {{quote(replay)}} {{quote(out)}} {{quote(corpus)}} {{quote(icc)}}
 
@@ -110,6 +113,26 @@ issue138-ablation-table ablations out:
 
 issue138-vdp2-loop-ablate binary replay out corpus icc:
     python3 scripts/ablate_issue138.py {{quote(binary)}} {{quote(replay)}} {{quote(out)}} {{quote(corpus)}} {{quote(icc)}} --arms original,vdp2_loop,vdp2_loop8,dc_vdp2_loop
+
+issue138-pq-pairs baseline candidate records out corpus icc:
+    python3 scripts/check_issue138_pq.py {{quote(baseline)}} {{quote(candidate)}} {{quote(records)}} {{quote(out)}} {{quote(corpus)}} {{quote(icc)}}
+
+pq-dc-contract manifest="Cargo.toml":
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --test animation_contract saturated_pq_keeps_dark_channels -- --nocapture
+
+# Caller supplies the frozen sibling closure, v0.12 tools, flock and run-heavy.
+pq-dc-validation manifest="Cargo.toml":
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --lib
+    just animation-hdr-loop-check {{quote(manifest)}}
+    just hdr-intensity-check {{quote(manifest)}}
+    just hdr-loop-override-check {{quote(manifest)}}
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --test it hash_lock
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --test it strategy_libjxl
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --test it divergence_table_drift
+    cargo clippy --locked --manifest-path {{quote(manifest)}} --workspace --all-targets -- -D warnings
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience --lib -- -D warnings
+    cargo fmt -p jxl-encoder -- --check
+    python3 -m unittest discover -s scripts -p test_jxl_bitstream_diff.py
 
 conformance-build manifest="tools/conformance-sweep/Cargo.toml":
     cargo build --locked --release --manifest-path {{quote(manifest)}}

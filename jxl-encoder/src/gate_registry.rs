@@ -1597,10 +1597,13 @@ jxl_encoder_macros::strategy_def! {
         /// own DC schedule — the W44-AUDIT-8 claim of unconditional
         /// cjxl parity was wrong, but the current shape is now part of
         /// the Zenjxl quality/byte calibration and flips need their
-        /// own re-validation. Section D.
+        /// own re-validation. PQ pixel input outside this permission whose
+        /// 8x8 block averages leave the internal sRGB gamut retains three DC fractional bits to avoid amplified near-black
+        /// error; strict parity keeps the reference precision schedule.
+        /// Section D.
         dc_encode_libjxl_parity: bool {
             divergence_section = "D",
-            divergence_row_ref = "extra_dc_precision + prediction-relative nl_dc gate and source-domain CfL (libjxl effort >= 4; W44-AUDIT-8 inversion)",
+            divergence_row_ref = "extra_dc_precision + prediction-relative nl_dc gate and source-domain CfL (libjxl effort >= 4; W44-AUDIT-8 inversion); PQ precision-three policy outside strict permission",
         },
 
         /// Whether the AC-metadata modular stream's MA tree follows
@@ -2187,7 +2190,7 @@ pub(crate) const ALL_DIVERGENCE_ENTRIES: &[DivergenceEntry] = &[
     DivergenceEntry {
         gate_name: "dc_encode_libjxl_parity",
         section: "D",
-        row_ref: "extra_dc_precision + prediction-relative nl_dc gate and source-domain CfL (libjxl effort >= 4; W44-AUDIT-8 inversion)",
+        row_ref: "extra_dc_precision + prediction-relative nl_dc gate and source-domain CfL (libjxl effort >= 4; W44-AUDIT-8 inversion); PQ precision-three policy outside strict permission",
         raw: __CUSTOM_DIVERGENCE_DC_ENCODE_LIBJXL_PARITY,
     },
     // Section A — #101 auto-resample regime switch (measured OFF for zen strategies)

@@ -1084,7 +1084,13 @@ pub(crate) fn encode_animation_lossy(
             }
         };
 
-        enc.encode_frame_to_writer(
+        let dc_policy = (
+            enc.profile.extra_dc_precision,
+            enc.profile.use_libjxl_wp_dc_quant,
+        );
+        enc.apply_pq_dc_precision(frame_w, frame_h, frame_w * 3, &linear_rgb, stop)
+            .map_err(at_from)?;
+        let encoded_frame = enc.encode_frame_to_writer(
             frame_w,
             frame_h,
             &linear_rgb,
@@ -1092,8 +1098,10 @@ pub(crate) fn encode_animation_lossy(
             &frame_options,
             &mut writer,
             stop,
-        )
-        .map_err(at_from)?;
+        );
+        enc.profile.extra_dc_precision = dc_policy.0;
+        enc.profile.use_libjxl_wp_dc_quant = dc_policy.1;
+        encoded_frame.map_err(at_from)?;
 
         // ReferenceOnly frames are not the displayed canvas — keep
         // `prev_pixels` pinned to the previous displayed frame so the

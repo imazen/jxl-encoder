@@ -2777,6 +2777,62 @@ impl Default for VarDctEncoder {
 }
 
 impl VarDctEncoder {
+    /// Preserve PQ DC colors that require cancellation in the internal sRGB
+    /// gamut. Neutral/in-gamut blocks retain the calibrated schedule; strict
+    /// parity retains the reference quantizer regardless of source colors.
+    pub(crate) fn apply_pq_dc_precision(
+        &mut self,
+        width: usize,
+        height: usize,
+        stride: usize,
+        source: &[f32],
+        stop: Option<&dyn Stop>,
+    ) -> Result<()> {
+        use crate::headers::color_encoding::TransferFunction;
+        if self.resolved_improvements.dc_encode_libjxl_parity
+            || !self
+                .color_encoding
+                .as_ref()
+                .is_some_and(|ce| ce.transfer_function == TransferFunction::Pq)
+        {
+            return Ok(());
+        }
+        let matrix = self
+            .color_encoding
+            .as_ref()
+            .and_then(super::xyb::primaries_to_srgb_matrix)
+            .unwrap_or([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]);
+        // Matrix conversion commutes with averaging. Summing in f64 avoids
+        // classifying a neutral block from f32 accumulation noise. No division
+        // is needed: a positive sample count cannot change the sign.
+        for by in (0..height).step_by(BLOCK_DIM) {
+            crate::error::check_stop(stop)?;
+            for bx in (0..width).step_by(BLOCK_DIM) {
+                let mut sum = [0.0_f64; 3];
+                for y in by..(by + BLOCK_DIM).min(height) {
+                    let row = &source[y * stride..][bx * 3..(bx + BLOCK_DIM).min(width) * 3];
+                    for pixel in row.as_chunks::<3>().0 {
+                        for c in 0..3 {
+                            sum[c] += f64::from(pixel[c]);
+                        }
+                    }
+                }
+                if matrix.iter().any(|row| {
+                    row.iter()
+                        .zip(sum)
+                        .map(|(&m, v)| f64::from(m) * v)
+                        .sum::<f64>()
+                        < 0.0
+                }) {
+                    self.profile.extra_dc_precision = 3;
+                    self.profile.use_libjxl_wp_dc_quant = false;
+                    return Ok(());
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Keep the calibrated normal policy; strict DC parity follows the
     /// GradientFixedDC override in libjxl AddVarDCTDC at faster decoding.
     pub(crate) fn uses_gradient_dc_quantization(&self) -> bool {
@@ -7993,6 +8049,44 @@ mod tests {
     #![allow(clippy::assertions_on_constants)]
 
     use super::*;
+
+    #[test]
+    fn pq_dc_gamut_detection_ignores_row_padding() {
+        for (width, height) in [(1, 1), (7, 5), (17, 9)] {
+            let stride = width * 3 + 11;
+            for color in [[1.0, 0.0, 0.2], [0.5, 0.5, 0.5]] {
+                let packed = color.repeat(width * height);
+                let mut padded = vec![f32::NAN; stride * height];
+                for y in 0..height {
+                    padded[y * stride..y * stride + width * 3]
+                        .copy_from_slice(&packed[y * width * 3..(y + 1) * width * 3]);
+                }
+                let mut outcomes = Vec::new();
+                for (source, row_stride) in [(&packed, width * 3), (&padded, stride)] {
+                    let mut enc = VarDctEncoder::new(25.0);
+                    enc.color_encoding = Some(crate::ColorEncoding::bt2100_pq());
+                    enc.profile.use_libjxl_wp_dc_quant = true;
+                    let original = (enc.profile.extra_dc_precision, true);
+                    enc.apply_pq_dc_precision(width, height, row_stride, source, None)
+                        .unwrap();
+                    let result = (
+                        enc.profile.extra_dc_precision,
+                        enc.profile.use_libjxl_wp_dc_quant,
+                    );
+                    assert_eq!(
+                        result,
+                        if color[1] == 0.0 {
+                            (3, false)
+                        } else {
+                            original
+                        }
+                    );
+                    outcomes.push(result);
+                }
+                assert_eq!(outcomes[0], outcomes[1]);
+            }
+        }
+    }
 
     #[test]
     fn test_encoder_creation() {

@@ -9106,6 +9106,8 @@ impl<'a> EncodeRequest<'a> {
         if std::env::var_os("__JXL_ENC_PHASE_TIMING").is_some() {
             eprintln!("encode_lossy: conv+setup={:?}", _t_conv.elapsed());
         }
+        enc.apply_pq_dc_precision(encode_w, encode_h, encode_w * 3, &encode_rgb, self.stop)
+            .map_err(EncodeError::from)?;
         let output = enc
             .encode_with_extras_stop_src(
                 encode_w,
