@@ -76,16 +76,23 @@ RSS. The binary SHA256 is
 `9dc3bc9c5db79d510ec934b5d6fb45b7009fece92eb6d9b2b261c666f`.
 It still reports 499,904 coverage counters. The wrapper passes: 160 seconds,
 peak RSS 1.67 GiB, minimum available 45,855 MiB, peak load 3.43.
-The original 16-seed corpus and 300-second mutation campaign are now running
-with seed 653941640, unchanged 60-second/RSS/input-size limits and that same
-retained executable. This does not yet establish a passing full fuzz gate.
+The original 16-seed corpus and 300-second mutation campaign pass with seed
+653941640 and unchanged 60-second/RSS/input-size limits: 42 executions,
+20 new corpus units, 53-second slowest unit, rc0. The retained executable is
+the same as the fixed-input control. `/usr/bin/time -v` records 307.54 seconds
+wall and 588,572 KiB maximum RSS; the `run-heavy` wrapper records rc0,
+308 seconds, peak RSS 0.56 GiB, minimum available 47,345 MiB, peak load 1.45.
+The complete log is `fuzz-popcnt-campaign-retry1.log` in the retained run root.
+This qualifies that bounded campaign, not exhaustive fuzz coverage. An initial
+orchestration attempt failed before loading its absent corpus; its distinct
+setup log remains retained and is not counted as fuzz evidence.
 
-The proposed nightly change sets the C++ runtime compiler/flag only in its
+The nightly change sets the C++ runtime compiler/flag only in its
 Linux x86 fuzz job and explicitly checks POPCNT availability. Rust sanitizer,
 coverage and target flags remain unchanged. Reproduce with
 `just fuzz-encoder-popcnt streaming_roundtrip <corpus> <artifacts>
 -timeout=60 -max_total_time=300 -max_len=500000 -print_final_stats=1`.
-Clang alone is not the proposed repair: the hardware instruction is required.
+Clang alone is not the repair: the hardware instruction is required.
 
 All inputs, binaries, profiles, compiler identities and complete logs remain
 under `/mnt/v/output/jxl-encoder/nightly-timeout-20261105/` on r5900xt.

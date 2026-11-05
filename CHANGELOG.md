@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Compile the Linux x86 fuzz runtime comparison callbacks with hardware POPCNT; retain Rust sanitizer/coverage instrumentation and all existing timeout, RSS and input-size limits.
+
 - Honor explicit faster-decoding settings before lossless LZ77 keep-best selection at every nonzero tier; preserve the default tier-zero policy.
 
 - Fetch the five hash-pinned nightly gate images from their matching PNG-v3 SDR URLs; retain all existing hashes, destination paths and explicit manifest URLs.

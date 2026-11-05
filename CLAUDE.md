@@ -1792,8 +1792,13 @@ fuzz entry, retains the JXL and also requires pinned djxl rendering. A timeout
 alone does not establish incorrect pixels. Stable replay passes exact streaming
 bytes and Rust pixels plus pinned djxl rendering: 2.26 seconds, 36,060 KiB
 maximum RSS (`/usr/bin/time -v`). The build/replay wrapper passes, 346 seconds,
-peak RSS 0.88 GiB, minimum available 45,659 MiB. Instrumented replay is in
-progress; stable timings do not qualify the ASan/coverage timeout.
+peak RSS 0.88 GiB, minimum available 45,659 MiB. GCC and Clang alone both
+reproduce the instrumented timeout. Clang plus hardware POPCNT in libFuzzer's
+C++ callbacks passes the original 16 seeds and 300-second mutation campaign:
+42 executions, 20 added corpus units, slowest 53 seconds. Rust ASan/coverage,
+all 499,904 counters, timeout, RSS cap and input-size limits stay unchanged.
+The Linux x86 nightly job verifies the CPU flag before using that runtime.
+Remote nightly confirmation is still required; this is bounded fuzz evidence.
 
 
 ### RESOLVED 2026-11-05: nightly gate fetched raw originals for pinned SDR renders
