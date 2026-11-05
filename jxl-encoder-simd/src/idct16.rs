@@ -25,8 +25,16 @@ const WC_MULTIPLIERS_16: [f32; 8] = [
 ];
 
 // Pre-computed reciprocals to replace division with multiplication.
+#[allow(
+    dead_code,
+    reason = "SIMD helper retained and type-checked on scalar-only targets."
+)]
 const INV_WC4: [f32; 2] = [1.0 / 0.541_196_1, 1.0 / 1.306_563];
 
+#[allow(
+    dead_code,
+    reason = "SIMD helper retained and type-checked on scalar-only targets."
+)]
 const INV_WC8: [f32; 4] = [
     1.0 / 0.509_795_6,
     1.0 / 0.601_344_9,
@@ -34,6 +42,10 @@ const INV_WC8: [f32; 4] = [
     1.0 / 2.562_915_5,
 ];
 
+#[allow(
+    dead_code,
+    reason = "SIMD helper retained and type-checked on scalar-only targets."
+)]
 const INV_WC16: [f32; 8] = [
     1.0 / 0.502_419_3,
     1.0 / 0.522_498_6,

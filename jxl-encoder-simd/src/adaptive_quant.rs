@@ -535,6 +535,10 @@ fn blue_modulation_scalar(
 
 #[cfg(target_arch = "x86_64")]
 #[archmage::arcane]
+#[allow(
+    deprecated,
+    reason = "Preserve the legacy magetypes mul_add rounding contract; do not change arithmetic during API migration."
+)]
 pub fn compute_pre_erosion_avx2(
     token: archmage::X64V3Token,
     xyb_y: &[f32],
@@ -711,6 +715,10 @@ pub fn compute_pre_erosion_avx2(
 #[cfg(target_arch = "x86_64")]
 #[allow(clippy::too_many_arguments)]
 #[archmage::arcane]
+#[allow(
+    deprecated,
+    reason = "Preserve the legacy magetypes mul_add rounding contract; do not change arithmetic during API migration."
+)]
 pub fn per_block_modulations_avx2(
     token: archmage::X64V3Token,
     xyb_x: &[f32],
@@ -861,6 +869,10 @@ pub fn per_block_modulations_avx2(
 
 #[cfg(target_arch = "aarch64")]
 #[archmage::arcane]
+#[allow(
+    deprecated,
+    reason = "Preserve the legacy magetypes mul_add rounding contract; do not change arithmetic during API migration."
+)]
 pub fn compute_pre_erosion_neon(
     token: archmage::NeonToken,
     xyb_y: &[f32],
@@ -1023,6 +1035,10 @@ pub fn compute_pre_erosion_neon(
 #[cfg(target_arch = "aarch64")]
 #[allow(clippy::too_many_arguments)]
 #[archmage::arcane]
+#[allow(
+    deprecated,
+    reason = "Preserve the legacy magetypes mul_add rounding contract; do not change arithmetic during API migration."
+)]
 pub fn per_block_modulations_neon(
     token: archmage::NeonToken,
     xyb_x: &[f32],
@@ -1177,6 +1193,10 @@ pub fn per_block_modulations_neon(
 
 #[cfg(target_arch = "wasm32")]
 #[archmage::arcane]
+#[allow(
+    deprecated,
+    reason = "Preserve the legacy magetypes mul_add rounding contract; do not change arithmetic during API migration."
+)]
 pub fn compute_pre_erosion_wasm128(
     token: archmage::Wasm128Token,
     xyb_y: &[f32],
@@ -1339,6 +1359,10 @@ pub fn compute_pre_erosion_wasm128(
 #[cfg(target_arch = "wasm32")]
 #[allow(clippy::too_many_arguments)]
 #[archmage::arcane]
+#[allow(
+    deprecated,
+    reason = "Preserve the legacy magetypes mul_add rounding contract; do not change arithmetic during API migration."
+)]
 pub fn per_block_modulations_wasm128(
     token: archmage::Wasm128Token,
     xyb_x: &[f32],
@@ -1488,6 +1512,10 @@ pub fn per_block_modulations_wasm128(
 // ============================================================================
 
 #[inline(always)]
+#[allow(
+    dead_code,
+    reason = "SIMD helper retained and type-checked on scalar-only targets."
+)]
 fn pre_erosion_pixel(
     xyb_y: &[f32],
     width: usize,

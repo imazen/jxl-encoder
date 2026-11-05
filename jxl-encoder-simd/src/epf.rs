@@ -282,6 +282,10 @@ pub fn epf_step2_scalar(
 #[inline]
 #[archmage::arcane]
 #[allow(clippy::too_many_arguments)]
+#[allow(
+    deprecated,
+    reason = "Preserve the legacy magetypes mul_add rounding contract; do not change arithmetic during API migration."
+)]
 pub fn epf_step2_avx2(
     token: archmage::X64V3Token,
     in_x: &[f32],
@@ -781,6 +785,10 @@ fn sad_3x3_plus_simd(
 #[inline]
 #[archmage::arcane]
 #[allow(clippy::too_many_arguments)]
+#[allow(
+    deprecated,
+    reason = "Preserve the legacy magetypes mul_add rounding contract; do not change arithmetic during API migration."
+)]
 pub fn epf_step1_avx2(
     token: archmage::X64V3Token,
     in_x: &[f32],
@@ -959,6 +967,10 @@ pub fn epf_step1_avx2(
 #[inline]
 #[archmage::arcane]
 #[allow(clippy::too_many_arguments)]
+#[allow(
+    deprecated,
+    reason = "Preserve the legacy magetypes mul_add rounding contract; do not change arithmetic during API migration."
+)]
 pub fn epf_step2_neon(
     token: archmage::NeonToken,
     in_x: &[f32],
@@ -1227,6 +1239,10 @@ fn sad_3x3_plus_neon(
 #[inline]
 #[archmage::arcane]
 #[allow(clippy::too_many_arguments)]
+#[allow(
+    deprecated,
+    reason = "Preserve the legacy magetypes mul_add rounding contract; do not change arithmetic during API migration."
+)]
 pub fn epf_step1_neon(
     token: archmage::NeonToken,
     in_x: &[f32],
@@ -1416,6 +1432,10 @@ pub fn epf_step1_neon(
 #[inline]
 #[archmage::arcane]
 #[allow(clippy::too_many_arguments)]
+#[allow(
+    deprecated,
+    reason = "Preserve the legacy magetypes mul_add rounding contract; do not change arithmetic during API migration."
+)]
 pub fn epf_step2_wasm128(
     token: archmage::Wasm128Token,
     in_x: &[f32],
@@ -1684,6 +1704,10 @@ fn sad_3x3_plus_wasm128(
 #[inline]
 #[archmage::arcane]
 #[allow(clippy::too_many_arguments)]
+#[allow(
+    deprecated,
+    reason = "Preserve the legacy magetypes mul_add rounding contract; do not change arithmetic during API migration."
+)]
 pub fn epf_step1_wasm128(
     token: archmage::Wasm128Token,
     in_x: &[f32],

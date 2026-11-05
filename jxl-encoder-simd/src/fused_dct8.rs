@@ -145,6 +145,10 @@ pub fn fused_dct8_entropy_fallback(
 #[inline]
 #[archmage::arcane]
 #[allow(clippy::too_many_arguments)]
+#[allow(
+    deprecated,
+    reason = "Preserve the legacy magetypes mul_add rounding contract; do not change arithmetic during API migration."
+)]
 pub fn fused_dct8_entropy_avx2(
     token: archmage::X64V3Token,
     plane: &[f32],

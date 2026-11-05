@@ -311,6 +311,10 @@ fn scatter_col(
 #[cfg(target_arch = "x86_64")]
 #[archmage::rite]
 #[inline(always)]
+#[allow(
+    deprecated,
+    reason = "Preserve the legacy magetypes mul_add rounding contract; do not change arithmetic during API migration."
+)]
 pub(crate) fn dct1d_32_batch(token: archmage::X64V3Token, v: &mut [magetypes::simd::f32x8; 32]) {
     use magetypes::simd::f32x8;
 
@@ -517,6 +521,10 @@ pub fn dct_16x32_avx2(token: archmage::X64V3Token, input: &[f32; 512], output: &
 #[cfg(target_arch = "aarch64")]
 #[archmage::rite]
 #[allow(clippy::needless_range_loop)]
+#[allow(
+    deprecated,
+    reason = "Preserve the legacy magetypes mul_add rounding contract; do not change arithmetic during API migration."
+)]
 pub(crate) fn dct1d_32_batch_neon(
     token: archmage::NeonToken,
     v: &mut [magetypes::simd::f32x4; 32],
@@ -752,6 +760,10 @@ pub fn dct_16x32_neon(token: archmage::NeonToken, input: &[f32; 512], output: &m
 #[cfg(target_arch = "wasm32")]
 #[archmage::rite]
 #[allow(clippy::needless_range_loop)]
+#[allow(
+    deprecated,
+    reason = "Preserve the legacy magetypes mul_add rounding contract; do not change arithmetic during API migration."
+)]
 pub(crate) fn dct1d_32_batch_wasm128(
     token: archmage::Wasm128Token,
     v: &mut [magetypes::simd::f32x4; 32],

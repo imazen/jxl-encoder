@@ -143,6 +143,10 @@ pub fn compute_mask1x1_scalar(xyb_y: &[f32], width: usize, height: usize, output
 #[cfg(target_arch = "x86_64")]
 #[inline]
 #[archmage::arcane]
+#[allow(
+    deprecated,
+    reason = "Preserve the legacy magetypes mul_add rounding contract; do not change arithmetic during API migration."
+)]
 pub fn compute_mask1x1_avx2(
     token: archmage::X64V3Token,
     xyb_y: &[f32],
@@ -299,6 +303,10 @@ pub fn compute_mask1x1_avx2(
 #[cfg(target_arch = "aarch64")]
 #[inline]
 #[archmage::arcane]
+#[allow(
+    deprecated,
+    reason = "Preserve the legacy magetypes mul_add rounding contract; do not change arithmetic during API migration."
+)]
 pub fn compute_mask1x1_neon(
     token: archmage::NeonToken,
     xyb_y: &[f32],
@@ -446,6 +454,10 @@ pub fn compute_mask1x1_neon(
 #[cfg(target_arch = "wasm32")]
 #[inline]
 #[archmage::arcane]
+#[allow(
+    deprecated,
+    reason = "Preserve the legacy magetypes mul_add rounding contract; do not change arithmetic during API migration."
+)]
 pub fn compute_mask1x1_wasm128(
     token: archmage::Wasm128Token,
     xyb_y: &[f32],

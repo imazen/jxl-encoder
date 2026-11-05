@@ -236,12 +236,16 @@ fn cbrt_libjxl_scalar_add(x: f32, add: f32) -> f32 {
     let mut r = f32::from_bits(m2 as u32);
     for _ in 0..3 {
         let r2 = r * r;
-        r = (-xa_3).mul_add(r2 * r2, (4.0 / 3.0) * r);
+        r = crate::scalarmath::mul_add_f32(-xa_3, r2 * r2, (4.0 / 3.0) * r);
     }
     let r2 = r * r;
-    r = (1.0f32 / 3.0).mul_add((-x).mul_add(r2 * r2, r), r);
+    r = crate::scalarmath::mul_add_f32(
+        1.0f32 / 3.0,
+        crate::scalarmath::mul_add_f32(-x, r2 * r2, r),
+        r,
+    );
     let r2 = r * r;
-    r2.mul_add(x, add)
+    crate::scalarmath::mul_add_f32(r2, x, add)
 }
 
 // --- Scalar fallbacks ---
@@ -484,6 +488,14 @@ pub enum XybCubeRoot {
 /// The final `MulAdd(r2, x, add)` fuses the `-cbrt(bias)` offset into ONE
 /// rounding, exactly as libjxl's `CubeRootAndAdd` does.
 #[inline(always)]
+#[allow(
+    deprecated,
+    reason = "Preserve the legacy magetypes mul_add rounding contract; do not change arithmetic during API migration."
+)]
+#[allow(
+    dead_code,
+    reason = "SIMD helper retained and type-checked on scalar-only targets."
+)]
 fn cbrt_libjxl_vec_add<T>(
     token: T,
     x: magetypes::simd::generic::f32x8<T>,
@@ -518,6 +530,10 @@ where
 
 #[magetypes(define(f32x8, i32x8), v4, v3, -neon, wasm128, -scalar)]
 #[allow(clippy::too_many_arguments)]
+#[allow(
+    deprecated,
+    reason = "Preserve the legacy magetypes mul_add rounding contract; do not change arithmetic during API migration."
+)]
 pub fn forward_xyb_impl(
     token: Token,
     cbrt: XybCubeRoot,
@@ -651,6 +667,10 @@ pub fn forward_xyb_impl(
 #[inline]
 #[archmage::arcane]
 #[allow(clippy::too_many_arguments)]
+#[allow(
+    deprecated,
+    reason = "Preserve the legacy magetypes mul_add rounding contract; do not change arithmetic during API migration."
+)]
 pub fn forward_xyb_impl_neon(
     token: archmage::NeonToken,
     cbrt: XybCubeRoot,
@@ -798,6 +818,10 @@ pub fn forward_xyb_impl_scalar(
 
 #[magetypes(define(f32x8), v4, v3, neon, wasm128, -scalar)]
 #[allow(clippy::too_many_arguments)]
+#[allow(
+    deprecated,
+    reason = "Preserve the legacy magetypes mul_add rounding contract; do not change arithmetic during API migration."
+)]
 pub fn inverse_xyb_planar_impl(
     token: Token,
     xyb_x: &[f32],

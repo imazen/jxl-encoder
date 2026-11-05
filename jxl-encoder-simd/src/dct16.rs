@@ -262,6 +262,10 @@ fn scatter_col(v: magetypes::simd::f32x8, data: &mut [f32], base_row: usize, j: 
 #[cfg(target_arch = "x86_64")]
 #[archmage::rite]
 #[inline(always)]
+#[allow(
+    deprecated,
+    reason = "Preserve the legacy magetypes mul_add rounding contract; do not change arithmetic during API migration."
+)]
 fn dct1d_4_batch(token: archmage::X64V3Token, v: &mut [magetypes::simd::f32x8; 4]) {
     use magetypes::simd::f32x8;
 
@@ -303,6 +307,10 @@ fn dct1d_4_batch(token: archmage::X64V3Token, v: &mut [magetypes::simd::f32x8; 4
 #[cfg(target_arch = "x86_64")]
 #[archmage::rite]
 #[inline(always)]
+#[allow(
+    deprecated,
+    reason = "Preserve the legacy magetypes mul_add rounding contract; do not change arithmetic during API migration."
+)]
 fn dct1d_8_batch(token: archmage::X64V3Token, v: &mut [magetypes::simd::f32x8; 8]) {
     use magetypes::simd::f32x8;
 
@@ -356,6 +364,10 @@ fn dct1d_8_batch(token: archmage::X64V3Token, v: &mut [magetypes::simd::f32x8; 8
 #[archmage::rite]
 #[inline(always)]
 #[allow(clippy::too_many_arguments)]
+#[allow(
+    deprecated,
+    reason = "Preserve the legacy magetypes mul_add rounding contract; do not change arithmetic during API migration."
+)]
 pub(crate) fn dct1d_16_batch(token: archmage::X64V3Token, v: &mut [magetypes::simd::f32x8; 16]) {
     use magetypes::simd::f32x8;
 
@@ -891,6 +903,10 @@ fn scatter_col_neon(
 /// NEON batched 4-point forward DCT on f32x4 arrays.
 #[cfg(target_arch = "aarch64")]
 #[archmage::rite]
+#[allow(
+    deprecated,
+    reason = "Preserve the legacy magetypes mul_add rounding contract; do not change arithmetic during API migration."
+)]
 fn dct1d_4_batch_neon(token: archmage::NeonToken, v: &mut [magetypes::simd::f32x4; 4]) {
     use magetypes::simd::f32x4;
 
@@ -921,6 +937,10 @@ fn dct1d_4_batch_neon(token: archmage::NeonToken, v: &mut [magetypes::simd::f32x
 /// NEON batched 8-point forward DCT on f32x4 arrays.
 #[cfg(target_arch = "aarch64")]
 #[archmage::rite]
+#[allow(
+    deprecated,
+    reason = "Preserve the legacy magetypes mul_add rounding contract; do not change arithmetic during API migration."
+)]
 fn dct1d_8_batch_neon(token: archmage::NeonToken, v: &mut [magetypes::simd::f32x4; 8]) {
     use magetypes::simd::f32x4;
 
@@ -962,6 +982,10 @@ fn dct1d_8_batch_neon(token: archmage::NeonToken, v: &mut [magetypes::simd::f32x
 /// NEON batched 16-point forward DCT on f32x4 arrays.
 #[cfg(target_arch = "aarch64")]
 #[archmage::rite]
+#[allow(
+    deprecated,
+    reason = "Preserve the legacy magetypes mul_add rounding contract; do not change arithmetic during API migration."
+)]
 pub(crate) fn dct1d_16_batch_neon(
     token: archmage::NeonToken,
     v: &mut [magetypes::simd::f32x4; 16],
@@ -1238,6 +1262,10 @@ fn scatter_col_wasm128(
 /// WASM128 batched 4-point forward DCT on f32x4 arrays.
 #[cfg(target_arch = "wasm32")]
 #[archmage::rite]
+#[allow(
+    deprecated,
+    reason = "Preserve the legacy magetypes mul_add rounding contract; do not change arithmetic during API migration."
+)]
 fn dct1d_4_batch_wasm128(token: archmage::Wasm128Token, v: &mut [magetypes::simd::f32x4; 4]) {
     use magetypes::simd::f32x4;
 
@@ -1268,6 +1296,10 @@ fn dct1d_4_batch_wasm128(token: archmage::Wasm128Token, v: &mut [magetypes::simd
 /// WASM128 batched 8-point forward DCT on f32x4 arrays.
 #[cfg(target_arch = "wasm32")]
 #[archmage::rite]
+#[allow(
+    deprecated,
+    reason = "Preserve the legacy magetypes mul_add rounding contract; do not change arithmetic during API migration."
+)]
 fn dct1d_8_batch_wasm128(token: archmage::Wasm128Token, v: &mut [magetypes::simd::f32x4; 8]) {
     use magetypes::simd::f32x4;
 
@@ -1309,6 +1341,10 @@ fn dct1d_8_batch_wasm128(token: archmage::Wasm128Token, v: &mut [magetypes::simd
 /// WASM128 batched 16-point forward DCT on f32x4 arrays.
 #[cfg(target_arch = "wasm32")]
 #[archmage::rite]
+#[allow(
+    deprecated,
+    reason = "Preserve the legacy magetypes mul_add rounding contract; do not change arithmetic during API migration."
+)]
 pub(crate) fn dct1d_16_batch_wasm128(
     token: archmage::Wasm128Token,
     v: &mut [magetypes::simd::f32x4; 16],

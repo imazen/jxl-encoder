@@ -581,6 +581,10 @@ pub fn idct_8x4_full_scalar(input: &[f32; 64], output: &mut [f32; 64]) {
 #[cfg(target_arch = "x86_64")]
 #[archmage::rite]
 #[allow(clippy::type_complexity)]
+#[allow(
+    deprecated,
+    reason = "Preserve the legacy magetypes mul_add rounding contract; do not change arithmetic during API migration."
+)]
 fn vectorized_dct1d_4(
     token: archmage::X64V3Token,
     r0: magetypes::simd::f32x8,

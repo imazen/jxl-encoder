@@ -61,7 +61,7 @@ fn bias_and_quantize(x: f32) -> i8 {
 ///
 /// **W44-184 SALVAGE (Pass-2) + W44-195 EXTENSION (Pass-1) —
 /// `libjxl_parity = true` path**: the four-parameter libjxl Newton is wired,
-/// but ONLY when the caller selects [`crate::api::EncoderStrategy::Libjxl`]
+/// but ONLY when the caller selects [`EncoderStrategy::Libjxl`](https://github.com/imazen/jxl-encoder/blob/main/jxl-encoder/src/api/strategy.rs)
 /// (the all-divergence libjxl-parity preset). Under that strategy the rest
 /// of the cost model is also flipped to libjxl-parity defaults (Section A
 /// effort gates widen, content-aware gates disable, etc.) so the +7.82%
@@ -393,6 +393,10 @@ pub fn find_best_multiplier_scalar(
 
 #[cfg(target_arch = "x86_64")]
 #[archmage::arcane]
+#[allow(
+    deprecated,
+    reason = "Preserve the legacy magetypes mul_add rounding contract; do not change arithmetic during API migration."
+)]
 pub fn find_best_multiplier_avx2(
     token: archmage::X64V3Token,
     values_m: &[f32],
@@ -445,6 +449,10 @@ pub fn find_best_multiplier_avx2(
 
 #[cfg(target_arch = "aarch64")]
 #[archmage::arcane]
+#[allow(
+    deprecated,
+    reason = "Preserve the legacy magetypes mul_add rounding contract; do not change arithmetic during API migration."
+)]
 pub fn find_best_multiplier_neon(
     token: archmage::NeonToken,
     values_m: &[f32],
@@ -495,6 +503,10 @@ pub fn find_best_multiplier_neon(
 
 #[cfg(target_arch = "wasm32")]
 #[archmage::arcane]
+#[allow(
+    deprecated,
+    reason = "Preserve the legacy magetypes mul_add rounding contract; do not change arithmetic during API migration."
+)]
 pub fn find_best_multiplier_wasm128(
     token: archmage::Wasm128Token,
     values_m: &[f32],
@@ -658,7 +670,7 @@ pub fn find_best_multiplier_newton(
 /// `max_iters`; uses `NEWTON_EPS_LIBJXL` (100), `NEWTON_MAX_ITERS_LIBJXL`
 /// (20), starting `x = 0`, NO fallback (writes whatever `x` is at loop
 /// exit regardless of convergence). Wired only under
-/// [`crate::api::EncoderStrategy::Libjxl`] where the W44-29..W44-172
+/// [`EncoderStrategy::Libjxl`](https://github.com/imazen/jxl-encoder/blob/main/jxl-encoder/src/api/strategy.rs) where the W44-29..W44-172
 /// downstream calibration is also turned off (Section A effort gates
 /// widen, content-aware gates disable) so the +7.82% SSIM2 regression
 /// observed at the default-path port does not apply.
@@ -791,6 +803,10 @@ pub fn find_best_multiplier_newton_scalar(
 #[cfg(target_arch = "x86_64")]
 #[allow(clippy::too_many_arguments)]
 #[archmage::arcane]
+#[allow(
+    deprecated,
+    reason = "Preserve the legacy magetypes mul_add rounding contract; do not change arithmetic during API migration."
+)]
 pub fn find_best_multiplier_newton_avx2(
     token: archmage::X64V3Token,
     values_m: &[f32],
@@ -1024,6 +1040,10 @@ pub fn find_best_multiplier_newton_avx2(
 #[cfg(target_arch = "aarch64")]
 #[allow(clippy::too_many_arguments)]
 #[archmage::arcane]
+#[allow(
+    deprecated,
+    reason = "Preserve the legacy magetypes mul_add rounding contract; do not change arithmetic during API migration."
+)]
 pub fn find_best_multiplier_newton_neon(
     token: archmage::NeonToken,
     values_m: &[f32],

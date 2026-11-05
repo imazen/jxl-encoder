@@ -6,7 +6,7 @@
 //!
 //! `#[doc(hidden)]` — these exist so `examples/cbrt_candidates.rs` can time the
 //! candidates in the same `#[target_feature]` context production uses, on the
-//! same dispatch path. Production calls the inlined forms in [`crate::xyb`].
+//! same dispatch path. Production calls the inlined forms in [the XYB kernels](https://github.com/imazen/jxl-encoder/blob/main/jxl-encoder-simd/src/xyb.rs).
 
 use archmage::prelude::*;
 
@@ -21,6 +21,11 @@ use archmage::prelude::*;
 /// `IfThenZeroElse`; an early return would put a branch in the inner loop and
 /// block vectorisation outright.
 #[magetypes(define(f32x8, i32x8), v3, neon, wasm128, scalar)]
+#[allow(
+    deprecated,
+    reason = "Preserve the legacy magetypes mul_add rounding contract; do not change arithmetic during API migration."
+)]
+#[deprecated(note = "Internal benchmark token helper; use cbrt_libjxl_batch without tokens.")]
 pub fn cbrt_libjxl_batch_impl(token: Token, src: &[f32], out: &mut [f32], n: usize) {
     let k1_3 = f32x8::splat_t(token, 1.0 / 3.0);
     let k4_3 = f32x8::splat_t(token, 4.0 / 3.0);
@@ -58,6 +63,7 @@ pub fn cbrt_libjxl_batch_impl(token: Token, src: &[f32], out: &mut [f32], n: usi
 
 /// `magetypes::cbrt_lowp` — Kahan bit-hack + ONE Halley step, one division.
 #[magetypes(define(f32x8), v3, neon, wasm128, scalar)]
+#[deprecated(note = "Internal benchmark token helper; use cbrt_lowp_batch without tokens.")]
 pub fn cbrt_lowp_batch_impl(token: Token, src: &[f32], out: &mut [f32], n: usize) {
     let chunks = n / 8;
     for c in 0..chunks {
@@ -68,12 +74,13 @@ pub fn cbrt_lowp_batch_impl(token: Token, src: &[f32], out: &mut [f32], n: usize
             .store(os);
     }
     for i in (chunks * 8)..n {
-        out[i] = src[i].cbrt();
+        out[i] = crate::scalarmath::cbrt_f32(src[i]);
     }
 }
 
 /// `magetypes::cbrt_midp` — Kahan bit-hack + TWO Halley steps, two divisions.
 #[magetypes(define(f32x8), v3, neon, wasm128, scalar)]
+#[deprecated(note = "Internal benchmark token helper; use cbrt_midp_batch without tokens.")]
 pub fn cbrt_midp_batch_impl(token: Token, src: &[f32], out: &mut [f32], n: usize) {
     let chunks = n / 8;
     for c in 0..chunks {
@@ -84,11 +91,15 @@ pub fn cbrt_midp_batch_impl(token: Token, src: &[f32], out: &mut [f32], n: usize
             .store(os);
     }
     for i in (chunks * 8)..n {
-        out[i] = src[i].cbrt();
+        out[i] = crate::scalarmath::cbrt_f32(src[i]);
     }
 }
 
 #[doc(hidden)]
+#[allow(
+    deprecated,
+    reason = "Dispatch into the retained internal benchmark token helper."
+)]
 pub fn cbrt_libjxl_batch(src: &[f32], out: &mut [f32]) {
     let n = src.len().min(out.len());
     incant!(
@@ -98,6 +109,10 @@ pub fn cbrt_libjxl_batch(src: &[f32], out: &mut [f32]) {
 }
 
 #[doc(hidden)]
+#[allow(
+    deprecated,
+    reason = "Dispatch into the retained internal benchmark token helper."
+)]
 pub fn cbrt_lowp_batch(src: &[f32], out: &mut [f32]) {
     let n = src.len().min(out.len());
     incant!(
@@ -107,6 +122,10 @@ pub fn cbrt_lowp_batch(src: &[f32], out: &mut [f32]) {
 }
 
 #[doc(hidden)]
+#[allow(
+    deprecated,
+    reason = "Dispatch into the retained internal benchmark token helper."
+)]
 pub fn cbrt_midp_batch(src: &[f32], out: &mut [f32]) {
     let n = src.len().min(out.len());
     incant!(
@@ -139,6 +158,9 @@ pub fn cbrt_midp_batch(src: &[f32], out: &mut [f32]) {
 /// so `i32x8` carries the `u32` arithmetic unchanged (every magetypes integer
 /// `add`/`sub`/`mul` is wrapping, including the scalar backend's).
 #[magetypes(define(f32x8, i32x8), v3, neon, wasm128, scalar)]
+#[deprecated(
+    note = "Internal benchmark token helper; use cbrt_lowp_vecguess_batch without tokens."
+)]
 pub fn cbrt_lowp_vecguess_batch_impl(token: Token, src: &[f32], out: &mut [f32], n: usize) {
     const MAGIC: i32 = 0x2a50_8c2d;
     let magic = i32x8::splat_t(token, MAGIC);
@@ -172,11 +194,15 @@ pub fn cbrt_lowp_vecguess_batch_impl(token: Token, src: &[f32], out: &mut [f32],
         f32x8::blend(x.simd_eq(zero), x, y | sign).store(os);
     }
     for i in (chunks * 8)..n {
-        out[i] = src[i].cbrt();
+        out[i] = crate::scalarmath::cbrt_f32(src[i]);
     }
 }
 
 #[doc(hidden)]
+#[allow(
+    deprecated,
+    reason = "Dispatch into the retained internal benchmark token helper."
+)]
 pub fn cbrt_lowp_vecguess_batch(src: &[f32], out: &mut [f32]) {
     let n = src.len().min(out.len());
     incant!(
