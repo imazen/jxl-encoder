@@ -103,6 +103,9 @@ conformance-replay binary cases out corpus icc:
 lossless-effort-ablate encoder decoder source out:
     TMPDIR="$HOME/tmp" uv run --with pillow python scripts/ablate_lossless_effort.py {{quote(encoder)}} {{quote(decoder)}} {{quote(source)}} {{quote(out)}}
 
+compare-float-decodes out *args:
+    TMPDIR="$HOME/tmp" uv run --with numpy python scripts/compare_float_decodes.py {{quote(out)}} {{args}}
+
 issue138-ablate binary replay out corpus icc:
     python3 scripts/ablate_issue138.py {{quote(binary)}} {{quote(replay)}} {{quote(out)}} {{quote(corpus)}} {{quote(icc)}}
 

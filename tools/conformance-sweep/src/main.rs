@@ -758,15 +758,17 @@ fn retain_decoded(dir: &Path, tag: &str, decoded: &Decoded) -> std::io::Result<(
         writer.write_all(&sample.to_le_bytes())?;
     }
     writer.flush()?;
-    std::fs::write(
-        dir.join(format!("{tag}.json")),
-        format!(
-            "{{\"width\":{},\"height\":{},\"channels\":{},\"samples\":{},\"format\":\"f32le\"}}\n",
-            decoded.w,
-            decoded.h,
-            decoded.ch,
-            decoded.px.len()
-        ),
+    let mut metadata = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(dir.join(format!("{tag}.json")))?;
+    writeln!(
+        metadata,
+        "{{\"width\":{},\"height\":{},\"channels\":{},\"samples\":{},\"format\":\"f32le\"}}",
+        decoded.w,
+        decoded.h,
+        decoded.ch,
+        decoded.px.len()
     )
 }
 
