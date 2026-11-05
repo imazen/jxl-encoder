@@ -61,8 +61,9 @@ against at most 0.79x / 0.66x from 64x48 up (51,936 cells, seeds 7-9).
 `--reference-study [--study-max-pixels N]` re-measures this: it encodes
 each small lossy cell with cjxl too (mapped options: noise, gaborish, epf,
 lf_frame/progressive_dc, patches, dots, faster_decoding) and writes
-`reference_study.tsv`. Alpha layouts give cjxl a PPM without alpha, so
-their byte columns are not comparable.
+`reference_study.tsv`. Since November 4 the shared reference writer preserves
+alpha through PAM and passes the supported per-cell options; older records
+that used alpha-free PPM do not supply a like-for-like byte comparison.
 [Record](benchmarks/sweep_tiny_bound_2026-10-26.md).
 
 ## Project Overview

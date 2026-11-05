@@ -1556,10 +1556,10 @@ fn run_cell(seed: u64, cell: &Cell, sources: &[Source], iccs: &[Icc], scratch: &
     let mut v_zen = judge(&zen, "zenjxl", false);
     // Lossy: each Rust decoder must agree with djxl (transfer-coded float
     // output compared in the clamped signal range, see `clamp_for`). HLG is
-    // excluded: jxl-rs and zenjxl-decoder agree with each other but differ
-    // from djxl by up to 0.34 on bright pixels (seed 3, 46 of 2766 cells),
-    // an inverse-OOTF difference still in triage (docs/DECODER_FINDINGS.md
-    // Z1). All three are still checked against the source.
+    // excluded: near-zero linear luminance makes inverse-OOTF signal output
+    // sensitive to decoder rounding (seed 3: 46 of 2766 cells). The linear-light
+    // control agrees within 6.4e-5; see docs/DECODER_FINDINGS.md Z1. All three
+    // remain checked against the source in the existing signal domain.
     let hlg = matches!(
         cell.layout,
         PixelLayout::RgbHlgF32 | PixelLayout::RgbaHlgF32

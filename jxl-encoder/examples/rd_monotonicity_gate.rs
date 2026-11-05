@@ -330,9 +330,9 @@ fn main() {
     let known_path = arg("--known", "benchmarks/rd_monotonicity_known_violations.tsv");
     let known = load_known(&known_path);
     // Report the allowlist's reach explicitly. It keys on IMAGE FILENAME, and
-    // nightly runs against the sha256-pinned `imazen-26-unprocessed` gate set
-    // whose files differ (different pixels AND different names) from the
-    // `png-v3` renders these entries were measured on. So a nightly line
+    // nightly runs against five other sha256-pinned corpus images, stored under
+    // their original filenames. Those hashes identify PNG-v3 SDR renders,
+    // but neither these image IDs nor these filenames occur in that gate set. So a nightly line
     // reading "0 known" means the allowlist did not APPLY -- not that the known
     // violations are fixed. Printing the counts keeps that visible.
     println!(

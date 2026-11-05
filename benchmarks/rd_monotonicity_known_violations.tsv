@@ -13,8 +13,9 @@
 #
 # SCOPE WARNING: these keys are IMAGE FILENAMES from the local imazen-26
 # `png-v3` renders (`*.sdr.png`). The nightly workflow runs the gate against the
-# sha256-pinned `imazen-26-unprocessed` gate set, whose files have DIFFERENT
-# pixels and different names, so none of these entries apply there. A nightly
+# five other sha256-pinned gate images, stored under their original filenames.
+# The hashes identify PNG-v3 SDR renders; neither these image IDs nor these
+# filenames occur in that set, so none of these entries apply there. A nightly
 # line reading "0 known" therefore means the allowlist did not APPLY -- it does
 # NOT mean these violations are fixed. The gate now prints how many entries name
 # an image actually present in the corpus it just ran, so the distinction is
