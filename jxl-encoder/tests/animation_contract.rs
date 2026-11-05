@@ -110,6 +110,191 @@ fn decode_f32(encoded: &[u8], bits: u32, alpha: bool) -> Vec<Vec<f32>> {
 }
 
 #[test]
+fn saturated_pq_keeps_dark_channels_in_stills_streams_and_animation() {
+    use jxl_encoder::ColorEncoding;
+    use std::io::{BufRead, Read};
+
+    let root = jxl_encoder::test_helpers::output_dir("pq-dc-precision");
+    let directory = (0..)
+        .find_map(|i| {
+            let p = root.join(format!("run-{i}"));
+            match std::fs::create_dir(&p) {
+                Ok(()) => Some(p),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => None,
+                Err(e) => panic!("{}: {e}", p.display()),
+            }
+        })
+        .unwrap();
+    // The base color in real conformance cell 2966/65418 (windows.png).
+    // cjxl v0.12 stays below 0.02 mean error at both selected settings.
+    let signal = [255_u8, 9, 117];
+    let mut cells = 0;
+    let mut failures = Vec::new();
+    for (w, h) in [(32, 17), (259, 17)] {
+        for (distance, effort, faster) in [(4.5, 5, 4), (25.0, 8, 0)] {
+            for (layout, channels, bits) in [
+                (PixelLayout::Rgb8, 3, 8),
+                (PixelLayout::Rgba8, 4, 8),
+                (PixelLayout::Rgb16, 3, 16),
+                (PixelLayout::Rgba16, 4, 16),
+                (PixelLayout::RgbPqF32, 3, 32),
+                (PixelLayout::RgbaPqF32, 4, 32),
+            ] {
+                let pixels: Vec<u8> = (0..w * h * channels)
+                    .flat_map(|i| {
+                        let v = if i % channels == 3 {
+                            255
+                        } else {
+                            signal[i % channels]
+                        };
+                        match bits {
+                            8 => vec![v],
+                            16 => (u16::from(v) * 257).to_ne_bytes().to_vec(),
+                            _ => (f32::from(v) / 255.0).to_ne_bytes().to_vec(),
+                        }
+                    })
+                    .collect();
+                let modes = if bits == 32 { 1 } else { 2 };
+                for animation in 0..modes {
+                    let config = LossyConfig::new(distance)
+                        .with_effort(effort)
+                        .with_faster_decoding(faster);
+                    let request = config
+                        .encode_request(w as u32, h as u32, layout)
+                        .with_color_encoding(ColorEncoding::bt2100_pq());
+                    let encoded = if animation == 0 {
+                        request.encode(&pixels)
+                    } else {
+                        request.encode_animation(
+                            &AnimationParams::default(),
+                            &[
+                                AnimationFrame::new(&pixels, 10),
+                                AnimationFrame::new(&pixels, 20),
+                            ],
+                        )
+                    }
+                    .unwrap();
+                    if animation == 0 {
+                        let mut streaming = config
+                            .encoder(w as u32, h as u32, layout)
+                            .unwrap()
+                            .with_color_encoding(ColorEncoding::bt2100_pq());
+                        let row_bytes = pixels.len() / h;
+                        for rows in pixels.chunks(row_bytes * 7) {
+                            streaming
+                                .push_rows(rows, (rows.len() / row_bytes) as u32)
+                                .unwrap();
+                        }
+                        assert_eq!(
+                            streaming.finish().unwrap(),
+                            encoded,
+                            "streaming cell {cells}"
+                        );
+                    }
+                    let outputs = directory.join(format!("cell-{cells}"));
+                    std::fs::create_dir(&outputs).unwrap();
+                    let input = outputs.join("input.jxl");
+                    std::fs::write(&input, &encoded).unwrap();
+                    let result = std::process::Command::new(jxl_encoder::test_helpers::djxl_path())
+                        .arg(&input)
+                        .arg(outputs.join("frame.pfm"))
+                        .args([
+                            "--num_threads=1",
+                            "--output_frames",
+                            "--color_space=RGB_D65_202_Rel_PeQ",
+                        ])
+                        .output()
+                        .unwrap();
+                    assert!(
+                        result.status.success(),
+                        "{}",
+                        String::from_utf8_lossy(&result.stderr)
+                    );
+                    let mut reference_frames = Vec::new();
+                    for entry in std::fs::read_dir(&outputs).unwrap() {
+                        let path = entry.unwrap().path();
+                        if path.extension().is_some_and(|e| e == "pfm") {
+                            let mut reader =
+                                std::io::BufReader::new(std::fs::File::open(path).unwrap());
+                            let mut line = String::new();
+                            reader.read_line(&mut line).unwrap();
+                            assert_eq!(line.trim(), "PF");
+                            line.clear();
+                            reader.read_line(&mut line).unwrap();
+                            assert_eq!(line.trim(), format!("{w} {h}"));
+                            line.clear();
+                            reader.read_line(&mut line).unwrap();
+                            let little = line.trim().parse::<f32>().unwrap() < 0.0;
+                            let mut bytes = Vec::new();
+                            reader.read_to_end(&mut bytes).unwrap();
+                            assert_eq!(bytes.len(), w * h * 3 * 4);
+                            // The source is constant: bottom-up PFM row order does not affect it.
+                            reference_frames.push(
+                                bytes
+                                    .as_chunks::<4>()
+                                    .0
+                                    .iter()
+                                    .map(|&b| {
+                                        if little {
+                                            f32::from_le_bytes(b)
+                                        } else {
+                                            f32::from_be_bytes(b)
+                                        }
+                                    })
+                                    .collect::<Vec<_>>(),
+                            );
+                        }
+                    }
+                    let native_frames: Vec<Vec<f32>> = decode_f32(&encoded, bits, channels == 4)
+                        .into_iter()
+                        .map(|frame| {
+                            frame
+                                .chunks_exact(channels)
+                                .flat_map(|p| {
+                                    if channels == 4 {
+                                        assert_eq!(p[3], 1.0);
+                                    }
+                                    p[..3].iter().copied()
+                                })
+                                .collect()
+                        })
+                        .collect();
+                    let frame_count = if animation == 0 { 1 } else { 2 };
+                    assert_eq!(native_frames.len(), frame_count);
+                    assert_eq!(reference_frames.len(), frame_count);
+                    for (who, frames) in [("native", native_frames), ("djxl", reference_frames)] {
+                        for samples in frames {
+                            assert_eq!(samples.len(), w * h * 3);
+                            assert!(samples.iter().all(|v| v.is_finite()));
+                            let mean = samples
+                                .iter()
+                                .enumerate()
+                                .map(|(i, &v)| {
+                                    f64::from(
+                                        (v.clamp(0.0, 1.0) - f32::from(signal[i % 3]) / 255.0)
+                                            .abs(),
+                                    )
+                                })
+                                .sum::<f64>()
+                                / samples.len() as f64;
+                            if mean > 0.04 {
+                                failures.push(format!("{who} cell {cells}: {w}x{h} {layout:?} d{distance} e{effort} animation={animation}: mean {mean}"));
+                            }
+                        }
+                    }
+                    cells += 1;
+                }
+            }
+        }
+    }
+    assert_eq!(cells, 40);
+    assert!(
+        failures.is_empty(),
+        "dark PQ channels shifted: {failures:?}"
+    );
+}
+
+#[test]
 fn lossless_animation_preserves_10_12_16_bit_samples_and_color_signaling() {
     use jxl_encoder::ColorEncoding;
     for (w, h) in [(17_u32, 13_u32), (511, 259)] {

@@ -825,6 +825,7 @@ pub(crate) fn encode_animation_lossy(
             _ => {}
         }
     }
+    enc.apply_pq_dc_precision();
     let depth = layout.source_bit_depth();
     enc.source_bit_depth = depth.0.then_some(depth);
     enc.bits_per_sample_override = request.bits_per_sample;

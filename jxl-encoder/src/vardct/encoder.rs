@@ -2777,6 +2777,23 @@ impl Default for VarDctEncoder {
 }
 
 impl VarDctEncoder {
+    /// PQ amplifies DC rounding near black, especially after wide-gamut
+    /// chroma cancellation. Preserve three DC fractional bits independently
+    /// of the AC effort schedule and avoid prediction-relative deadzone
+    /// shaping. Strict parity retains libjxl's schedule and quantizer.
+    pub(crate) fn apply_pq_dc_precision(&mut self) {
+        use crate::headers::color_encoding::TransferFunction;
+        if !self.resolved_improvements.dc_encode_libjxl_parity
+            && self
+                .color_encoding
+                .as_ref()
+                .is_some_and(|ce| ce.transfer_function == TransferFunction::Pq)
+        {
+            self.profile.extra_dc_precision = 3;
+            self.profile.use_libjxl_wp_dc_quant = false;
+        }
+    }
+
     /// Keep the calibrated normal policy; strict DC parity follows the
     /// GradientFixedDC override in libjxl AddVarDCTDC at faster decoding.
     pub(crate) fn uses_gradient_dc_quantization(&self) -> bool {

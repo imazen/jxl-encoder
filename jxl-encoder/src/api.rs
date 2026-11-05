@@ -8869,6 +8869,7 @@ impl<'a> EncodeRequest<'a> {
                 }
             }
         }
+        enc.apply_pq_dc_precision();
         // Native orientation, tone mapping and intrinsic size from metadata.
         if let Some(meta) = self.metadata {
             enc.orientation = meta.orientation;
