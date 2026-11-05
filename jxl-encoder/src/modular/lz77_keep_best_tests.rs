@@ -29,7 +29,8 @@ fn production_keep_best_regressions() {
     for arm in ["off", "on"] {
         let dir = output.join(arm);
         std::fs::create_dir(&dir).expect("refuse to overwrite an earlier run");
-        let log = std::fs::File::create(dir.join("test.log")).unwrap();
+        let log_path = dir.join("test.log");
+        let log = std::fs::File::create(&log_path).unwrap();
         let status = Command::new(std::env::current_exe().unwrap())
             .args(["--exact", TEST, "--nocapture"])
             .env("JXL_KEEP_BEST_TEST_ARM", arm)
@@ -38,7 +39,12 @@ fn production_keep_best_regressions() {
             .stderr(log)
             .status()
             .unwrap();
-        assert!(status.success(), "{arm} failed; see {}", dir.display());
+        assert!(
+            status.success(),
+            "{arm} failed ({status}); {}:\n{}",
+            log_path.display(),
+            std::fs::read_to_string(&log_path).expect("read failed child diagnostics")
+        );
     }
     let read = |arm: &str| -> BTreeMap<String, (usize, String)> {
         std::fs::read_to_string(output.join(arm).join("cells.tsv"))

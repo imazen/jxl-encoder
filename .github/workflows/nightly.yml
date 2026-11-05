@@ -173,7 +173,7 @@ jobs:
           RD_MONOTONICITY_PROBE=target/release/examples/rd_monotonicity_gate \
             python3 -m unittest discover -s scripts -p test_rd_monotonicity_gate.py
 
-      - name: Preserve distance gate evidence
+      - name: Preserve regression gate evidence
         if: always()
         uses: actions/upload-artifact@v7
         with:
@@ -182,6 +182,7 @@ jobs:
             ${{ runner.temp }}/rd_monotonicity.tsv
             ${{ runner.temp }}/rd_monotonicity.tsv.artifacts/
             ~/tmp/rd-gate-test-*/
+            ~/tmp/lz77-keep-best-nightly/
           if-no-files-found: error
 
       # Effort axis: effort N may not be Pareto-dominated by N-1.

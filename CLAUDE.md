@@ -1768,6 +1768,24 @@ misclassify that CLI limitation as an invalid stream or strip the ICC to hide it
 
 ## Known Bugs (ACTIVE)
 
+### 2026-11-05: nightly LZ77 child diagnostics and streaming timeout
+
+[Nightly run 42066511463](https://github.com/imazen/jxl-encoder/actions/runs/42066511463)
+passes the corrected checksum-pinned gate-image fetch, then fails the LZ77
+keep-best `on` child. The parent previously printed only a runner-local path,
+and the workflow did not upload that directory. The parent now includes the
+failed child's full log and the always-run evidence upload includes both
+LZ77 arms. Existing assertions and selection rules remain unchanged; this
+repairs evidence retention, not the underlying failure.
+
+The separate streaming fuzz job exceeds its unchanged 60-second per-input
+limit on an unmutated 512x259 RGB8 lossless effort-8 seed (seven-row chunks),
+SHA256 `62102547b5d0582c8c563ca1983cb8b2cd4081cd0bca3deb6f16c9747a0fcc0f`.
+The input is retained outside git. A stable direct replay shares the actual
+fuzz entry, retains the JXL and also requires pinned djxl rendering. A timeout
+alone does not establish incorrect pixels; reproduction is in progress.
+
+
 ### RESOLVED 2026-11-05: nightly gate fetched raw originals for pinned SDR renders
 
 Nightly run `41995258239` stopped before encoding because the NOAA 5308
