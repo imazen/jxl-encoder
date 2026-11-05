@@ -107,6 +107,20 @@ jobs:
         run: >-
           cargo test --locked -p jxl-encoder --features jpeg-reencoding --test it jpeg_gainmap::
 
+      - name: Subsampled native orientation and conflicting metadata
+        if: matrix.os == 'ubuntu-latest'
+        run: >-
+          cargo test --locked -p jxl-encoder --features jpeg-reencoding,chroma-subsampling
+          --test native_orientation subsampled_
+
+      - name: JPEG orientation metadata and exact reconstruction
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo test --locked -p jxl-encoder --features jpeg-reencoding --test native_orientation jpeg_exif_xmp_combinations_preserve_original_bytes -- --exact
+
+      - name: Gain-map primary and secondary orientation combinations
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo test --locked -p jxl-encoder --features jpeg-reencoding --test it jpeg_gainmap::iso_gain_map_follows
+
       - name: JPEG CfL reference pixels at color tile boundaries
         if: matrix.os == 'ubuntu-latest'
         run: >-
@@ -164,6 +178,10 @@ jobs:
       - name: Run tests
         if: matrix.run_tests
         run: cargo test --locked --workspace --release
+
+      - name: Verify orientation in the original ICC color space
+        if: matrix.name == 'Linux'
+        run: cargo test --locked --release -p jxl-encoder --features corpus-tests --test native_orientation original_icc_orientation_control -- --exact
 
   # ==========================================================================
   # Cross-compiled testing with QEMU emulation (32-bit targets)

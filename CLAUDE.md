@@ -1347,6 +1347,14 @@ requires explicit verified `CJXL_PATH`/`DJXL_PATH`; resolving against live
 siblings or inheriting ancestor Cargo patches does not verify the pinned graph.
 
 
+### RESOLVED 2026-10-18: animation metadata lost native orientation
+
+The new metadata orientation reached still headers but animation headers
+retained Identity. The public regression reproduced requested tag 2 returning
+tag 1. Both animation writers now receive the same tag without changing their
+resource limits or stored pixels (`0ea6ed00`). `just native-orientation-check`
+checks all eight tags for still and single-frame animation inputs in both modes.
+
 ### RESOLVED 2026-09-24: explicit CLI strategy conflicted with lossless test contract
 
 Historical rejection is superseded by the approved lossless strategy wiring
@@ -1730,6 +1738,28 @@ Empirical encoder-tuning chunks (W44-216 onward) follow nine rules distilled fro
 9. **Use vast.ai interruptible** — `--bid_price` is ~50-70% cheaper than on-demand; fleet already takes eviction hits handled by chunk-rescue. Reference: `scripts/zenjxl-tuning-sweep/launch_w44_216_fleet.sh` (env-toggleable via `INTERRUPTIBLE=0` for smoke pods).
 
 When spawning a sub-agent for a tuning chunk, the prompt MUST include reading the methodology memo + `docs/HYPOTHESIS_LEDGER.md` in "inputs to read FIRST" and acceptance criteria MUST include updating the ledger.
+
+## Native orientation review (PR 133, 2026-11-04)
+
+`ImageMetadata::with_orientation` accepts the existing
+`zenpixels_convert::Orientation`, re-exported as `jxl_encoder::Orientation`.
+It changes display interpretation without rearranging samples. The native
+JXL tag is authoritative; EXIF and XMP bytes remain unchanged and their
+orientation tags do not compose with it. Unset native orientation is Identity.
+JPEG transcodes retain the separate first-EXIF import behavior and reconstruct
+the original JPEG bytes, including conflicting XMP.
+
+[Contract, exact coverage and reference controls](docs/ORIENTATION_METADATA.md).
+`just native-orientation-check <pinned-manifest>` runs against the same locked
+sibling closure as CI. The original-ICC control is caller-selected through
+`just native-orientation-icc-check <pinned-manifest> <oracle>` and is also an
+explicit Linux ARM CI step. Both animation writers use the current request
+pipeline, preserving limits, cancellation and metadata precedence.
+
+The LCMS2 libjxl v0.12 CLI cannot coalesce a cropped XYB animation with the
+bundled Display P3 ICC in its default output color space. Its public decoder
+API accepts every frame when the original ICC is explicitly requested; do not
+misclassify that CLI limitation as an invalid stream or strip the ICC to hide it.
 
 ## Known Bugs (ACTIVE)
 

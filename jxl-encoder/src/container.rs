@@ -2006,7 +2006,7 @@ mod tests {
         });
         out.push(("animation with timecodes".into(), h));
         let mut h = FileHeader::new_rgb(4000, 3000);
-        h.metadata.orientation = Orientation::Rotate90CW;
+        h.metadata.orientation = Orientation::Rotate90;
         h.metadata.intensity_target = 1000.0;
         h.metadata.min_nits = 0.005;
         h.metadata.relative_to_max_display = true;
