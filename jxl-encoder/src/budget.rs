@@ -58,8 +58,9 @@ pub(crate) struct MemoryBudget {
     used: AtomicU64,
     peak: AtomicU64,
     /// Runtime allocation policy for the dimension-driven buffers this budget
-    /// guards: `false` uses `vec![v; n]` (one `calloc`, faster), `true` uses
-    /// `try_reserve_exact` (graceful OOM on untrusted sizes). See
+    /// guards. Zero-only buffers share the allocator-zeroed success path;
+    /// `true` returns allocation errors, while `false` uses the allocator
+    /// error handler (or panics on capacity overflow). See
     /// [`try_alloc_zeroed_permanent`] and [`crate::api::Limits::fallible_alloc`].
     fallible: bool,
 }
@@ -76,7 +77,7 @@ impl MemoryBudget {
     }
 
     /// Construct a budget with `cap` bytes available and an explicit
-    /// fallible-allocation policy (`true` = `try_reserve`, `false` = `vec!`).
+    /// allocation-failure policy (`true` returns errors).
     pub fn with_alloc_policy(cap: u64, fallible: bool) -> Arc<Self> {
         Arc::new(Self {
             cap,
@@ -86,8 +87,7 @@ impl MemoryBudget {
         })
     }
 
-    /// Whether dimension-driven buffers should be allocated fallibly
-    /// (`try_reserve`) rather than via the faster infallible `vec!` path.
+    /// Whether dimension-driven buffers should return allocation errors.
     pub fn is_fallible(&self) -> bool {
         self.fallible
     }
@@ -318,8 +318,7 @@ pub(crate) fn try_alloc_vec<T: Default + Clone>(
 /// Reserve and allocate a zero-filled `Vec<f32>` of `len` elements.
 ///
 /// Specialization of [`try_alloc_vec`] for the common XYB plane case;
-/// LLVM lowers `vec![0.0f32; n]` to a single `calloc`, which is faster
-/// than the generic `T::default()` path.
+/// uses a concrete zero value rather than assuming `T::default()` is zero.
 #[allow(dead_code)] // RAII helper — see BudgetGuard.
 pub(crate) fn try_alloc_vec_f32(
     budget: Option<&Arc<MemoryBudget>>,

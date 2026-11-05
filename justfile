@@ -937,3 +937,9 @@ libjxl-original-profile-oracle source build out:
 
 native-orientation-icc-check manifest oracle:
     LIBJXL_ORIGINAL_PROFILE_ORACLE={{quote(oracle)}} cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features corpus-tests,butteraugli-loop --test native_orientation original_icc_orientation_control -- --exact
+
+# Preserve the pinned sibling graph while checking zero-allocation budgets.
+zeroed-alloc-check:
+    cargo metadata --locked --format-version 1 > /dev/null
+    cargo test --locked -p jxl-encoder --lib budget::
+    cargo clippy --locked -p jxl-encoder --lib -- -D warnings
