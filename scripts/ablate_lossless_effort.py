@@ -53,6 +53,15 @@ def main():
         ("e5-rct10-no-patches-no-palette", 5,
          ["--force-rct", "10", "--no-patches", "--modular-palette-colors", "0"]),
     ])
+    for effort in [3, 5]:
+        arms.extend([
+            (f"e{effort}-no-squeeze", effort, ["--no-squeeze"]),
+            (f"e{effort}-no-tree", effort, ["--no-tree-learning"]),
+            (f"e{effort}-explicit-tree", effort, ["--tree-learning"]),
+        ])
+        for fraction in ["0.05", "0.15", "0.25"]:
+            arms.append((f"e{effort}-tree-f{fraction}", effort,
+                         ["--tree-learning", "--tree-learning-sample-fraction", fraction]))
     files = []
     with (args.out / "cells.tsv").open("x") as table:
         writer = csv.writer(table, delimiter="\t")
