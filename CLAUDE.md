@@ -33,6 +33,10 @@ Verdicts: `FAIL` = ours (all decoders agree, djxl fails, or both Rust
 decoders against djxl); `DECODER` = one Rust decoder is the odd one out,
 logged for `docs/DECODER_FINDINGS.md` (the ledger of decoder bugs and their
 upstream report status; reports outside imazen/lilith need owner approval).
+Completed cells are appended to `results.partial.tsv` during a run; final
+`results.tsv` keeps index order. An interrupted journal is partial evidence,
+not a successful sweep. `just conformance-journal-check <out>` verifies a
+completed journal against its final table.
 Run: `just conformance-sweep <out> <icc-dir> <images>... [--seed N]
 [--minutes N]`, ICC set from `scripts/fetch_icc_profiles.sh`. Scheduled
 weekly by `.github/workflows/weekly-conformance.yml` (Monday 05:00 UTC,

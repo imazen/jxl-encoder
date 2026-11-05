@@ -44,6 +44,7 @@ use jxl_encoder::{
     ProgressiveMode,
 };
 use std::fmt::Write as _;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -1857,6 +1858,21 @@ fn main() {
     let deadline = (minutes > 0).then(|| Instant::now() + Duration::from_secs(minutes * 60));
     let next = AtomicUsize::new(0);
     let stop = AtomicBool::new(false);
+    let header = format!(
+        "# conformance sweep, seed {seed}\nindex\tstatus\tencode_ms\tbytes\tcell\tdetail\n"
+    );
+    // Preserve completed cells if a long run is interrupted. The final table
+    // remains sorted; this journal records completion order without changing
+    // cell generation, decoder checks or verdicts.
+    let journal = Mutex::new({
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(out.join("results.partial.tsv"))
+            .expect("create a new sweep results journal");
+        file.write_all(header.as_bytes()).unwrap();
+        file
+    });
     let rows = Mutex::new(Vec::<(u64, String)>::new());
     let study_rows = Mutex::new(Vec::<(u64, String)>::new());
     let (ok, rejected, failed) = (
@@ -1932,18 +1948,18 @@ fn main() {
                         ("FAIL", e.clone())
                     }
                 };
-                rows.lock().unwrap().push((
-                    index,
-                    format!("{index}\t{status}\t{}\t{len}\t{desc}\t{detail}", elapsed.as_millis()),
-                ));
+                let row = format!(
+                    "{index}\t{status}\t{}\t{len}\t{desc}\t{detail}",
+                    elapsed.as_millis()
+                );
+                writeln!(journal.lock().unwrap(), "{row}").unwrap();
+                rows.lock().unwrap().push((index, row));
             });
         }
     });
     let mut rows = rows.into_inner().unwrap();
     rows.sort_by_key(|r| r.0);
-    let mut tsv = format!(
-        "# conformance sweep, seed {seed}\nindex\tstatus\tencode_ms\tbytes\tcell\tdetail\n"
-    );
+    let mut tsv = header;
     for (_, r) in &rows {
         tsv.push_str(r);
         tsv.push('\n');

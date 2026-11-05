@@ -144,6 +144,9 @@ pq-existing-hdr-check manifest="Cargo.toml":
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --test it lossy_float_bitdepth
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --test it low_effort_static_codes
 
+conformance-journal-check out control="":
+    python3 scripts/check_conformance_journal.py {{quote(out)}} {{if control == "" { "" } else { "--control " + quote(control) }}}
+
 conformance-build manifest="tools/conformance-sweep/Cargo.toml":
     cargo build --locked --release --manifest-path {{quote(manifest)}}
 
