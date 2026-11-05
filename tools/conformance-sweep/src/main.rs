@@ -747,6 +747,29 @@ struct Decoded {
     icc: Option<Vec<u8>>,
 }
 
+/// Preserve exact decoder samples for attribution without changing verdicts.
+fn retain_decoded(dir: &Path, tag: &str, decoded: &Decoded) -> std::io::Result<()> {
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(dir.join(format!("{tag}.f32le")))?;
+    let mut writer = std::io::BufWriter::new(file);
+    for sample in &decoded.px {
+        writer.write_all(&sample.to_le_bytes())?;
+    }
+    writer.flush()?;
+    std::fs::write(
+        dir.join(format!("{tag}.json")),
+        format!(
+            "{{\"width\":{},\"height\":{},\"channels\":{},\"samples\":{},\"format\":\"f32le\"}}\n",
+            decoded.w,
+            decoded.h,
+            decoded.ch,
+            decoded.px.len()
+        ),
+    )
+}
+
 /// Upstream jxl-rs (crates.io `jxl`, latest release).
 fn decode_jxl_rs(data: &[u8]) -> Result<Decoded, String> {
     use jxl::api::{
@@ -1512,6 +1535,14 @@ fn run_cell(seed: u64, cell: &Cell, sources: &[Source], iccs: &[Icc], scratch: &
     let dj = decode_djxl(&bytes, scratch, &format!("c{}", cell.index), float);
     let rs = decode_jxl_rs(&bytes).map_err(|e| format!("jxl-rs: {e}"));
     let zen = decode_zen(&bytes).map_err(|e| format!("zenjxl: {e}"));
+    if KEEP_REFERENCES.load(Ordering::Relaxed) {
+        for (name, decoded) in [("djxl", &dj), ("jxl-rs", &rs), ("zenjxl", &zen)] {
+            if let Ok(decoded) = decoded {
+                retain_decoded(scratch, &format!("c{}-{name}", cell.index), decoded)
+                    .expect("retain decoder samples");
+            }
+        }
+    }
     let judge = |d: &Result<Decoded, String>, who: &str, pfm: bool| -> Result<(), String> {
         let d = d.as_ref().map_err(Clone::clone)?;
         check_one(d, who, cell, &want, iccs, pfm).map(|_| ())
