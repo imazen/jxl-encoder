@@ -7467,3 +7467,7 @@ Butteraugli and SSIM2 metrics within ±1% at most distances.
 Initial public release on crates.io. VarDCT lossy + Modular lossless encoder
 with ANS entropy coding, 19/27 AC strategies, adaptive quantization,
 chroma-from-luma, gaborish, noise synthesis, and butteraugli quantization loop.
+
+## Frozen consumer compatibility (2026-11-08)
+
+Admit stable SIMD 0.9.31 on the frozen 554ad696 source, preserving version floors, features and numerical kernels. Qualified through the zencodec PR201 spatial consumer; no standalone full-workspace claim.
