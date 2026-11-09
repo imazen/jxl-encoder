@@ -989,3 +989,13 @@ pq-linear-control input out *args:
 nightly-artifact-archive run name out:
     mkdir {{quote(out)}}
     gh run download {{quote(run)}} --repo imazen/jxl-encoder --name {{quote(name)}} --dir {{quote(out)}}
+
+# Actual prepared planar integration, retained legacy callbacks and byte controls.
+psy-loop-check manifest="Cargo.toml":
+    cargo test --locked --manifest-path "{{manifest}}" -p jxl-encoder --features psy-loop --test psy_loop -- --test-threads=1
+    cargo test --locked --manifest-path "{{manifest}}" -p jxl-encoder --features psy-loop --test external_metric -- --test-threads=1
+    cargo clippy --locked --manifest-path "{{manifest}}" -p jxl-encoder --features psy-loop --all-targets -- -D warnings
+
+# Export exact CI siblings with the shared content-aware snapshot exporter.
+psy-loop-pinned-check destination exporter:
+    python3 scripts/psy-loop-pinned.py {{quote(destination)}} --exporter {{quote(exporter)}} --update-lock

@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+- Add opt-in `psy-loop` integration for owned zenpsy-api planar preparation and
+  borrowed native maps. The SDR BT.709/D65 Butteraugli-distance route reduces
+  native map rows directly; requested traces retain owned maps. Typed adapter
+  errors fail encoding, and existing external callback defaults remain intact.
+  See [the integration contract](docs/PSY_LOOP.md).
+
 - Compile the Linux x86 fuzz runtime comparison callbacks with hardware POPCNT; retain Rust sanitizer/coverage instrumentation and all existing timeout, RSS and input-size limits.
 
 - Honor explicit faster-decoding settings before lossless LZ77 keep-best selection at every nonzero tier; preserve the default tier-zero policy.

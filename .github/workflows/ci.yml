@@ -78,6 +78,12 @@ jobs:
           cargo test --locked -p jxl-encoder --features jpeg-reencoding,chroma-subsampling
           --test subsampled_odd_shapes --test subsampled_metadata
 
+      - name: Test prepared planar metric integration
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          cargo test --locked -p jxl-encoder --features psy-loop --test psy_loop --test external_metric -- --test-threads=1
+          cargo clippy --locked -p jxl-encoder --features psy-loop --all-targets -- -D warnings
+
       - name: Test the external loop metric (__external_metric)
         if: matrix.os == 'ubuntu-latest'
         run: cargo test --locked --release -p jxl-encoder --features __external_metric --test it -- external_metric loop_trace

@@ -22,6 +22,8 @@ include = ["/src/**", "/examples/*.rs", "/examples/distance_targeting_probe/deco
 autoexamples = false
 
 [dependencies]
+zenpsy-api = { git = "https://github.com/imazen/zenpixels", rev = "20cbfe10cfed18b90ce9c6d986d6aed4e7510b24", version = "0.1.0", default-features = false, optional = true }
+
 # W44-231: learned qf-seed sub-band admission (4-feature logistic on
 # zenanalyze features). Optional + default-on via `learned-admission`.
 # Local sibling is 0.2.0 (crates.io 0.1.0 is older) — workspace
@@ -337,6 +339,8 @@ __bench_internals = []
 # the trait may change in any release. Output is byte-identical with the
 # feature on and no metric attached.
 __external_metric = ["butteraugli-loop", "std"]
+# Borrowed planar metric integration for the external refinement loop.
+psy-loop = ["__external_metric", "dep:zenpsy-api"]
 # Debug hook for capturing the butteraugli loop's INTERNAL reconstruction
 # (the planar linear RGB the loop measures butteraugli against, after the
 # final SetQuantField → transform → quantize → reconstruct → gab → EPF
