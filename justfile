@@ -994,7 +994,7 @@ nightly-artifact-archive run name out:
 psy-loop-check manifest="Cargo.toml":
     cargo test --locked --manifest-path "{{manifest}}" -p jxl-encoder --features psy-loop --test psy_loop -- --test-threads=1
     cargo test --locked --manifest-path "{{manifest}}" -p jxl-encoder --features psy-loop --test external_metric -- --test-threads=1
-    cargo clippy --locked --manifest-path "{{manifest}}" -p jxl-encoder --features psy-loop --lib --test psy_loop --test external_metric -- -D warnings
+    cargo clippy --locked --manifest-path "{{manifest}}" -p jxl-encoder --features psy-loop --all-targets -- -D warnings
 
 # Export exact CI siblings with the shared content-aware snapshot exporter.
 psy-loop-pinned-check destination exporter:

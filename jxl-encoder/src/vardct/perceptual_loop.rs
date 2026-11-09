@@ -3885,6 +3885,56 @@ mod fixed_point_tests {
     }
 }
 
+fn reduce_native_map_to_tiles(
+    map: imgref::ImgRef<'_, f32>,
+    ac_strategy: &AcStrategyMap,
+    xsize_blocks: usize,
+    ysize_blocks: usize,
+    k_tile_norm: f32,
+    tile_dist: &mut [f32],
+) {
+    let (width, height) = (map.width(), map.height());
+    tile_dist.fill(0.0);
+    for by in 0..ysize_blocks {
+        for bx in 0..xsize_blocks {
+            if !ac_strategy.is_first(bx, by) {
+                continue;
+            }
+            let covered_x = ac_strategy.covered_blocks_x(bx, by);
+            let covered_y = ac_strategy.covered_blocks_y(bx, by);
+            let px_start_x = bx * BLOCK_DIM;
+            let px_start_y = by * BLOCK_DIM;
+            let px_end_x = ((bx + covered_x) * BLOCK_DIM).min(width);
+            let px_end_y = ((by + covered_y) * BLOCK_DIM).min(height);
+            if px_start_x >= width || px_start_y >= height {
+                continue;
+            }
+            let mut dist_norm = 0.0f64;
+            let mut pixels = 0.0f64;
+            for py in px_start_y..px_end_y {
+                for px in px_start_x..px_end_x {
+                    let v = map.buf()[py * map.stride() + px] as f64;
+                    let v2 = v * v;
+                    let v4 = v2 * v2;
+                    let v8 = v4 * v4;
+                    let v16 = v8 * v8;
+                    dist_norm += v16;
+                    pixels += 1.0;
+                }
+            }
+            if pixels == 0.0 {
+                pixels = 1.0;
+            }
+            let td = k_tile_norm * (dist_norm / pixels).sqrt().sqrt().sqrt().sqrt() as f32;
+            for sy in 0..covered_y {
+                for sx in 0..covered_x {
+                    tile_dist[(by + sy) * xsize_blocks + (bx + sx)] = td;
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tuning_tests {
     // Constant-pinning tests deliberately assert relationships between
@@ -4952,55 +5002,5 @@ mod tuning_tests {
         }
         let c = block_reducer_constants_for_backend(true);
         assert_eq!(c.k_tile_norm, CVVDP_BLOCK_CONSTANTS.k_tile_norm);
-    }
-}
-
-fn reduce_native_map_to_tiles(
-    map: imgref::ImgRef<'_, f32>,
-    ac_strategy: &AcStrategyMap,
-    xsize_blocks: usize,
-    ysize_blocks: usize,
-    k_tile_norm: f32,
-    tile_dist: &mut [f32],
-) {
-    let (width, height) = (map.width(), map.height());
-    tile_dist.fill(0.0);
-    for by in 0..ysize_blocks {
-        for bx in 0..xsize_blocks {
-            if !ac_strategy.is_first(bx, by) {
-                continue;
-            }
-            let covered_x = ac_strategy.covered_blocks_x(bx, by);
-            let covered_y = ac_strategy.covered_blocks_y(bx, by);
-            let px_start_x = bx * BLOCK_DIM;
-            let px_start_y = by * BLOCK_DIM;
-            let px_end_x = ((bx + covered_x) * BLOCK_DIM).min(width);
-            let px_end_y = ((by + covered_y) * BLOCK_DIM).min(height);
-            if px_start_x >= width || px_start_y >= height {
-                continue;
-            }
-            let mut dist_norm = 0.0f64;
-            let mut pixels = 0.0f64;
-            for py in px_start_y..px_end_y {
-                for px in px_start_x..px_end_x {
-                    let v = map.buf()[py * map.stride() + px] as f64;
-                    let v2 = v * v;
-                    let v4 = v2 * v2;
-                    let v8 = v4 * v4;
-                    let v16 = v8 * v8;
-                    dist_norm += v16;
-                    pixels += 1.0;
-                }
-            }
-            if pixels == 0.0 {
-                pixels = 1.0;
-            }
-            let td = k_tile_norm * (dist_norm / pixels).sqrt().sqrt().sqrt().sqrt() as f32;
-            for sy in 0..covered_y {
-                for sx in 0..covered_x {
-                    tile_dist[(by + sy) * xsize_blocks + (bx + sx)] = td;
-                }
-            }
-        }
     }
 }
