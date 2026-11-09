@@ -6,7 +6,7 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: jxl-encoder.txt 1348 lines (supported surface) | jxl-encoder.features.txt 0 added (features: none) | jxl-encoder.internal.txt 1350 lines (1672 hidden + 188 excluded-feature)
+# files: jxl-encoder.txt 1352 lines (supported surface) | jxl-encoder.features.txt 0 added (features: none) | jxl-encoder.internal.txt 1360 lines (1672 hidden + 198 excluded-feature)
 
 ## summary
 #
@@ -14,27 +14,28 @@
 #   pub types (struct/enum/trait/alias)       104
 #   pub consts/statics                         81
 #   free functions                              6
-#   inherent methods                          638
+#   inherent methods                          640
 #   struct fields                             212
-#   enum variants                             292
-#   re-exports                                 12
+#   enum variants                             293
+#   re-exports                                 13
 #   trait roster entries (type × trait)       302
 #   auto-trait-complete types                  63
 #   auto-trait exceptions                       2
 #
 # per-module pub lines:
-#   (root)                          386
-#   api                             885
+#   (root)                          387
+#   api                             888
 #   entropy_coding                    8
 #   loop_trace                       22
 #   modular                           1
 #   validation                       43
 #   vardct                            8
 
-## items (1282 lines)
+## items (1286 lines)
 
 pub mod jxl_encoder
 pub use At
+pub use Orientation
 pub use ResultAtExt
 pub use Stop
 pub use Unstoppable
@@ -131,7 +132,8 @@ pub enum api::EpfSharpnessSeed
 pub api::EpfSharpnessSeed::AutoW44_117
 pub api::EpfSharpnessSeed::AutoW44_117::min_distance: f32
 pub api::EpfSharpnessSeed::LegacyUniform4
-pub enum api::ExtraChannelBuf<'a>
+#[non_exhaustive] pub enum api::ExtraChannelBuf<'a>
+pub api::ExtraChannelBuf::F32(&'a [f32])
 pub api::ExtraChannelBuf::U16(&'a [u16])
 pub api::ExtraChannelBuf::U8(&'a [u8])
 pub fn api::ExtraChannelBuf<'a>::is_empty(&self) -> bool
@@ -378,6 +380,7 @@ pub fn api::ImageMetadata<'a>::with_intrinsic_size(self, u32, u32) -> Self
 pub fn api::ImageMetadata<'a>::with_jumbf(self, &'a [u8]) -> Self
 pub fn api::ImageMetadata<'a>::with_linear_below(self, f32) -> Self
 pub fn api::ImageMetadata<'a>::with_min_nits(self, f32) -> Self
+pub fn api::ImageMetadata<'a>::with_orientation(self, zenpixels::orientation::Orientation) -> Self
 pub fn api::ImageMetadata<'a>::with_relative_to_max_display(self, bool) -> Self
 pub fn api::ImageMetadata<'a>::with_xmp(self, &'a [u8]) -> Self
 pub fn api::ImageMetadata<'a>::xmp(&self) -> core::option::Option<&[u8]>
@@ -1032,6 +1035,7 @@ pub fn api::ImageMetadata<'a>::with_intrinsic_size(self, u32, u32) -> Self
 pub fn api::ImageMetadata<'a>::with_jumbf(self, &'a [u8]) -> Self
 pub fn api::ImageMetadata<'a>::with_linear_below(self, f32) -> Self
 pub fn api::ImageMetadata<'a>::with_min_nits(self, f32) -> Self
+pub fn api::ImageMetadata<'a>::with_orientation(self, zenpixels::orientation::Orientation) -> Self
 pub fn api::ImageMetadata<'a>::with_relative_to_max_display(self, bool) -> Self
 pub fn api::ImageMetadata<'a>::with_xmp(self, &'a [u8]) -> Self
 pub fn api::ImageMetadata<'a>::xmp(&self) -> core::option::Option<&[u8]>

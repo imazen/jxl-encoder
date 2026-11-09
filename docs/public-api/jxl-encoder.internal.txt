@@ -14,7 +14,7 @@
 #   pub consts/statics                         62
 #   pub macros                                 13
 #   free functions                            198
-#   inherent methods                          274
+#   inherent methods                          284
 #   struct fields                             629
 #   enum variants                              28
 #   trait roster entries (type × trait)       160
@@ -22,20 +22,20 @@
 #   auto-trait exceptions                       5
 #
 # per-module pub lines:
-#   (root)                          201
+#   (root)                          206
 #   __bench_internals                47
 #   __gpu                           102
 #   __internals                      76
 #   __pre_quantized                 264
 #   __test_exports                  407
 #   api                              34
-#   loop_metric                       7
+#   loop_metric                      12
 #   profile_phases                    6
 #   sweep                            22
 #   test_helpers                     13
 #   vardct                          112
 
-## items (1264 lines)
+## items (1274 lines)
 
 #[non_exhaustive] pub struct EffortProfile [also: __pre_quantized]
 #[non_exhaustive] pub struct EncodeEstimate
@@ -118,7 +118,12 @@ pub fn EffortProfile::lossy(u8, api::EncoderMode) -> Self
 pub fn EncodeEstimate::clone(&self) -> Self
 pub fn EncodeEstimate::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn ExternalLoopMetric::compare(&mut self, &[f32], &[f32], &[f32], usize, usize, usize, &mut alloc::vec::Vec<f32>) -> core::result::Result<f64, alloc::string::String>
+pub fn ExternalLoopMetric::compare_with_map(&mut self, [imgref::ImgRef<'_, f32>; 3], &dyn enough::Stop, &mut dyn core::ops::function::FnMut(imgref::ImgRef<'_, f32>)) -> core::option::Option<core::result::Result<f64, alloc::string::String>>
+pub fn ExternalLoopMetric::compare_with_stop(&mut self, [imgref::ImgRef<'_, f32>; 3], &mut alloc::vec::Vec<f32>, &dyn enough::Stop) -> core::result::Result<f64, alloc::string::String>
+pub fn ExternalLoopMetric::configure_color(&mut self, core::option::Option<&ColorEncoding>) -> core::result::Result<(), alloc::string::String>
 pub fn ExternalLoopMetric::set_reference(&mut self, &[f32], &[f32], &[f32], usize, usize) -> core::result::Result<(), alloc::string::String>
+pub fn ExternalLoopMetric::set_reference_with_stop(&mut self, &[f32], &[f32], &[f32], usize, usize, &dyn enough::Stop) -> core::result::Result<(), alloc::string::String>
+pub fn ExternalLoopMetric::strict_failures(&self) -> bool
 pub fn LosslessInternalParams::clone(&self) -> Self
 pub fn LosslessInternalParams::default() -> Self
 pub fn LosslessInternalParams::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
@@ -497,7 +502,12 @@ pub fn estimate_encode_threaded(u32, u32, u8, bool, bool, u8, usize) -> core::op
 pub fn is_bare_codestream(&[u8]) -> bool
 pub fn is_container(&[u8]) -> bool
 pub fn loop_metric::ExternalLoopMetric::compare(&mut self, &[f32], &[f32], &[f32], usize, usize, usize, &mut alloc::vec::Vec<f32>) -> core::result::Result<f64, alloc::string::String>
+pub fn loop_metric::ExternalLoopMetric::compare_with_map(&mut self, [imgref::ImgRef<'_, f32>; 3], &dyn enough::Stop, &mut dyn core::ops::function::FnMut(imgref::ImgRef<'_, f32>)) -> core::option::Option<core::result::Result<f64, alloc::string::String>>
+pub fn loop_metric::ExternalLoopMetric::compare_with_stop(&mut self, [imgref::ImgRef<'_, f32>; 3], &mut alloc::vec::Vec<f32>, &dyn enough::Stop) -> core::result::Result<f64, alloc::string::String>
+pub fn loop_metric::ExternalLoopMetric::configure_color(&mut self, core::option::Option<&ColorEncoding>) -> core::result::Result<(), alloc::string::String>
 pub fn loop_metric::ExternalLoopMetric::set_reference(&mut self, &[f32], &[f32], &[f32], usize, usize) -> core::result::Result<(), alloc::string::String>
+pub fn loop_metric::ExternalLoopMetric::set_reference_with_stop(&mut self, &[f32], &[f32], &[f32], usize, usize, &dyn enough::Stop) -> core::result::Result<(), alloc::string::String>
+pub fn loop_metric::ExternalLoopMetric::strict_failures(&self) -> bool
 pub fn loop_metric::ExternalMetric::clone(&self) -> Self
 pub fn loop_metric::ExternalMetric::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn loop_metric::ExternalMetric::new(impl loop_metric::ExternalLoopMetric + 'static) -> Self

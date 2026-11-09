@@ -508,6 +508,46 @@ pub(crate) trait PerceptualBackend: core::fmt::Debug {
         height: usize,
     ) -> Result<()>;
 
+    fn strict_failures(&self) -> bool {
+        false
+    }
+    fn compare_with_reference_with_stop(
+        &mut self,
+        planes: [imgref::ImgRef<'_, f32>; 3],
+        map: &mut alloc::vec::Vec<f32>,
+        _stop: &dyn enough::Stop,
+    ) -> Result<BackendCompareResult> {
+        let [r, g, b] = planes;
+        self.compare_with_reference(
+            r.buf(),
+            g.buf(),
+            b.buf(),
+            r.stride(),
+            r.width(),
+            r.height(),
+            map,
+        )
+    }
+    fn set_reference_with_stop(
+        &mut self,
+        r: &[f32],
+        g: &[f32],
+        b: &[f32],
+        width: usize,
+        height: usize,
+        _stop: &dyn enough::Stop,
+    ) -> Result<()> {
+        self.set_reference(r, g, b, width, height)
+    }
+    fn compare_with_reference_lending(
+        &mut self,
+        _planes: [imgref::ImgRef<'_, f32>; 3],
+        _stop: &dyn enough::Stop,
+        _consume: &mut dyn FnMut(imgref::ImgRef<'_, f32>),
+    ) -> Result<Option<f64>> {
+        Ok(None)
+    }
+
     /// Compare against the cached reference, writing the diffmap into the
     /// caller-owned `diffmap_out` buffer (B7a, 2026-05-23). The caller is
     /// expected to keep this Vec alive across iterations to reuse the
@@ -719,7 +759,18 @@ pub(crate) fn external_backend(
     #[cfg(feature = "__external_metric")]
     {
         enc.external_metric.clone().map(|m| {
-            alloc::boxed::Box::new(ExternalBackend(m)) as alloc::boxed::Box<dyn PerceptualBackend>
+            let color = if enc.icc_profile.is_some() {
+                let mut c = enc
+                    .color_encoding
+                    .clone()
+                    .unwrap_or_else(crate::headers::color_encoding::ColorEncoding::srgb);
+                c.want_icc = true;
+                Some(c)
+            } else {
+                enc.color_encoding.clone()
+            };
+            alloc::boxed::Box::new(ExternalBackend(m, color))
+                as alloc::boxed::Box<dyn PerceptualBackend>
         })
     }
     #[cfg(not(feature = "__external_metric"))]
@@ -732,7 +783,10 @@ pub(crate) fn external_backend(
 /// Scores with the caller's [`crate::ExternalMetric`] instead of butteraugli.
 #[cfg(feature = "__external_metric")]
 #[derive(Debug)]
-pub(crate) struct ExternalBackend(pub(crate) crate::ExternalMetric);
+pub(crate) struct ExternalBackend(
+    pub(crate) crate::ExternalMetric,
+    Option<crate::headers::color_encoding::ColorEncoding>,
+);
 
 #[cfg(feature = "__external_metric")]
 impl PerceptualBackend for ExternalBackend {
@@ -740,19 +794,65 @@ impl PerceptualBackend for ExternalBackend {
         "external"
     }
 
+    fn strict_failures(&self) -> bool {
+        self.0.with(|m| m.strict_failures())
+    }
+    fn compare_with_reference_with_stop(
+        &mut self,
+        planes: [imgref::ImgRef<'_, f32>; 3],
+        map: &mut alloc::vec::Vec<f32>,
+        stop: &dyn enough::Stop,
+    ) -> Result<BackendCompareResult> {
+        let (width, height) = (planes[0].width(), planes[0].height());
+        let score = self
+            .0
+            .with(|m| m.compare_with_stop(planes, map, stop))
+            .map_err(|e| crate::error::Error::InvalidInput(format!("external metric: {e}")))?;
+        if map.len() != width * height || !score.is_finite() {
+            return Err(crate::error::Error::InvalidInput(
+                alloc::string::String::from("invalid external metric output"),
+            ));
+        }
+        Ok(BackendCompareResult { score })
+    }
     fn set_reference(
         &mut self,
-        ref_r: &[f32],
-        ref_g: &[f32],
-        ref_b: &[f32],
+        r: &[f32],
+        g: &[f32],
+        b: &[f32],
         width: usize,
         height: usize,
     ) -> Result<()> {
+        self.set_reference_with_stop(r, g, b, width, height, &enough::Unstoppable)
+    }
+    fn set_reference_with_stop(
+        &mut self,
+        r: &[f32],
+        g: &[f32],
+        b: &[f32],
+        width: usize,
+        height: usize,
+        stop: &dyn enough::Stop,
+    ) -> Result<()> {
         self.0
-            .with(|m| m.set_reference(ref_r, ref_g, ref_b, width, height))
+            .with(|m| {
+                m.configure_color(self.1.as_ref())?;
+                m.set_reference_with_stop(r, g, b, width, height, stop)
+            })
             .map_err(|e| {
                 crate::error::Error::InvalidInput(format!("external metric reference: {e}"))
             })
+    }
+    fn compare_with_reference_lending(
+        &mut self,
+        planes: [imgref::ImgRef<'_, f32>; 3],
+        stop: &dyn enough::Stop,
+        consume: &mut dyn FnMut(imgref::ImgRef<'_, f32>),
+    ) -> Result<Option<f64>> {
+        self.0
+            .with(|m| m.compare_with_map(planes, stop, consume))
+            .transpose()
+            .map_err(|e| crate::error::Error::InvalidInput(format!("external metric: {e}")))
     }
 
     fn compare_with_reference(

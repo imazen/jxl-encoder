@@ -1114,9 +1114,17 @@ impl VarDctEncoder {
                     ref_g[i] = linear_rgb[i * 3 + 1];
                     ref_b[i] = linear_rgb[i * 3 + 2];
                 }
-                if b.set_reference(&ref_r, &ref_g, &ref_b, width, height)
-                    .is_err()
-                {
+                if let Err(error) = b.set_reference_with_stop(
+                    &ref_r,
+                    &ref_g,
+                    &ref_b,
+                    width,
+                    height,
+                    stop.unwrap_or(&enough::Unstoppable),
+                ) {
+                    if b.strict_failures() {
+                        return Err(error);
+                    }
                     return Ok(initial_params.clone());
                 }
                 Some(b)
@@ -2497,6 +2505,7 @@ impl VarDctEncoder {
             // loop and reused across iters via `&mut diffmap_vec`. The CPU
             // backend's `compare_linear_planar_into` writes into it
             // directly; the GPU backend resizes and overwrites.
+            let mut borrowed_tiles = false;
             let iter_score: f64 = if use_vdp2 {
                 match super::hdr_vdp2_lite::compare_vdp2_interleaved(
                     ref_interleaved,
@@ -2537,17 +2546,65 @@ impl VarDctEncoder {
                 let bref = backend
                     .as_deref_mut()
                     .expect("non-VDP2 path must carry a butteraugli backend (top-level invariant)");
-                let result = match bref.compare_with_reference(
-                    recon_r,
-                    recon_g,
-                    recon_b,
-                    padded_width,
-                    width,
-                    height,
-                    &mut diffmap_vec,
-                ) {
+                let keep_native_map = self.loop_trace.is_some();
+                #[cfg(feature = "__internal_recon_hook")]
+                let keep_native_map =
+                    keep_native_map || std::env::var_os("JXL_AQDBG_DUMP").is_some();
+                let lending = if !keep_native_map && !self.cvvdp_loop {
+                    let mut calls = 0;
+                    let mut valid = true;
+                    let result = bref.compare_with_reference_lending(
+                        [&recon_r[..], &recon_g[..], &recon_b[..]]
+                            .map(|p| imgref::Img::new_stride(p, width, height, padded_width)),
+                        stop.unwrap_or(&enough::Unstoppable),
+                        &mut |map| {
+                            calls += 1;
+                            valid &= map.width() == width
+                                && map.height() == height
+                                && map.rows().flatten().all(|v| v.is_finite() && *v >= 0.0);
+                            if valid {
+                                reduce_native_map_to_tiles(
+                                    map,
+                                    ac_strategy,
+                                    xsize_blocks,
+                                    ysize_blocks,
+                                    block_reducer_constants_for_metric(ActiveMetric::Butteraugli)
+                                        .k_tile_norm,
+                                    tile_dist,
+                                );
+                                valid &= tile_dist.iter().all(|v| v.is_finite());
+                            }
+                        },
+                    );
+                    match result {
+                        Ok(Some(score)) if calls == 1 && valid && score.is_finite() => {
+                            borrowed_tiles = true;
+                            Some(Ok(super::perceptual_backend::BackendCompareResult {
+                                score,
+                            }))
+                        }
+                        Ok(None) if calls == 0 => None,
+                        Err(e) => Some(Err(e)),
+                        _ => Some(Err(crate::error::Error::InvalidInput(
+                            alloc::string::String::from("invalid lending metric callback"),
+                        ))),
+                    }
+                } else {
+                    None
+                };
+                let result = match lending.unwrap_or_else(|| {
+                    bref.compare_with_reference_with_stop(
+                        [&recon_r[..], &recon_g[..], &recon_b[..]]
+                            .map(|p| imgref::Img::new_stride(p, width, height, padded_width)),
+                        &mut diffmap_vec,
+                        stop.unwrap_or(&enough::Unstoppable),
+                    )
+                }) {
                     Ok(r) => r,
-                    Err(_) => {
+                    Err(error) => {
+                        if bref.strict_failures() {
+                            return Err(error);
+                        }
                         let mean_qf = mean_qf_float(quant_field_float);
                         return Ok(SeedOutcome {
                             params: current_params,
@@ -2616,44 +2673,15 @@ impl VarDctEncoder {
             let block_constants = block_reducer_constants_for_metric(active_metric);
             let k_tile_norm = block_constants.k_tile_norm;
             let diffmap_buf: &[f32] = &diffmap_vec;
-            tile_dist.fill(0.0);
-            for by in 0..ysize_blocks {
-                for bx in 0..xsize_blocks {
-                    if !ac_strategy.is_first(bx, by) {
-                        continue;
-                    }
-                    let covered_x = ac_strategy.covered_blocks_x(bx, by);
-                    let covered_y = ac_strategy.covered_blocks_y(bx, by);
-                    let px_start_x = bx * BLOCK_DIM;
-                    let px_start_y = by * BLOCK_DIM;
-                    let px_end_x = ((bx + covered_x) * BLOCK_DIM).min(width);
-                    let px_end_y = ((by + covered_y) * BLOCK_DIM).min(height);
-                    if px_start_x >= width || px_start_y >= height {
-                        continue;
-                    }
-                    let mut dist_norm = 0.0f64;
-                    let mut pixels = 0.0f64;
-                    for py in px_start_y..px_end_y {
-                        for px in px_start_x..px_end_x {
-                            let v = diffmap_buf[py * width + px] as f64;
-                            let v2 = v * v;
-                            let v4 = v2 * v2;
-                            let v8 = v4 * v4;
-                            let v16 = v8 * v8;
-                            dist_norm += v16;
-                            pixels += 1.0;
-                        }
-                    }
-                    if pixels == 0.0 {
-                        pixels = 1.0;
-                    }
-                    let td = k_tile_norm * (dist_norm / pixels).sqrt().sqrt().sqrt().sqrt() as f32;
-                    for sy in 0..covered_y {
-                        for sx in 0..covered_x {
-                            tile_dist[(by + sy) * xsize_blocks + (bx + sx)] = td;
-                        }
-                    }
-                }
+            if !borrowed_tiles {
+                reduce_native_map_to_tiles(
+                    imgref::Img::new(diffmap_buf, width, height),
+                    ac_strategy,
+                    xsize_blocks,
+                    ysize_blocks,
+                    k_tile_norm,
+                    tile_dist,
+                );
             }
 
             // cvvdp-fork Phase 8g (2026-05-25): env-gated per-iter
@@ -3349,14 +3377,11 @@ impl VarDctEncoder {
                         let bref = backend
                             .as_deref_mut()
                             .expect("Phase 8d gate must have a backend");
-                        let probe_score = match bref.compare_with_reference(
-                            recon_r,
-                            recon_g,
-                            recon_b,
-                            padded_width,
-                            width,
-                            height,
+                        let probe_score = match bref.compare_with_reference_with_stop(
+                            [&recon_r[..], &recon_g[..], &recon_b[..]]
+                                .map(|p| imgref::Img::new_stride(p, width, height, padded_width)),
                             &mut diffmap_vec,
+                            stop.unwrap_or(&enough::Unstoppable),
                         ) {
                             Ok(r) => r.score,
                             Err(_) => {
@@ -4927,5 +4952,55 @@ mod tuning_tests {
         }
         let c = block_reducer_constants_for_backend(true);
         assert_eq!(c.k_tile_norm, CVVDP_BLOCK_CONSTANTS.k_tile_norm);
+    }
+}
+
+fn reduce_native_map_to_tiles(
+    map: imgref::ImgRef<'_, f32>,
+    ac_strategy: &AcStrategyMap,
+    xsize_blocks: usize,
+    ysize_blocks: usize,
+    k_tile_norm: f32,
+    tile_dist: &mut [f32],
+) {
+    let (width, height) = (map.width(), map.height());
+    tile_dist.fill(0.0);
+    for by in 0..ysize_blocks {
+        for bx in 0..xsize_blocks {
+            if !ac_strategy.is_first(bx, by) {
+                continue;
+            }
+            let covered_x = ac_strategy.covered_blocks_x(bx, by);
+            let covered_y = ac_strategy.covered_blocks_y(bx, by);
+            let px_start_x = bx * BLOCK_DIM;
+            let px_start_y = by * BLOCK_DIM;
+            let px_end_x = ((bx + covered_x) * BLOCK_DIM).min(width);
+            let px_end_y = ((by + covered_y) * BLOCK_DIM).min(height);
+            if px_start_x >= width || px_start_y >= height {
+                continue;
+            }
+            let mut dist_norm = 0.0f64;
+            let mut pixels = 0.0f64;
+            for py in px_start_y..px_end_y {
+                for px in px_start_x..px_end_x {
+                    let v = map.buf()[py * map.stride() + px] as f64;
+                    let v2 = v * v;
+                    let v4 = v2 * v2;
+                    let v8 = v4 * v4;
+                    let v16 = v8 * v8;
+                    dist_norm += v16;
+                    pixels += 1.0;
+                }
+            }
+            if pixels == 0.0 {
+                pixels = 1.0;
+            }
+            let td = k_tile_norm * (dist_norm / pixels).sqrt().sqrt().sqrt().sqrt() as f32;
+            for sy in 0..covered_y {
+                for sx in 0..covered_x {
+                    tile_dist[(by + sy) * xsize_blocks + (bx + sx)] = td;
+                }
+            }
+        }
     }
 }

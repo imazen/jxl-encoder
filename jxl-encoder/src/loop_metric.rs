@@ -23,12 +23,79 @@ use std::sync::Mutex;
 
 /// A perceptual metric the quantization loop can score with.
 pub trait ExternalLoopMetric: Send {
+    /// Require errors to fail encoding instead of retaining the previous loop
+    /// state. Legacy callbacks keep their established fallback by default.
+    fn strict_failures(&self) -> bool {
+        false
+    }
+    /// Compare with fresh encoder cancellation. Legacy implementations keep
+    /// their existing callback; prepared integrations can override it.
+    fn compare_with_stop(
+        &mut self,
+        planes: [imgref::ImgRef<'_, f32>; 3],
+        diffmap: &mut Vec<f32>,
+        _stop: &dyn enough::Stop,
+    ) -> Result<f64, String> {
+        let [r, g, b] = planes;
+        if [g, b]
+            .iter()
+            .any(|p| p.width() != r.width() || p.height() != r.height() || p.stride() != r.stride())
+        {
+            return Err(String::from(
+                "legacy external metric requires matching planar geometry and strides",
+            ));
+        }
+        self.compare(
+            r.buf(),
+            g.buf(),
+            b.buf(),
+            r.stride(),
+            r.width(),
+            r.height(),
+            diffmap,
+        )
+    }
+    /// Declare source color before preparation. Legacy callbacks retain their
+    /// existing behavior; adapters requiring a color contract override this.
+    fn configure_color(
+        &mut self,
+        _color: Option<&crate::headers::color_encoding::ColorEncoding>,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+    /// Prepare with fresh encoder cancellation. The default forwards to the
+    /// legacy callback; it never retains the operation's borrowed stop source.
+    #[allow(clippy::too_many_arguments)]
+    fn set_reference_with_stop(
+        &mut self,
+        r: &[f32],
+        g: &[f32],
+        b: &[f32],
+        width: usize,
+        height: usize,
+        _stop: &dyn enough::Stop,
+    ) -> Result<(), String> {
+        self.set_reference(r, g, b, width, height)
+    }
+    /// Optional lending comparison. `None` selects the legacy vector callback.
+    /// On success invoke `consume` exactly once with a full-resolution native
+    /// Butteraugli-distance map; it may have padded rows. No map borrow escapes.
+    fn compare_with_map(
+        &mut self,
+        _planes: [imgref::ImgRef<'_, f32>; 3],
+        _stop: &dyn enough::Stop,
+        _consume: &mut dyn FnMut(imgref::ImgRef<'_, f32>),
+    ) -> Option<Result<f64, String>> {
+        None
+    }
+
     /// Called once per encode, before any [`Self::compare`], with the source
     /// as planar linear RGB (`width × height` values per plane, row-major,
     /// nominally in `[0, 1]`).
     ///
     /// # Errors
-    /// An error stops the loop; the encode keeps the initial quant field.
+    /// By default an error stops the loop and retains the initial quant field.
+    /// With [`Self::strict_failures`], encoding returns the failure.
     fn set_reference(
         &mut self,
         r: &[f32],
@@ -45,8 +112,8 @@ pub trait ExternalLoopMetric: Send {
     /// comparison, even when an adjustment leaves the quant field unchanged.
     ///
     /// # Errors
-    /// An error ends the current seed with the previous iteration's result,
-    /// as a failed butteraugli comparison does.
+    /// By default an error ends the current seed with its previous result.
+    /// With [`Self::strict_failures`], encoding returns the failure.
     #[allow(clippy::too_many_arguments)]
     fn compare(
         &mut self,
@@ -88,3 +155,8 @@ impl ExternalMetric {
         f(guard.as_mut())
     }
 }
+
+#[cfg(feature = "psy-loop")]
+mod psy;
+#[cfg(feature = "psy-loop")]
+pub use psy::PsyLoopMetric;
