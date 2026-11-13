@@ -7354,8 +7354,8 @@ impl<'a> EncodeRequest<'a> {
             // pass is in the noise.
             let alpha_plane: Vec<i32> = image.channels[alpha_idx].data().to_vec();
             if alpha_plane.contains(&0) {
-                for c in 0..color_channels {
-                    let plane = image.channels[c].data_mut();
+                for channel in &mut image.channels[..color_channels] {
+                    let plane = channel.data_mut();
                     for (px, &a) in plane.iter_mut().zip(alpha_plane.iter()) {
                         if a == 0 {
                             *px = 0;
@@ -10189,7 +10189,7 @@ impl LosslessEncoder {
                     let dst_y = y_start + y;
                     for x in 0..w {
                         let src = row_offset + x * nc * bps;
-                        for c in 0..nc {
+                        for (c, channel) in self.channels[..nc].iter_mut().enumerate() {
                             let off = src + c * bps;
                             let sample = if f16 {
                                 i32::from(u16::from_ne_bytes([pixels[off], pixels[off + 1]]))
@@ -10210,7 +10210,7 @@ impl LosslessEncoder {
                                     },
                                 )?
                             };
-                            self.channels[c].set(x, dst_y, sample);
+                            channel.set(x, dst_y, sample);
                         }
                     }
                 }

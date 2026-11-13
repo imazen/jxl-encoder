@@ -426,8 +426,8 @@ pub(crate) fn compute_dot_losses(
     // libjxl: custom_loss += 20 * dist_mean_mode_sq + neg_value[1].
     ellipse.custom_loss += 20.0 * dist_mean_mode_sq + ellipse.neg_value[1];
     let mut ridge = K_SIGMA_R * ellipse.sigma_x + K_SIGMA_R * ellipse.sigma_y;
-    for c in 0..3 {
-        ridge += K_INTENSITY_R * ellipse.intensity[c] * ellipse.intensity[c];
+    for &intensity in &ellipse.intensity {
+        ridge += K_INTENSITY_R * intensity * intensity;
     }
     ellipse.ridge_loss = ellipse.l2_loss + ridge;
 }

@@ -299,10 +299,7 @@ fn detect_smooth_photo_for_dct64_inner(
         }
     }
     let ratio = (flat as f32) / (total.max(1) as f32);
-    if ratio >= W44_35_PROXY_FLAT_SOLID_MAX {
-        return false;
-    }
-    true
+    ratio < W44_35_PROXY_FLAT_SOLID_MAX
 }
 
 // ─────────────────────────────────────────────────────────────────────────

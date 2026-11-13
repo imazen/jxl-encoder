@@ -809,7 +809,7 @@ pub fn simulate_photon_noise(xsize: usize, ysize: usize, iso: f32) -> NoiseParam
 
     let mut params = NoiseParams::default();
 
-    for i in 0..NUM_NOISE_POINTS {
+    for (i, value) in params.lut.iter_mut().enumerate() {
         let scaled_index = i as f32 / (NUM_NOISE_POINTS as f32 - 2.0);
         // scaled_index is used for XYB = (0, 2·scaled_index, 2·scaled_index).
         let y = 2.0 * scaled_index;
@@ -839,7 +839,7 @@ pub fn simulate_photon_noise(xsize: usize, ysize: usize, iso: f32) -> NoiseParam
         //   sqrt(2) = red_noise + green_noise contribution
         //   1.13  = standard deviation of a plane of generated noise
         let v = opsin_noise / (0.22 * core::f32::consts::SQRT_2 * 1.13);
-        params.lut[i] = v.clamp(0.0, NOISE_LUT_MAX);
+        *value = v.clamp(0.0, NOISE_LUT_MAX);
     }
 
     params

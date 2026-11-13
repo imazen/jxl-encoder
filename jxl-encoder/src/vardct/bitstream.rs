@@ -1459,7 +1459,6 @@ impl VarDctEncoder {
     /// For single-group images (≤256x256), dc_group_idx is 0 and covers the whole image.
     /// For multi-group images, each DC group covers a 256x256 block region (2048x2048 pixels).
     #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn write_dc_group(
         &self,
         dc_group_idx: usize,

@@ -790,7 +790,6 @@ impl VarDctEncoder {
     /// Returns the final DistanceParams (with recomputed global_scale).
     #[cfg(feature = "butteraugli-loop")]
     #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn butteraugli_refine_quant_field(
         &self,
         linear_rgb: &[f32],

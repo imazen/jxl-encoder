@@ -1184,8 +1184,7 @@ pub fn write_block_ctx_map_adaptive_with_mode(
     writer.write(1, 0)?;
 
     // DC thresholds: 3 channels, each with count + values
-    for j in 0..3 {
-        let dct = &ctx_map.dc_thresholds[j];
+    for (j, dct) in ctx_map.dc_thresholds.iter().enumerate() {
         debug_assert!(
             dct.len() < 16,
             "dc_thresholds[{}].len()={} >= 16",
