@@ -1522,8 +1522,8 @@ impl ANSEncodingHistogram {
                 write_var_len_uint8(writer, 0)?;
             } else {
                 writer.write(1, (self.num_symbols - 1) as u64)?;
-                for i in 0..self.num_symbols {
-                    write_var_len_uint8(writer, self.symbols[i] as u8)?;
+                for &symbol in &self.symbols[..self.num_symbols] {
+                    write_var_len_uint8(writer, symbol as u8)?;
                 }
                 if self.num_symbols == 2 {
                     writer.write(

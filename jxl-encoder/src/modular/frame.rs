@@ -2083,8 +2083,7 @@ impl FrameEncoder {
         // PassGroup: min(hshift, vshift) < 3
         let mut lf_channel_indices: Vec<usize> = Vec::new();
         let mut pass_channel_indices: Vec<usize> = Vec::new();
-        for i in global_cutoff..squeezed.channels.len() {
-            let ch = &squeezed.channels[i];
+        for (i, ch) in squeezed.channels.iter().enumerate().skip(global_cutoff) {
             let min_shift = ch.hshift.min(ch.vshift);
             if min_shift >= 3 {
                 lf_channel_indices.push(i);
@@ -2127,8 +2126,8 @@ impl FrameEncoder {
 
         // 3a: Global channel residuals (full channels)
         let mut all_residuals: Vec<u32> = Vec::new();
-        for i in 0..global_cutoff {
-            all_residuals.extend(collect_channel_residuals(&squeezed.channels[i])?);
+        for channel in &squeezed.channels[..global_cutoff] {
+            all_residuals.extend(collect_channel_residuals(channel)?);
         }
 
         // 3b: LfGroup channel residuals (cropped to each DC group rect)
@@ -2283,8 +2282,8 @@ impl FrameEncoder {
 
         // Write global channel residuals
         let mut global_residuals: Vec<u32> = Vec::new();
-        for i in 0..global_cutoff {
-            global_residuals.extend(collect_channel_residuals(&squeezed.channels[i])?);
+        for channel in &squeezed.channels[..global_cutoff] {
+            global_residuals.extend(collect_channel_residuals(channel)?);
         }
         encode_residuals(&global_residuals, &mut lf_global_writer, &entropy_state)?;
 
@@ -2476,8 +2475,7 @@ impl FrameEncoder {
 
         let mut lf_channel_indices: Vec<usize> = Vec::new();
         let mut pass_channel_indices: Vec<usize> = Vec::new();
-        for i in global_cutoff..squeezed.channels.len() {
-            let ch = &squeezed.channels[i];
+        for (i, ch) in squeezed.channels.iter().enumerate().skip(global_cutoff) {
             let min_shift = ch.hshift.min(ch.vshift);
             if min_shift >= 3 {
                 lf_channel_indices.push(i);

@@ -568,8 +568,8 @@ pub(super) fn write_prefix_code(code: &PrefixCode, writer: &mut BitWriter) -> Re
     let mut s4 = [0usize; 4];
     let mut length = 0usize;
 
-    for i in 0..ALPHABET_SIZE {
-        if code.depths[i] > 0 {
+    for (i, &depth) in code.depths[..ALPHABET_SIZE].iter().enumerate() {
+        if depth > 0 {
             if count < 4 {
                 s4[count] = i;
             }
@@ -631,8 +631,8 @@ pub fn write_prefix_codes(
     // Write alphabet sizes
     for pc in prefix_codes {
         let mut num_symbol = 1usize;
-        for i in 0..ALPHABET_SIZE {
-            if pc.depths[i] > 0 {
+        for (i, &depth) in pc.depths[..ALPHABET_SIZE].iter().enumerate() {
+            if depth > 0 {
                 num_symbol = i + 1;
             }
         }
@@ -646,8 +646,8 @@ pub fn write_prefix_codes(
     #[allow(clippy::unused_enumerate_index)]
     for (_idx, pc) in prefix_codes.iter().enumerate() {
         let mut num_symbol = 1usize;
-        for i in 0..ALPHABET_SIZE {
-            if pc.depths[i] > 0 {
+        for (i, &depth) in pc.depths[..ALPHABET_SIZE].iter().enumerate() {
+            if depth > 0 {
                 num_symbol = i + 1;
             }
         }

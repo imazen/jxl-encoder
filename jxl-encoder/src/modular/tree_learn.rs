@@ -4035,8 +4035,8 @@ fn pack_sample_key(
         }
         off += 1;
     }
-    for pred in 0..num_pred {
-        key[off] = samples.residual_tokens[pred][sample_idx];
+    for tokens in &samples.residual_tokens[..num_pred] {
+        key[off] = tokens[sample_idx];
         off += 1;
     }
     key
@@ -4160,13 +4160,11 @@ impl GatherDedupTable {
     #[inline]
     fn hash1(&self, samples: &TreeSamples, idx: usize, num_pred: usize, total_props: usize) -> u32 {
         let mut h: u64 = HASH1_CONST;
-        for pred in 0..num_pred {
+        for tokens in &samples.residual_tokens[..num_pred] {
+            h = h.wrapping_mul(HASH1_CONST).wrapping_add(tokens[idx] as u64);
             h = h
                 .wrapping_mul(HASH1_CONST)
-                .wrapping_add(samples.residual_tokens[pred][idx] as u64);
-            h = h
-                .wrapping_mul(HASH1_CONST)
-                .wrapping_add(gather_token_ebits(samples.residual_tokens[pred][idx]) as u64);
+                .wrapping_add(gather_token_ebits(tokens[idx]) as u64);
         }
         for &prop in &self.properties {
             let prop = prop as usize;
@@ -4191,10 +4189,9 @@ impl GatherDedupTable {
             let v = samples.props[prop].get_i32(idx).unwrap_or(0) as i64 as u64;
             h = h.wrapping_mul(HASH2_CONST) ^ v;
         }
-        for pred in 0..num_pred {
-            h = h.wrapping_mul(HASH2_CONST) ^ (samples.residual_tokens[pred][idx] as u64);
-            h = h.wrapping_mul(HASH2_CONST)
-                ^ (gather_token_ebits(samples.residual_tokens[pred][idx]) as u64);
+        for tokens in &samples.residual_tokens[..num_pred] {
+            h = h.wrapping_mul(HASH2_CONST) ^ (tokens[idx] as u64);
+            h = h.wrapping_mul(HASH2_CONST) ^ (gather_token_ebits(tokens[idx]) as u64);
         }
         ((h >> 16) as u32) & self.mask
     }
@@ -4212,8 +4209,8 @@ impl GatherDedupTable {
         num_pred: usize,
         total_props: usize,
     ) -> bool {
-        for pred in 0..num_pred {
-            if samples.residual_tokens[pred][a] != samples.residual_tokens[pred][b] {
+        for tokens in &samples.residual_tokens[..num_pred] {
+            if tokens[a] != tokens[b] {
                 return false;
             }
         }
@@ -4617,8 +4614,8 @@ fn packed_sort_walk_full<const W: usize>(
             }
             off += 1;
         }
-        for pred in 0..num_pred {
-            kb[off] = samples.residual_tokens[pred][sample_idx];
+        for tokens in &samples.residual_tokens[..num_pred] {
+            kb[off] = tokens[sample_idx];
             off += 1;
         }
         let mut kw = [0u64; W];
@@ -5016,8 +5013,8 @@ fn packed_sort_walk<const W: usize>(
                         }
                         off += 1;
                     }
-                    for pred in 0..num_pred {
-                        kb[off] = samples.residual_tokens[pred][sample_idx];
+                    for tokens in &samples.residual_tokens[..num_pred] {
+                        kb[off] = tokens[sample_idx];
                         off += 1;
                     }
                     let mut kw = [0u64; W];
@@ -5379,22 +5376,22 @@ fn dedup_samples_streaming(
 
     // Compact all parallel arrays to contain only unique samples, in
     // first-seen order.
-    for pred in 0..num_pred {
-        let old_tokens = &samples.residual_tokens[pred];
+    for tokens in &mut samples.residual_tokens[..num_pred] {
+        let old_tokens = &*tokens;
         let new_tokens: Vec<u8> = unique_indices
             .iter()
             .map(|&i| old_tokens[i as usize])
             .collect();
-        samples.residual_tokens[pred] = new_tokens;
+        *tokens = new_tokens;
     }
     let total_props = samples.total_num_properties();
-    for prop_idx in 0..total_props {
-        let old_props = &samples.props[prop_idx];
+    for property in &mut samples.props[..total_props] {
+        let old_props = &*property;
         if old_props.is_empty() {
             continue;
         }
         let new_props = old_props.gather_indices(&unique_indices);
-        samples.props[prop_idx] = new_props;
+        *property = new_props;
     }
     for prop_idx in 0..total_props {
         if prop_idx >= pq.bucket_indices.len() {
@@ -14159,8 +14156,8 @@ mod tests {
         // residual_tokens has length matching num_samples.
         let total_count: u32 = samples.sample_counts[..n].iter().sum();
         assert_eq!(total_count, 16, "permutation must preserve total weight");
-        for pred in 0..samples.num_predictors() {
-            assert_eq!(samples.residual_tokens[pred].len(), n);
+        for tokens in &samples.residual_tokens[..samples.num_predictors()] {
+            assert_eq!(tokens.len(), n);
         }
     }
 
@@ -14205,8 +14202,8 @@ mod tests {
                     let bi = &pq.bucket_indices[prop_idx];
                     key.push(if bi.is_empty() { 0 } else { bi[i] });
                 }
-                for pred in 0..num_pred {
-                    key.push(samples.residual_tokens[pred][i]);
+                for tokens in &samples.residual_tokens[..num_pred] {
+                    key.push(tokens[i]);
                 }
                 *multiset.entry(key).or_insert(0) += samples.sample_counts[i];
             }
@@ -14327,8 +14324,8 @@ mod tests {
                     let bi = &pq.bucket_indices[prop_idx];
                     key.push(if bi.is_empty() { 0 } else { bi[i] });
                 }
-                for pred in 0..num_pred {
-                    key.push(samples.residual_tokens[pred][i]);
+                for tokens in &samples.residual_tokens[..num_pred] {
+                    key.push(tokens[i]);
                 }
                 *multiset.entry(key).or_insert(0) += samples.sample_counts[i];
             }
@@ -14489,8 +14486,8 @@ mod tests {
                     let bi = &pq.bucket_indices[prop_idx];
                     key.push(if bi.is_empty() { 0 } else { bi[i] });
                 }
-                for pred in 0..num_pred {
-                    key.push(samples.residual_tokens[pred][i]);
+                for tokens in &samples.residual_tokens[..num_pred] {
+                    key.push(tokens[i]);
                 }
                 *multiset.entry(key).or_insert(0) += samples.sample_counts[i];
             }

@@ -1377,8 +1377,8 @@ mod tests {
         let table = build_and_store_huffman_tree(&histogram, &mut writer).unwrap();
 
         // All symbols should have non-zero depth
-        for i in 0..10 {
-            assert!(table.depths[i] > 0);
+        for &depth in &table.depths[..10] {
+            assert!(depth > 0);
         }
 
         let bytes = writer.finish_with_padding();
@@ -1397,8 +1397,8 @@ mod tests {
         let table = build_and_store_huffman_tree(&histogram, &mut writer).unwrap();
 
         // All symbols should have valid depth
-        for i in 0..256 {
-            assert!(table.depths[i] > 0 && table.depths[i] <= 15);
+        for &depth in &table.depths[..256] {
+            assert!(depth > 0 && depth <= 15);
         }
 
         let bytes = writer.finish_with_padding();

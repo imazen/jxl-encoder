@@ -787,8 +787,8 @@ pub fn cluster_histograms(
             result.histograms.len()
         );
         eprint!("  ");
-        for c in 0..input.len() {
-            eprint!("{},", result.symbols[c]);
+        for symbol in &result.symbols[..input.len()] {
+            eprint!("{},", symbol);
         }
         eprintln!();
     }

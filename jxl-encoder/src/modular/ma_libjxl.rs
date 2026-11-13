@@ -622,10 +622,8 @@ impl TreeSamples {
             h = h.wrapping_mul(C).wrapping_add(r[a].tok as u64);
             h = h.wrapping_mul(C).wrapping_add(r[a].nbits as u64);
         }
-        for i in 0..self.num_static_props {
-            h = h
-                .wrapping_mul(C)
-                .wrapping_add(self.static_props[i][a] as u64);
+        for property in &self.static_props[..self.num_static_props] {
+            h = h.wrapping_mul(C).wrapping_add(property[a] as u64);
         }
         for p in &self.props {
             h = h.wrapping_mul(C).wrapping_add(p[a] as u64);
@@ -636,8 +634,8 @@ impl TreeSamples {
     fn hash2(&self, a: usize) -> usize {
         const C: u64 = 0x1e35_a7bd_1e35_a7bd;
         let mut h: u64 = C;
-        for i in 0..self.num_static_props {
-            h = h.wrapping_mul(C) ^ self.static_props[i][a] as u64;
+        for property in &self.static_props[..self.num_static_props] {
+            h = h.wrapping_mul(C) ^ property[a] as u64;
         }
         for p in &self.props {
             h = h.wrapping_mul(C) ^ p[a] as u64;
@@ -655,8 +653,8 @@ impl TreeSamples {
                 return false;
             }
         }
-        for i in 0..self.num_static_props {
-            if self.static_props[i][a] != self.static_props[i][b] {
+        for property in &self.static_props[..self.num_static_props] {
+            if property[a] != property[b] {
                 return false;
             }
         }
@@ -726,8 +724,8 @@ impl TreeSamples {
             for r in &mut self.residuals {
                 r.pop();
             }
-            for i in 0..self.num_static_props {
-                self.static_props[i].pop();
+            for property in &mut self.static_props[..self.num_static_props] {
+                property.pop();
             }
             for p in &mut self.props {
                 p.pop();
@@ -743,8 +741,8 @@ impl TreeSamples {
         for r in &mut self.residuals {
             r.swap(a, b);
         }
-        for i in 0..self.num_static_props {
-            self.static_props[i].swap(a, b);
+        for property in &mut self.static_props[..self.num_static_props] {
+            property.swap(a, b);
         }
         for p in &mut self.props {
             p.swap(a, b);
