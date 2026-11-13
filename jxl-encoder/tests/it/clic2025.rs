@@ -5563,9 +5563,12 @@ fn test_ans_skewed_histogram_roundtrip() {
     eprintln!("  method: {}", ans_histo.method);
     eprintln!("  alphabet_size: {}", ans_histo.alphabet_size);
     eprintln!("  omit_pos: {}", ans_histo.omit_pos);
-    for i in 0..ans_histo.alphabet_size {
-        if ans_histo.counts[i] > 0 {
-            eprintln!("  counts[{}] = {}", i, ans_histo.counts[i]);
+    for (i, &count) in ans_histo.counts[..ans_histo.alphabet_size]
+        .iter()
+        .enumerate()
+    {
+        if count > 0 {
+            eprintln!("  counts[{}] = {}", i, count);
         }
     }
     let sum: i32 = ans_histo.counts.iter().sum();
@@ -5586,15 +5589,18 @@ fn test_ans_skewed_histogram_roundtrip() {
     let mut hist_br = BitReader::new(&hist_bytes);
     let decoded_hist = AnsHistogram::decode(&mut hist_br, 6).expect("decode failed");
     eprintln!("Decoded histogram frequencies:");
-    for i in 0..decoded_hist.frequencies.len() {
-        if decoded_hist.frequencies[i] > 0 {
-            eprintln!("  freq[{}] = {}", i, decoded_hist.frequencies[i]);
+    for (i, &frequency) in decoded_hist.frequencies.iter().enumerate() {
+        if frequency > 0 {
+            eprintln!("  freq[{}] = {}", i, frequency);
         }
     }
 
     // Verify frequencies match
-    for i in 0..ans_histo.alphabet_size {
-        let expected = ans_histo.counts[i] as u16;
+    for (i, &count) in ans_histo.counts[..ans_histo.alphabet_size]
+        .iter()
+        .enumerate()
+    {
+        let expected = count as u16;
         let actual = decoded_hist.frequencies.get(i).copied().unwrap_or(0);
         assert_eq!(actual, expected, "frequency mismatch at symbol {}", i);
     }
@@ -5720,9 +5726,9 @@ fn test_ans_single_symbol_reverse_map() {
 
     // So reverse_map[r] should be r (identity mapping) for single-symbol case.
 
-    for i in 0..10 {
-        eprintln!("  reverse_map[{}] = {}", i, dist.symbols[8].reverse_map[i]);
-        if dist.symbols[8].reverse_map[i] != i as u16 {
+    for (i, &symbol) in dist.symbols[8].reverse_map[..10].iter().enumerate() {
+        eprintln!("  reverse_map[{}] = {}", i, symbol);
+        if symbol != i as u16 {
             eprintln!("    ERROR: expected {}", i);
         }
     }
@@ -5750,9 +5756,12 @@ fn test_ans_single_symbol_full_cycle() {
     eprintln!("Histogram:");
     eprintln!("  method: {}", ans_histo.method);
     eprintln!("  alphabet_size: {}", ans_histo.alphabet_size);
-    for i in 0..ans_histo.alphabet_size {
-        if ans_histo.counts[i] > 0 {
-            eprintln!("  counts[{}] = {}", i, ans_histo.counts[i]);
+    for (i, &count) in ans_histo.counts[..ans_histo.alphabet_size]
+        .iter()
+        .enumerate()
+    {
+        if count > 0 {
+            eprintln!("  counts[{}] = {}", i, count);
         }
     }
 
@@ -5800,9 +5809,9 @@ fn test_ans_single_symbol_full_cycle() {
     let mut hist_br = BitReader::new(&hist_bytes);
     let decoded_hist = AnsHistogram::decode(&mut hist_br, 6).expect("hist decode failed");
     eprintln!("\nDecoded histogram frequencies:");
-    for i in 0..decoded_hist.frequencies.len() {
-        if decoded_hist.frequencies[i] > 0 {
-            eprintln!("  freq[{}] = {}", i, decoded_hist.frequencies[i]);
+    for (i, &frequency) in decoded_hist.frequencies.iter().enumerate() {
+        if frequency > 0 {
+            eprintln!("  freq[{}] = {}", i, frequency);
         }
     }
 

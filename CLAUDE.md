@@ -5945,3 +5945,18 @@ fixed boundary and unchanged native F32 squeeze round-trip pass, including
 libjxl acceptance. The expert library suite passes (1717 passed, 29 existing
 ignored), and strict workspace/all-target Clippy passes. No pixel assertion
 or overflow check is disabled. Evidence: benchmarks/gradient_float_2026-10-29.md.
+
+
+## Known bugs: Rust 1.100 strict lint maintenance (fixed 2026-11-13)
+
+CI's stable compiler advanced to 1.100 and now flags duplicate attributes,
+indexed loops and a needless boolean. The loops now iterate the same bounded
+slices in the same order; all existing assertions, expected values, numerical
+operations, calibration constants and ignore flags remain unchanged. The flat
+ratio is finite (integer counts divided by total.max(1)), so the direct boolean
+comparison preserves its behavior. `just ci-lint-check <frozen-manifest>` passes
+both complete workspace/all-target feature graphs on Rust 1.100, including
+zensim-loop. `just ci-iteration-regressions <frozen-manifest>` passes all 1669
+library tests (29 existing ignores), the skewed ANS histogram regression and
+three single-symbol ANS tests. This is CI maintenance, not a repair for the
+outstanding PQ agreement or quality-ordering findings.

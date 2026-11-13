@@ -856,8 +856,8 @@ mod tests {
         assert!(m.num_ctxs <= MAX_BLOCK_CTXS);
 
         // Y luma gets one context per bucket
-        for i in 0..m.num_dc_ctxs {
-            assert_eq!(m.ctx_map[i], i as u8);
+        for (i, &context) in m.ctx_map[..m.num_dc_ctxs].iter().enumerate() {
+            assert_eq!(context, i as u8);
         }
     }
 

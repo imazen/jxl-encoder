@@ -89,8 +89,8 @@ fn main() {
         for y in 0..ch {
             for x in 0..cw {
                 let p = rgb16.get_pixel(x0 + x, y0 + y);
-                for c in 0..3 {
-                    px.extend_from_slice(&p.0[c].to_ne_bytes());
+                for channel in &p.0 {
+                    px.extend_from_slice(&channel.to_ne_bytes());
                 }
             }
         }

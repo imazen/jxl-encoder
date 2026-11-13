@@ -52,8 +52,8 @@ fn load_png_f32(path: &Path) -> Option<(u32, u32, Vec<f32>)> {
     let (w, h) = (rgb16.width(), rgb16.height());
     let mut out = Vec::with_capacity((w * h * 3) as usize);
     for p in rgb16.pixels() {
-        for c in 0..3 {
-            out.push(p.0[c] as f32 / 65535.0);
+        for &channel in &p.0 {
+            out.push(channel as f32 / 65535.0);
         }
     }
     Some((w, h, out))

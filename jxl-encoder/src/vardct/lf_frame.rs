@@ -386,9 +386,9 @@ mod tests {
     fn test_dc_quant_f16_roundtrip() {
         let f = DcQuantFactors::compute(1.0);
         // dc_quant values should survive F16 roundtrip
-        for c in 0..3 {
-            let rt = f16_roundtrip(f.dc_quant[c] * 128.0).unwrap() / 128.0;
-            assert_eq!(rt, f.dc_quant[c], "channel {c}");
+        for (c, &quant) in f.dc_quant.iter().enumerate() {
+            let rt = f16_roundtrip(quant * 128.0).unwrap() / 128.0;
+            assert_eq!(rt, quant, "channel {c}");
         }
     }
 

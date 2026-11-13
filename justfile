@@ -989,3 +989,21 @@ pq-linear-control input out *args:
 nightly-artifact-archive run name out:
     mkdir {{quote(out)}}
     gh run download {{quote(run)}} --repo imazen/jxl-encoder --name {{quote(name)}} --dir {{quote(out)}}
+
+
+# Run both strict CI lint feature graphs even when one has diagnostics.
+ci-lint-check manifest="Cargo.toml":
+    #!/usr/bin/env bash
+    set -uo pipefail
+    cargo clippy --keep-going --locked --manifest-path {{quote(manifest)}} --workspace --all-targets -- -D warnings
+    default_status=$?
+    cargo clippy --keep-going --locked --manifest-path {{quote(manifest)}} --workspace --all-targets --features zensim-loop -- -D warnings
+    zensim_status=$?
+    test "$default_status" -eq 0 && test "$zensim_status" -eq 0
+
+
+# Existing tests affected by the Rust 1.100 iterator maintenance.
+ci-iteration-regressions manifest="Cargo.toml":
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --lib -- --test-threads=2
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --test it clic2025::test_ans_skewed_histogram_roundtrip -- --exact --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --test it clic2025::test_ans_single_symbol -- --test-threads=1
