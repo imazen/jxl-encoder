@@ -1275,7 +1275,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
             None, // LZ77 off on the tree-lift path
             Some(total_pixels),
             stop,
-        );
+        )?;
         if tokens.is_empty() {
             return Ok((0, code));
         }
@@ -1791,7 +1791,7 @@ pub(crate) fn write_global_modular_section_with_tree_dc_quant_knobs_hybrid(
                 lz77_params.as_ref(),
                 Some(total_pixels),
                 stop,
-            ),
+            )?,
         }
     });
     #[cfg(feature = "__env_var_diagnostics")]
@@ -2107,7 +2107,7 @@ pub(crate) fn write_local_trees_lf_global(
             lz77_params.as_ref(),
             Some(meta_pixels),
             stop,
-        )
+        )?
     };
 
     crate::f16::write_lf_quant(writer, None)?;
@@ -2774,7 +2774,7 @@ pub(crate) fn write_group_modular_section_local_tree_with_tree_stop(
             lz77_params.as_ref(),
             Some(total_pixels),
             stop,
-        )
+        )?
     });
 
     write_candidate(&tokens, &code, lz77_params.as_ref(), writer)

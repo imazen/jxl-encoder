@@ -153,23 +153,19 @@ impl AccumulatedAnsData {
 /// when the `parallel` feature is disabled or there is only one group.
 /// Accumulate one group's tokens in ~256K-token chunks, polling `stop`
 /// between chunks. Histogram accumulation is commutative, so chunking is
-/// byte-identical to a single `add_tokens` pass. On stop the accumulation
-/// returns early with partial counts — callers propagate the error via
-/// `check_stop` before the code is used.
+/// byte-identical to a single `add_tokens` pass. A stop returns an error;
+/// partial counts must never reach histogram normalization.
 fn accumulate_group_chunked(
     acc: &mut AccumulatedAnsData,
     tokens: &[Token],
     lz77: Option<&Lz77Params>,
     stop: Option<&dyn enough::Stop>,
-) {
+) -> Result<()> {
     for chunk in tokens.chunks(1 << 18) {
-        if let Some(st) = stop
-            && st.check().is_err()
-        {
-            return;
-        }
+        crate::error::check_stop(stop)?;
         acc.add_tokens(chunk, lz77);
     }
+    Ok(())
 }
 
 #[cfg(feature = "parallel")]
@@ -179,28 +175,28 @@ fn accumulate_groups_parallel(
     lz77: Option<&Lz77Params>,
     track_value_freqs: bool,
     stop: Option<&dyn enough::Stop>,
-) -> AccumulatedAnsData {
+) -> Result<AccumulatedAnsData> {
     use rayon::prelude::*;
     if groups.len() <= 1 {
         let mut acc = AccumulatedAnsData::with_value_freq_tracking(num_contexts, track_value_freqs);
         for group in groups {
-            accumulate_group_chunked(&mut acc, group, lz77, stop);
+            accumulate_group_chunked(&mut acc, group, lz77, stop)?;
         }
-        return acc;
+        return Ok(acc);
     }
     groups
         .par_iter()
         .map(|group| {
             let mut acc =
                 AccumulatedAnsData::with_value_freq_tracking(num_contexts, track_value_freqs);
-            accumulate_group_chunked(&mut acc, group, lz77, stop);
-            acc
+            accumulate_group_chunked(&mut acc, group, lz77, stop)?;
+            Ok(acc)
         })
-        .reduce(
+        .try_reduce(
             || AccumulatedAnsData::with_value_freq_tracking(num_contexts, track_value_freqs),
             |mut a, b| {
                 a.merge(&b);
-                a
+                Ok(a)
             },
         )
 }
@@ -213,12 +209,12 @@ fn accumulate_groups_parallel(
     lz77: Option<&Lz77Params>,
     track_value_freqs: bool,
     stop: Option<&dyn enough::Stop>,
-) -> AccumulatedAnsData {
+) -> Result<AccumulatedAnsData> {
     let mut acc = AccumulatedAnsData::with_value_freq_tracking(num_contexts, track_value_freqs);
     for group in groups {
-        accumulate_group_chunked(&mut acc, group, lz77, stop);
+        accumulate_group_chunked(&mut acc, group, lz77, stop)?;
     }
-    acc
+    Ok(acc)
 }
 
 /// Build an ANS entropy code from accumulated histogram data.
@@ -534,6 +530,7 @@ pub fn build_entropy_code_ans_with_options(
         total_pixel_hint,
         None,
     )
+    .expect("uncancelled ANS accumulation cannot fail")
 }
 
 /// `build_entropy_code_ans_with_options` with cooperative cancellation.
@@ -547,7 +544,7 @@ pub(crate) fn build_entropy_code_ans_with_options_stop(
     lz77: Option<&Lz77Params>,
     total_pixel_hint: Option<usize>,
     stop: Option<&dyn enough::Stop>,
-) -> OwnedAnsEntropyCode {
+) -> Result<OwnedAnsEntropyCode> {
     build_entropy_code_ans_from_token_groups_stop(
         &[tokens],
         num_contexts,
@@ -586,6 +583,7 @@ pub fn build_entropy_code_ans_from_token_groups(
         total_pixel_hint,
         None,
     )
+    .expect("uncancelled ANS accumulation cannot fail")
 }
 
 /// `build_entropy_code_ans_from_token_groups` with cooperative cancellation.
@@ -598,7 +596,7 @@ pub(crate) fn build_entropy_code_ans_from_token_groups_stop(
     lz77: Option<&Lz77Params>,
     total_pixel_hint: Option<usize>,
     stop: Option<&dyn enough::Stop>,
-) -> OwnedAnsEntropyCode {
+) -> Result<OwnedAnsEntropyCode> {
     build_entropy_code_ans_from_token_groups_with_strategy_stop(
         groups,
         num_contexts,
@@ -642,19 +640,19 @@ pub fn build_entropy_code_ans_from_token_groups_with_strategy(
         options,
         None,
     )
+    .expect("uncancelled ANS accumulation cannot fail")
 }
 
 /// `build_entropy_code_ans_from_token_groups_with_strategy` with cooperative
-/// cancellation. The caller polls `check_stop` immediately after this call —
-/// on a fired token the returned code may reflect partial accumulation and
-/// must be discarded (the caller's propagation guarantees it is).
+/// cancellation. Failed accumulation propagates before normalization;
+/// callers cannot receive an entropy code built from partial counts.
 pub(crate) fn build_entropy_code_ans_from_token_groups_with_strategy_stop(
     groups: &[&[Token]],
     num_contexts: usize,
     lz77: Option<&Lz77Params>,
     options: AnsBuildOptions,
     stop: Option<&dyn enough::Stop>,
-) -> OwnedAnsEntropyCode {
+) -> Result<OwnedAnsEntropyCode> {
     let AnsBuildOptions {
         enhanced_clustering,
         optimize_uint_configs,
@@ -666,7 +664,7 @@ pub(crate) fn build_entropy_code_ans_from_token_groups_with_strategy_stop(
     // Per-group accumulators are independent and merge associatively;
     // run a parallel map-reduce over the groups.
     let accumulated =
-        accumulate_groups_parallel(groups, num_contexts, lz77, optimize_uint_configs, stop);
+        accumulate_groups_parallel(groups, num_contexts, lz77, optimize_uint_configs, stop)?;
 
     // Phase B: Build entropy code from accumulated data.
     let code = build_entropy_code_from_accumulated_ans_with_strategy(
@@ -710,7 +708,7 @@ pub(crate) fn build_entropy_code_ans_from_token_groups_with_strategy_stop(
         }
     }
 
-    code
+    Ok(code)
 }
 
 /// Optimize HybridUint config per histogram cluster (matches libjxl kFast method).
@@ -3005,5 +3003,86 @@ mod libjxl_log_alpha_tests {
         // libjxl_log_alpha = false → legacy branch; must produce output.
         let w = super::build_context_map_nonsimple_ans_lz77(&map, false).unwrap();
         assert!(w.bits_written() > 0);
+    }
+}
+
+#[cfg(test)]
+mod cancellation_144_tests {
+    use super::*;
+
+    struct Cancel;
+    impl enough::Stop for Cancel {
+        fn check(&self) -> core::result::Result<(), enough::StopReason> {
+            Err(enough::StopReason::Cancelled)
+        }
+    }
+
+    #[test]
+    fn cancelled_ans_accumulation_does_not_build_partial_distributions() {
+        let outcome = std::panic::catch_unwind(|| {
+            build_entropy_code_ans_with_options_stop(
+                &[Token::new(0, 173)],
+                1,
+                false,
+                false,
+                None,
+                None,
+                Some(&Cancel),
+            )
+        });
+        match outcome {
+            Ok(Err(Error::Cancelled)) => {}
+            Ok(_) => panic!("cancellation must return its typed error"),
+            Err(_) => panic!("cancellation must not construct a partial distribution"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod cancellation_144_group_tests {
+    use super::*;
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    struct CancelOnePoll {
+        cancel_at: usize,
+        polls: AtomicUsize,
+    }
+    impl enough::Stop for CancelOnePoll {
+        fn check(&self) -> core::result::Result<(), enough::StopReason> {
+            if self.polls.fetch_add(1, Ordering::Relaxed) == self.cancel_at {
+                Err(enough::StopReason::Cancelled)
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    #[test]
+    fn cancelled_group_and_chunk_accumulation_propagates_the_observed_error() {
+        let first = vec![Token::new(0, 7); (1 << 18) + 1];
+        let second = vec![Token::new(1, 173); 37];
+        for groups in [
+            vec![first.as_slice()],
+            vec![first.as_slice(), second.as_slice()],
+        ] {
+            for cancel_at in [0, 1] {
+                let stop = CancelOnePoll {
+                    cancel_at,
+                    polls: AtomicUsize::new(0),
+                };
+                let result = accumulate_groups_parallel(&groups, 2, None, true, Some(&stop));
+                assert!(matches!(result, Err(Error::Cancelled)));
+            }
+            let mut direct = AccumulatedAnsData::with_value_freq_tracking(2, true);
+            for group in &groups {
+                direct.add_tokens(group, None);
+            }
+            let accumulated = accumulate_groups_parallel(&groups, 2, None, true, None).unwrap();
+            assert_eq!(accumulated.value_freqs, direct.value_freqs);
+            assert_eq!(accumulated.lz77_freqs, direct.lz77_freqs);
+            for (actual, expected) in accumulated.histograms.iter().zip(&direct.histograms) {
+                assert_eq!(actual.counts, expected.counts);
+            }
+        }
     }
 }

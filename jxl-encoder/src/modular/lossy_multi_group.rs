@@ -245,7 +245,7 @@ pub(crate) fn write_lossy_multi_group_sections(
         lz77_params.as_ref(),
         Some(total_pixels),
         None,
-    );
+    )?;
 
     let group_header = |w: &mut BitWriter, transforms: bool| -> Result<()> {
         w.write(1, 1)?; // use_global_tree

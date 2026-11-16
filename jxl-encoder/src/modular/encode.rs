@@ -2924,7 +2924,7 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant_knobs(
         lz77_params.as_ref(),
         Some(total_pixels),
         stop,
-    );
+    )?;
 
     write_candidate(&tokens, &code, lz77_params.as_ref(), writer)
 }
@@ -3085,7 +3085,7 @@ pub(crate) fn write_modular_stream_with_tree_dc_quant_presqueezed(
         lz77_params.as_ref(),
         Some(total_pixels),
         stop,
-    );
+    )?;
 
     // Step 5: Write bitstream
     // dc_quant header
@@ -3506,7 +3506,7 @@ pub(crate) fn write_modular_stream_with_squeeze_and_tree_stop(
         lz77_params.as_ref(),
         Some(total_pixels),
         stop,
-    );
+    )?;
 
     write_candidate(&tokens, &code, lz77_params.as_ref(), writer)
 }

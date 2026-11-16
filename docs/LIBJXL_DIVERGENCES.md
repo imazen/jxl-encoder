@@ -2521,3 +2521,15 @@ lossy gray animation sets the same grayscale header flag as still encoding.
 The raw ICC codec still accepts arbitrary non-gray contents. No numeric or
 strategy gate changes. H10 Black/CMYK validation remains separate.
 [Caller inventory, before evidence and limits](COLOR_METADATA_CONTRACT.md).
+
+
+### Issue 144: ANS accumulation cancellation (I144-ANS-stop, 2026-11-16)
+
+Stop-aware ANS accumulation previously returned partial counts on cancellation,
+then normalized them. It now returns the observed error before normalization
+through every private Stop-aware builder and modular caller. Sequential and
+parallel paths retain the same full-input counts and normalization policy.
+This is the Rust cooperative-cancellation contract; libjxl v0.12 has no matching
+Rust Stop interface. No strategy permission, entropy constant or public
+signature changes. Direct accumulation and existing byte locks remain the
+unchanged-output controls; validation is recorded in Known Bugs.

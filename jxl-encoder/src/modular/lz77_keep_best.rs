@@ -138,7 +138,7 @@ impl Selection<'_> {
         })
     }
 
-    fn finish(&self, parsed: Parsed) -> Candidate {
+    fn finish(&self, parsed: Parsed) -> Result<Candidate> {
         let params = parsed.tokens.iter().any(Token::is_lz77_length).then(|| {
             let mut p = Lz77Params::new(self.num_contexts, false);
             p.enabled = true;
@@ -152,14 +152,14 @@ impl Selection<'_> {
             params.as_ref(),
             Some(self.total_pixels),
             self.stop,
-        );
-        Candidate {
+        )?;
+        Ok(Candidate {
             tokens: parsed.tokens,
             ranges: parsed.ranges,
             params,
             code,
             num_contexts: self.num_contexts,
-        }
+        })
     }
 
     /// The caller measures its real coding unit: prefixes, entropy header,
@@ -185,7 +185,7 @@ impl Selection<'_> {
         let incumbent = self.parse(Parse::Incumbent, &mut greedy)?;
         greedy.start_replay();
         let untransformed = !incumbent.transformed;
-        let mut best = self.finish(incumbent);
+        let mut best = self.finish(incumbent)?;
         let mut best_size = measure(&best)?;
         let mut plain_size = untransformed.then_some(best_size);
         observe("incumbent", best_size);
@@ -211,7 +211,7 @@ impl Selection<'_> {
                     Some(size) => size,
                     None => {
                         let untransformed = !parsed.transformed;
-                        let candidate = self.finish(parsed);
+                        let candidate = self.finish(parsed)?;
                         let size = measure(&candidate)?;
                         if untransformed {
                             plain_size = Some(size);
@@ -365,11 +365,13 @@ mod tests {
             budget: None,
             stop: None,
         };
-        let incumbent = selection.finish(
-            selection
-                .parse(Parse::Incumbent, &mut GreedyReuse::Off)
-                .unwrap(),
-        );
+        let incumbent = selection
+            .finish(
+                selection
+                    .parse(Parse::Incumbent, &mut GreedyReuse::Off)
+                    .unwrap(),
+            )
+            .unwrap();
         let kept = selection.select(|_| Ok(100)).unwrap();
         let emit = |c: &Candidate| {
             let mut writer = BitWriter::new();
@@ -426,19 +428,22 @@ mod tests {
         fn oracle(selection: &Selection, streams: usize) -> (Vec<(&'static str, usize)>, Vec<u8>) {
             let measure = |c: &Candidate| -> Result<usize> { Ok(emit(c, streams).len()) };
             let mut sizes = Vec::new();
-            let mut best = selection.finish(
-                selection
-                    .parse(Parse::Incumbent, &mut GreedyReuse::Off)
-                    .unwrap(),
-            );
+            let mut best = selection
+                .finish(
+                    selection
+                        .parse(Parse::Incumbent, &mut GreedyReuse::Off)
+                        .unwrap(),
+                )
+                .unwrap();
             let mut best_size = measure(&best).unwrap();
             sizes.push(("incumbent", best_size));
             for parse in [Parse::Plain, Parse::Greedy, Parse::Bucket] {
                 if matches!(parse, Parse::Greedy) && selection.method != Lz77Method::Optimal {
                     continue;
                 }
-                let candidate =
-                    selection.finish(selection.parse(parse, &mut GreedyReuse::Off).unwrap());
+                let candidate = selection
+                    .finish(selection.parse(parse, &mut GreedyReuse::Off).unwrap())
+                    .unwrap();
                 let size = measure(&candidate).unwrap();
                 sizes.push((
                     match parse {

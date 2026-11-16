@@ -1766,6 +1766,23 @@ misclassify that CLI limitation as an invalid stream or strip the ICC to hide it
 
 ## Known Bugs (ACTIVE)
 
+### 2026-11-16: cancelled ANS accumulation built partial distributions (issue 144)
+
+An immediate Stop on a one-token ANS build panicked during normalization:
+partial zero counts reached the distribution builder. Chunked accumulation now
+returns the observed cancellation through sequential/parallel map-reduce and
+all three private Stop-aware builders. Ten modular call sites propagate the
+error, including LZ77 candidate selection. Public non-Stop signatures stay
+unchanged. Single/multiple groups, a chunk boundary and a transient one-poll
+error are checked; unstopped histograms match direct accumulation. The exact
+pinned-source commit passes the library suite, unchanged normal/strict byte locks,
+divergence checks and strict library Clippy, including parallel accumulation.
+Logs: `~/tmp/jxl144/ans-cancellation-exact.log` (rc0, 349 seconds,
+peak RSS 1.85 GiB, minimum available 20,610 MiB) and
+`ans-cancellation-exact-lint.log` (rc0). These are focused cancellation and
+unchanged-output controls; they do not establish every caller's cancellation
+latency or full encoder coverage.
+
 ### RESOLVED 2026-11-16: final ICC pairs, canonicalization and gray animation
 
 Source admission and the shared header/ICC writer enforce the grayscale model

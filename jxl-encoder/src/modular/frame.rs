@@ -3054,7 +3054,7 @@ impl FrameEncoder {
             lz77_params.as_ref(),
             Some(total_pixels),
             stop,
-        );
+        )?;
 
         let lf_views: Vec<_> = lf_group_tokens.iter().map(Vec::as_slice).collect();
         let pg_views: Vec<_> = pass_group_tokens.iter().map(Vec::as_slice).collect();
