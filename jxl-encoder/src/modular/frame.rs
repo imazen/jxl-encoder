@@ -517,7 +517,7 @@ impl FrameEncoder {
             let has_squeeze = self.options.use_squeeze
                 && !super::squeeze::default_squeeze_params(image).is_empty();
 
-            if self.options.lossy_palette && image.channels.len() >= 3 {
+            if self.options.lossy_palette && !image.is_grayscale && image.channels.len() >= 3 {
                 // Honour `--modular_palette_colors` override; fall back
                 // to the bit-depth-derived default (libjxl parity).
                 let max_colors = self
@@ -557,13 +557,13 @@ impl FrameEncoder {
                     image,
                     &mut section_writer,
                     &self.options.profile,
-                    image.channels.len() >= 3,
+                    !image.is_grayscale && image.channels.len() >= 3,
                     self.options.enable_lz77,
                     self.options.lz77_method,
                     &self.options.modular_knobs,
                     self.budget.as_ref(),
                 )?;
-            } else if image.channels.len() >= 3 {
+            } else if !image.is_grayscale && image.channels.len() >= 3 {
                 super::encode::write_modular_stream_with_rct_knobs(
                     image,
                     &mut section_writer,
@@ -649,7 +649,7 @@ impl FrameEncoder {
             let has_squeeze = self.options.use_squeeze
                 && !super::squeeze::default_squeeze_params(image).is_empty();
 
-            if self.options.lossy_palette && image.channels.len() >= 3 {
+            if self.options.lossy_palette && !image.is_grayscale && image.channels.len() >= 3 {
                 // Lossy delta palette: near-lossless with error diffusion.
                 // Honour `--modular_palette_colors` override; fall back to
                 // the bit-depth-derived default (libjxl parity).
@@ -691,14 +691,14 @@ impl FrameEncoder {
                 super::encode::write_modular_stream_with_tree_knobs(
                     image,
                     &mut section_writer,
-                    &self.options.profile,     // effort-dependent tree params
-                    image.channels.len() >= 3, // RCT for RGB
+                    &self.options.profile, // effort-dependent tree params
+                    !image.is_grayscale && image.channels.len() >= 3, // RCT for RGB
                     self.options.enable_lz77,
                     self.options.lz77_method,
                     &self.options.modular_knobs,
                     self.budget.as_ref(),
                 )?;
-            } else if image.channels.len() >= 3 {
+            } else if !image.is_grayscale && image.channels.len() >= 3 {
                 super::encode::write_modular_stream_with_rct_knobs(
                     image,
                     &mut section_writer,
@@ -728,7 +728,7 @@ impl FrameEncoder {
             for byte in section_data {
                 writer.write_u8(byte)?;
             }
-        } else if self.options.lossy_palette && image.channels.len() >= 3 {
+        } else if self.options.lossy_palette && !image.is_grayscale && image.channels.len() >= 3 {
             // Multi-group lossy palette: palette meta in LfGlobal, index across groups
             self.encode_modular_multi_group_lossy_palette(image, writer, stop)?;
         } else if self.options.use_squeeze
@@ -828,10 +828,11 @@ impl FrameEncoder {
         // needed because the sectioned/multi-group path reaches RCT through
         // this function rather than that one.
         let has_rct = !self.options.skip_rct
+            && !image.is_grayscale
             && image.channels.len() >= 3
             && image.bit_depth < super::encode::RCT_BUDGET_LIMIT;
-        let num_color_channels = if has_rct {
-            3
+        let num_color_channels = if image.is_grayscale {
+            1
         } else {
             image.channels.len().min(3)
         };
@@ -1104,6 +1105,8 @@ impl FrameEncoder {
             rct_type,
         };
 
+        let (source_image_owned, lf_images) = self.split_lf_groups(source_image_owned)?;
+
         // Step 1: Extract each group image from the index/non-meta channels only.
         // Meta-channels (palettes) are NOT split — they go whole in the global section.
         let mut group_images: Vec<ModularImage> = Vec::with_capacity(num_groups);
@@ -1111,8 +1114,7 @@ impl FrameEncoder {
             vec![super::section::GroupTransforms::none(); num_groups];
         for group_idx in 0..num_groups {
             crate::error::check_stop(stop)?;
-            let (x_start, y_start, x_end, y_end) = self.group_bounds(group_idx);
-            let group_image = source_image_owned.extract_region(x_start, y_start, x_end, y_end)?;
+            let group_image = self.extract_group_region(&source_image_owned, group_idx)?;
             group_images.push(group_image);
         }
         // Everything downstream reads the per-group images (and the meta
@@ -1326,11 +1328,13 @@ impl FrameEncoder {
             "MULTI_GROUP: HfGlobal section = 0 bytes (empty for modular)"
         );
 
-        // Step 4: LfGroup sections are empty for modular encoding
-        let lf_group_data: Vec<Vec<u8>> = (0..num_lf_groups).map(|_| Vec::new()).collect();
+        // Channels downsampled by at least eight belong to LF groups.
+        let lf_group_data =
+            self.encode_shifted_lf_groups(&lf_images, global_state.as_ref(), true, stop)?;
         crate::trace::debug_eprintln!(
-            "MULTI_GROUP: {} LfGroup sections = 0 bytes each (empty for modular)",
-            num_lf_groups
+            "MULTI_GROUP: {} LfGroup sections = {} bytes",
+            num_lf_groups,
+            lf_group_data.iter().map(Vec::len).sum::<usize>()
         );
 
         // Step 5: Write each PassGroup's data (GroupHeader + pixel data)
@@ -1721,7 +1725,11 @@ impl FrameEncoder {
         // Step 1: Apply lossy palette to full image
         let mut transformed = image.clone();
         let max_colors = 1usize << image.bit_depth.min(12);
-        let num_c = image.channels.len().min(3);
+        let num_c = if image.is_grayscale {
+            1
+        } else {
+            image.channels.len().min(3)
+        };
         let result = super::palette::apply_lossy_palette_with_budget(
             &mut transformed,
             0,
@@ -1765,11 +1773,12 @@ impl FrameEncoder {
             has_alpha: transformed.has_alpha,
         };
 
+        let (spatial_image, lf_images) = self.split_lf_groups(spatial_image)?;
+
         // Step 2: Extract group images from spatial channels only
         let mut group_images: Vec<ModularImage> = Vec::with_capacity(num_groups);
         for group_idx in 0..num_groups {
-            let (x_start, y_start, x_end, y_end) = self.group_bounds(group_idx);
-            let group_image = spatial_image.extract_region(x_start, y_start, x_end, y_end)?;
+            let group_image = self.extract_group_region(&spatial_image, group_idx)?;
             group_images.push(group_image);
         }
 
@@ -1925,8 +1934,8 @@ impl FrameEncoder {
         // Step 6: HfGlobal is empty for modular
         let hf_global_data: Vec<u8> = Vec::new();
 
-        // Step 7: LfGroup sections are empty for modular
-        let lf_group_data: Vec<Vec<u8>> = (0..num_lf_groups).map(|_| Vec::new()).collect();
+        // Palette metadata remains global; shifted spatial channels use LF groups.
+        let lf_group_data = self.encode_shifted_lf_groups(&lf_images, None, false, stop)?;
 
         // Step 8: Write each PassGroup's data — parallelizable
         let pass_group_data: Vec<Vec<u8>> =
@@ -2040,8 +2049,9 @@ impl FrameEncoder {
         // Step 1: Apply RCT (YCoCg) before squeeze for RGB images, then squeeze
         let squeeze_params = default_squeeze_params(image);
         let mut squeezed = image.clone();
-        let has_rct =
-            squeezed.channels.len() >= 3 && squeezed.bit_depth < super::encode::RCT_BUDGET_LIMIT;
+        let has_rct = !squeezed.is_grayscale
+            && squeezed.channels.len() >= 3
+            && squeezed.bit_depth < super::encode::RCT_BUDGET_LIMIT;
         if has_rct {
             super::rct::forward_rct_stop(&mut squeezed.channels, 0, RctType::YCOCG, stop)?;
         }
@@ -2459,7 +2469,7 @@ impl FrameEncoder {
         // Step 1: Apply RCT (YCoCg) before squeeze for RGB images, then squeeze
         let squeeze_params = default_squeeze_params(image);
         let mut squeezed = image.clone();
-        let has_rct = squeezed.channels.len() >= 3;
+        let has_rct = !squeezed.is_grayscale && squeezed.channels.len() >= 3;
         if has_rct {
             super::rct::forward_rct_stop(&mut squeezed.channels, 0, RctType::YCOCG, stop)?;
         }
@@ -3088,7 +3098,8 @@ impl FrameEncoder {
             // Single group: all sections combined into one TOC entry
             let mut section_writer = BitWriter::new();
 
-            let use_rct = image.channels.len() >= 3 && !self.options.skip_rct;
+            let use_rct =
+                !image.is_grayscale && image.channels.len() >= 3 && !self.options.skip_rct;
 
             // When the caller supplied custom DC quant (patches ref frame at
             // lossy distance), always route through the tree-learning
@@ -3293,6 +3304,174 @@ impl FrameEncoder {
         }
     }
 
+    /// Separate LF channels without changing the global transform descriptors.
+    fn split_lf_groups(
+        &self,
+        mut image: ModularImage,
+    ) -> Result<(ModularImage, Vec<ModularImage>)> {
+        if !image.channels.iter().any(|c| c.hshift.min(c.vshift) >= 3) {
+            return Ok((image, Vec::new()));
+        }
+        let mut lf = ModularImage {
+            channels: Vec::new(),
+            bit_depth: image.bit_depth,
+            is_grayscale: image.is_grayscale,
+            has_alpha: image.has_alpha,
+        };
+        let mut ac = Vec::with_capacity(image.channels.len());
+        for channel in image.channels {
+            if channel.hshift.min(channel.vshift) >= 3 {
+                lf.channels.push(channel);
+            } else {
+                ac.push(channel);
+            }
+        }
+        image.channels = ac;
+        let dim = self.group_dim() * 8;
+        let across = self.width.div_ceil(dim);
+        let mut groups = Vec::with_capacity(self.num_lf_groups());
+        for g in 0..self.num_lf_groups() {
+            let x = (g % across) * dim;
+            let y = (g / across) * dim;
+            groups.push(lf.extract_region(x, y, x + dim, y + dim)?);
+        }
+        Ok((image, groups))
+    }
+
+    /// LF streams carry local entropy tables, keeping AC histogram selection intact.
+    fn encode_shifted_lf_groups(
+        &self,
+        groups: &[ModularImage],
+        global: Option<&super::section::GlobalModularState>,
+        learn: bool,
+        stop: Option<&dyn enough::Stop>,
+    ) -> Result<Vec<Vec<u8>>> {
+        use super::section::GlobalModularState;
+        let mut sections = Vec::with_capacity(self.num_lf_groups());
+        if groups.is_empty() {
+            sections.resize_with(self.num_lf_groups(), Vec::new);
+            return Ok(sections);
+        }
+        for (index, image) in groups.iter().enumerate() {
+            crate::error::check_stop(stop)?;
+            // The global AC reservation excludes these LF samples. Keep
+            // their tokens (and fixed-prefix value copy) charged only while
+            // this LF section is being encoded.
+            let pixels: usize = image.channels.iter().map(|c| c.width() * c.height()).sum();
+            let per_pixel = core::mem::size_of::<crate::entropy_coding::token::Token>()
+                + if self.options.use_ans {
+                    0
+                } else {
+                    core::mem::size_of::<u32>()
+                };
+            let _scratch = crate::budget::MemoryBudget::reserve_opt(
+                self.budget.as_ref(),
+                (pixels as u64).saturating_mul(per_pixel as u64),
+            )?;
+            let mut writer = BitWriter::new();
+            let stream_id = (1 + self.num_lf_groups() + index) as u32;
+            if let Some(GlobalModularState::AnsWithTree {
+                tree, wp_params, ..
+            }) = global
+            {
+                super::section::write_group_modular_section_local_tree_with_tree_stop(
+                    image,
+                    stream_id,
+                    self.options.enable_lz77,
+                    self.options.lz77_method,
+                    None,
+                    tree,
+                    wp_params,
+                    &mut writer,
+                    self.budget.as_ref(),
+                    super::tree_learn::WpCacheMode::Off,
+                    self.options.profile.lz77_keep_best,
+                    stop,
+                )?;
+            } else if learn && self.options.use_ans && self.options.use_tree_learning {
+                super::section::write_group_modular_section_local_tree_stop(
+                    image,
+                    stream_id,
+                    &self.options.profile,
+                    self.options.enable_lz77,
+                    self.options.lz77_method,
+                    None,
+                    None,
+                    None,
+                    &mut writer,
+                    self.budget.as_ref(),
+                    stop,
+                )?;
+            } else {
+                // Preserve fixed predictor and prefix/ANS selection, including
+                // the lossy-palette path which does not learn a pixel tree.
+                let predictor_id = super::encode::resolve_fixed_predictor_for_simple_path(
+                    &self.options.modular_knobs,
+                );
+                let predictor = super::predictor::Predictor::from_id(predictor_id)
+                    .expect("validated fixed predictor");
+                let tree = super::tree::simple_tree(predictor);
+                let wp = super::predictor::WeightedPredictorParams::default();
+                let tokens = super::tree_learn::collect_residuals_with_tree_offset_with_budget_wp(
+                    image,
+                    &tree,
+                    stream_id,
+                    0,
+                    &wp,
+                    self.budget.as_ref(),
+                    super::tree_learn::WpCacheMode::Off,
+                    stop,
+                )?;
+                writer.write(1, 0)?; // local tree
+                super::encode::write_wp_header(&mut writer, &wp)?;
+                super::encode::write_num_transforms(&mut writer, 0)?;
+                super::encode::write_tree(&mut writer, &tree)?;
+                if self.options.use_ans {
+                    let code = crate::entropy_coding::encode::build_entropy_code_ans(&tokens, 1);
+                    super::section::write_ans_modular_header(&mut writer, &code)?;
+                    crate::entropy_coding::encode::write_tokens_ans_stop(
+                        &tokens,
+                        &code,
+                        None,
+                        &mut writer,
+                        stop,
+                    )?;
+                } else {
+                    let values: Vec<u32> = tokens.iter().map(|t| t.value).collect();
+                    let (histogram, max_token) = build_histogram_from_residuals(&values, 0);
+                    let (depths, codes) = super::encode::write_hybrid_data_histogram(
+                        &mut writer,
+                        &histogram,
+                        max_token,
+                    )?;
+                    for value in values {
+                        let (token, bits, count) =
+                            crate::entropy_coding::hybrid_uint::HybridUintConfig::default_config()
+                                .encode(value);
+                        let depth = depths[token as usize];
+                        if depth > 0 {
+                            writer.write(depth as usize, codes[token as usize] as u64)?;
+                        }
+                        writer.write(count as usize, bits as u64)?;
+                    }
+                }
+                writer.zero_pad_to_byte();
+            }
+            sections.push(writer.finish());
+        }
+        Ok(sections)
+    }
+
+    /// Extract one channel-local image using the frame's group geometry.
+    fn extract_group_region(&self, image: &ModularImage, group_idx: usize) -> Result<ModularImage> {
+        let (x_start, y_start, _, _) = self.group_bounds(group_idx);
+        // Shift the complete group rectangle before clipping each channel.
+        // Clipping in color coordinates first drops a partial final sample
+        // of a downsampled extra (257 pixels -> 129 samples at shift 1).
+        let group_dim = self.group_dim();
+        image.extract_region(x_start, y_start, x_start + group_dim, y_start + group_dim)
+    }
+
     /// Get the pixel bounds for a group.
     /// Returns (x_start, y_start, x_end, y_end).
     pub fn group_bounds(&self, group_idx: usize) -> (usize, usize, usize, usize) {
@@ -3436,5 +3615,201 @@ mod tests {
 
         let bytes = writer.finish_with_padding();
         assert!(!bytes.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod shifted_region_oracle_tests {
+    use super::*;
+
+    #[test]
+    fn shifted_lf_regions_match_unmodified_v012_rects() {
+        for line in include_str!("extra_lf_rect_v012.tsv")
+            .lines()
+            .filter(|s| !s.starts_with('#'))
+        {
+            let v: Vec<usize> = line.split('\t').map(|x| x.parse().unwrap()).collect();
+            let [width, height, group_shift, shift, x, y, cx, cy, cw, ch] = v.as_slice() else {
+                panic!("invalid oracle row: {line}")
+            };
+            let dim = (128 << group_shift) * 8;
+            let factor = 1 << shift;
+            let ew = width.div_ceil(factor);
+            let eh = height.div_ceil(factor);
+            let source: Vec<u8> = (0..ew * eh).map(|i| (i % 251) as u8).collect();
+            // The partitioner uses the frame canvas for group geometry; color
+            // payload is not read while splitting the shifted native plane.
+            let mut image = ModularImage {
+                channels: vec![Channel::new(1, 1).unwrap()],
+                bit_depth: 8,
+                is_grayscale: true,
+                has_alpha: false,
+            };
+            image
+                .push_extra_channel_u8_with_shift(&source, ew, eh, *shift as u32, *shift as u32)
+                .unwrap();
+            let options = FrameEncoderOptions {
+                modular_group_size_shift: Some(*group_shift as u8),
+                ..Default::default()
+            };
+            let encoder = FrameEncoder::new(*width, *height, options);
+            let (ac, lf) = encoder.split_lf_groups(image).unwrap();
+            assert_eq!(ac.channels.len(), 1);
+            let index = (y / dim) * width.div_ceil(dim) + x / dim;
+            let channel = &lf[index].channels[0];
+            assert_eq!((channel.width(), channel.height()), (*cw, *ch), "{line}");
+            assert_eq!(
+                (channel.hshift, channel.vshift),
+                (*shift as u32, *shift as u32)
+            );
+            for yy in 0..*ch {
+                for xx in 0..*cw {
+                    assert_eq!(
+                        channel.get(xx, yy),
+                        i32::from(source[(cy + yy) * ew + cx + xx]),
+                        "{line}: {xx},{yy}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn shifted_group_regions_match_unmodified_v012_rects() {
+        for line in include_str!("extra_rect_v012.tsv")
+            .lines()
+            .filter(|s| !s.starts_with('#'))
+        {
+            let v: Vec<usize> = line.split('\t').map(|x| x.parse().unwrap()).collect();
+            let [width, height, group_shift, shift, x, y, cx, cy, cw, ch] = v.as_slice() else {
+                panic!("invalid oracle row: {line}")
+            };
+            let group = 128 << group_shift;
+            let factor = 1 << shift;
+            let ew = width.div_ceil(factor);
+            let eh = height.div_ceil(factor);
+            let source: Vec<u8> = (0..ew * eh)
+                .map(|i| {
+                    if i + 1 == ew * eh {
+                        173
+                    } else {
+                        (i % 251) as u8
+                    }
+                })
+                .collect();
+            let mut image =
+                ModularImage::from_rgb8(&vec![0; width * height * 3], *width, *height).unwrap();
+            image
+                .push_extra_channel_u8_with_shift(&source, ew, eh, *shift as u32, *shift as u32)
+                .unwrap();
+            let options = FrameEncoderOptions {
+                modular_group_size_shift: Some(*group_shift as u8),
+                ..Default::default()
+            };
+            let encoder = FrameEncoder::new(*width, *height, options);
+            let group_idx = (y / group) * width.div_ceil(group) + x / group;
+            let region = encoder.extract_group_region(&image, group_idx).unwrap();
+            let channel = &region.channels[3];
+            assert_eq!((channel.width(), channel.height()), (*cw, *ch), "{line}");
+            assert_eq!(
+                (channel.hshift, channel.vshift),
+                (*shift as u32, *shift as u32)
+            );
+            for yy in 0..*ch {
+                for xx in 0..*cw {
+                    assert_eq!(
+                        channel.get(xx, yy),
+                        i32::from(source[(cy + yy) * ew + cx + xx]),
+                        "{line} pixel {xx},{yy}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod shifted_lf_resource_tests {
+    use super::*;
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    struct CancelAfter {
+        allowed: usize,
+        polls: AtomicUsize,
+    }
+    impl enough::Stop for CancelAfter {
+        fn check(&self) -> core::result::Result<(), enough::StopReason> {
+            if self.polls.fetch_add(1, Ordering::Relaxed) >= self.allowed {
+                Err(enough::StopReason::Cancelled)
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    #[test]
+    fn shifted_lf_producers_propagate_budgets_and_late_cancellation() {
+        let mut channel = Channel::new(33, 1).unwrap();
+        channel.hshift = 3;
+        channel.vshift = 3;
+        channel.set(32, 0, 173);
+        let groups = [ModularImage {
+            channels: vec![channel],
+            bit_depth: 8,
+            is_grayscale: false,
+            has_alpha: false,
+        }];
+        let global = super::super::section::GlobalModularState::AnsWithTree {
+            code: crate::entropy_coding::encode::build_entropy_code_ans(
+                &[crate::entropy_coding::token::Token::new(0, 0)],
+                1,
+            ),
+            tree: super::super::tree::simple_tree(super::super::predictor::Predictor::Gradient),
+            wp_params: Default::default(),
+            lz77: None,
+            group_tokens: None,
+            require_stored_tokens: false,
+        };
+        for (ans, learned, shared) in [
+            (false, false, false),
+            (true, false, false),
+            (true, true, false),
+            (true, true, true),
+        ] {
+            let options = FrameEncoderOptions {
+                use_ans: ans,
+                use_tree_learning: learned,
+                enable_lz77: false,
+                ..Default::default()
+            };
+            let global = shared.then_some(&global);
+            let limited = FrameEncoder::new(257, 8, options.clone())
+                .with_budget(crate::budget::MemoryBudget::new(0));
+            assert!(matches!(
+                limited.encode_shifted_lf_groups(&groups, global, true, None),
+                Err(crate::error::Error::AllocationLimit { .. })
+            ));
+            let encoder = FrameEncoder::new(257, 8, options);
+            let (mut late_cancelled, mut completed) = (false, false);
+            for allowed in (0..=8).chain(core::iter::once(usize::MAX)) {
+                let stop = CancelAfter {
+                    allowed,
+                    polls: AtomicUsize::new(0),
+                };
+                match encoder.encode_shifted_lf_groups(&groups, global, true, Some(&stop)) {
+                    Err(crate::error::Error::Cancelled) => late_cancelled |= allowed > 0,
+                    Ok(sections) => {
+                        assert_eq!(sections.len(), 1);
+                        assert!(!sections[0].is_empty());
+                        completed = true;
+                    }
+                    Err(error) => panic!("unexpected LF error: {error:?}"),
+                }
+            }
+            assert!(
+                late_cancelled && completed,
+                "ans={ans} learned={learned} shared={shared}"
+            );
+        }
     }
 }

@@ -40,12 +40,24 @@ interpolation, so they are not mislabeled as raw native samples. The earlier
 jxl-rs 0.4.3 rejects some nonzero aligned controls accepted by the current
 primary and reference; retained diagnostics are a decoder compatibility gap.
 
-## Evidence under validation
+## Verified local evidence
 
-The source-layout matrix covers 18 of the 20 supported lossless layouts;
-CMYK8/16 with a CMYK ICC profile is being checked separately. This is an
-explicit gap until that command succeeds. The six nonlinear float layouts are
-refused by the lossless API. No full option Cartesian product is claimed.
+The main source-layout matrix covers 18 of the 20 supported lossless layouts.
+The caller-selected CMYK control separately passes both CMYK8 and CMYK16 with
+a real CMYK/XYZ profile, all offered policies, shifts 1/3, global/local trees
+and both small/multi-group dimensions. Packed/strided bytes and every native
+8/16-bit depth code agree; both decoders fully render. This checks the extra
+channel, not physical CMYK color accuracy (tracked separately in issue 144).
+The six nonlinear float layouts are refused by the lossless API. No full
+option Cartesian product is claimed.
+
+Run `just extra-edge-cmyk-check <pinned-manifest> <CMYK-profile> <new-output>`.
+The successful run uses `ps_cmyk.icc` (5,340 bytes, SHA256
+`020236a6458406743848a12c6be280e54bcd0fd8e2d4bea9c4899410cef98cb2`).
+Its `completed.tsv` records every successful cell and JXL hash; profile/binary
+hashes accompany it. `extra-edge-cmyk-small-profile.log` has rc0, 40 seconds,
+peak RSS 0.22 GiB and minimum available 22,393 MiB. The earlier large-profile
+run was interrupted and remains partial evidence.
 
 
 Before logs: `extra-edge-before-current.log` and
@@ -60,14 +72,22 @@ Reproduce with `just extra-rect-oracle <v012-source> <v012-build> <binary>`,
 and `just extra-edge-cli-check <pinned-manifest>`, under the resource wrapper
 with explicit verified `CJXL_PATH`/`DJXL_PATH`. The final local pixel/resource/CLI command passes in
 `extra-edge-accepted-coverage.log` (rc0, 286 seconds, peak RSS 1.85 GiB,
-minimum available 20,529 MiB). Fresh broad/minimal/lint checks and landing
-remain pending. The production repair described here is local work until its
-implementation commits land.
+minimum available 20,529 MiB). The broad library/unchanged-lock and minimal-build matrix also passes in
+`extra-edge-final-validation.log` (rc0, 621 seconds, peak RSS 1.74 GiB,
+minimum available 20,803 MiB). The threaded control asserts that requested
+one/two-worker settings actually reach the encoder. A later cancellation audit
+is documented separately in [the cancellation contract](CANCELLATION.md).
+The current-source repeat also passes in
+`extra-edge-current-final-validation.log` (rc0, 599 seconds, peak RSS 1.71 GiB,
+minimum available 20,807 MiB), including the unchanged byte locks and minimal
+feature matrix. The current commit's CI verdict remains separate.
 
 ## Coverage and evidence retention
 
-`extra-edge-accepted-selected.json` is exported from only the five retained
-current binaries, with input hashes in its `.inputs.json` sidecar; the frozen
+`extra-edge-accepted-frozen.json` re-exports the accepted geometry snapshot
+from only its five retained binaries and a retained frozen profile. Its
+`.inputs.json` sidecar points to those surviving inputs, rather than the
+removed Cargo cache. The frozen
 profile hash is `c4e962d5f3e4e141040c660948166bd49910367b1d568d542ade03211fdaddf9`.
 Its JSON hash is `87a1d118a7f8b7a4de3bf2e2dc10fe53e8259da5a80e4e677659221a757cf782`.
 Automatic exports can include obsolete code mappings from earlier builds in
@@ -81,7 +101,6 @@ the affected functions listed below.
 | `extract_group_region` | 15/15 | none |
 | `split_lf_groups` | 52/53 | allocation/error propagation from extraction |
 | `encode_shifted_lf_groups` | 171/179 | eight defensive serializer error returns |
-| `RequestStop` methods | 23/23 | none |
 | ANS chunk accumulation | 14/14 | none |
 | ANS sequential/parallel accumulation | 58/58 | none |
 
@@ -97,5 +116,6 @@ they do not establish semantic completeness or total encoder coverage.
 records explicit binary/profile hashes. `just archive-test-evidence <source>
 <destination> <new-journal>` relocates completed evidence only: each destination
 is checksum-verified and its journal record is flushed before source removal.
-Retained streams and profiles stay outside git. A report file without a
+Retained streams and profiles stay outside git. The stop adapter has since
+changed; its independent current-binary evidence lives in CANCELLATION.md. A report file without a
 successful command and matching provenance is not an accepted verdict.

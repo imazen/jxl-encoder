@@ -2522,6 +2522,31 @@ The raw ICC codec still accepts arbitrary non-gray contents. No numeric or
 strategy gate changes. H10 Black/CMYK validation remains separate.
 [Caller inventory, before evidence and limits](COLOR_METADATA_CONTRACT.md).
 
+### Issue 144: shifted modular group geometry (I144-E1, 2026-11-16)
+
+Both unsqueezed modular producers (normal and explicit lossy palette) shift
+an unclipped group rectangle before clipping against each channel's native
+extent. This matches v0.12 `PrepareStreamParams`. Clipping the color rectangle
+first omitted the last native sample at odd image edges. Spatial channels with
+`min(hshift, vshift) >= 3` belong to LF groups; the previous unsqueezed producers
+instead left those sections empty and included the samples in AC groups.
+
+The repair gives these LF streams local entropy tables. Fixed predictor and
+Huffman/ANS selection remain explicit; learned global trees can be reused with
+a local stream header, while sectioned LF streams learn locally. Global AC
+histograms and palette descriptors retain their existing path. This differs
+from v0.12's shared global histogram organization; it is not a complete strict
+byte-parity claim. The existing squeeze partitioner remains separate. No new
+strategy gate or public API is introduced. Reproduction and remaining evidence:
+[shifted channel contract](SHIFTED_EXTRA_CHANNELS.md).
+
+The regression expansion also found grayscale images with at least three total
+planes entering RGB RCT/palette paths. The frame and single-group modular
+writers now require a non-grayscale source with at least three channels for
+RGB transforms and RGB fallbacks. Channel compaction counts one color plane
+for grayscale. Extra alpha and depth planes do not change the color model.
+This is a shared correctness condition; registry policy values are unchanged.
+
 
 ### Issue 144: ANS accumulation cancellation (I144-ANS-stop, 2026-11-16)
 

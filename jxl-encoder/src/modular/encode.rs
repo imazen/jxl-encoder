@@ -618,7 +618,7 @@ pub fn write_modular_stream_with_palette_knobs(
         None => {
             // Caller explicitly disabled palette via knob; fall through to
             // the same path `analyze_palette` would take on rejection.
-            if image.channels.len() >= 3 {
+            if !image.is_grayscale && image.channels.len() >= 3 {
                 return write_modular_stream_with_rct_only_with_predictor(
                     image,
                     writer,
@@ -642,7 +642,7 @@ pub fn write_modular_stream_with_palette_knobs(
         // Fallback: use RCT if RGB, otherwise simple.
         // IMPORTANT: call write_modular_stream_with_rct_only (not _with_rct) to avoid
         // re-entering should_use_palette → write_modular_stream_with_palette → infinite recursion.
-        if image.channels.len() >= 3 {
+        if !image.is_grayscale && image.channels.len() >= 3 {
             return write_modular_stream_with_rct_only_with_predictor(
                 image,
                 writer,
@@ -828,7 +828,7 @@ pub(crate) fn write_modular_stream_with_lossy_palette_budget_knobs(
         None => {
             // Lossy palette not beneficial, fall back to lossless RCT
             // (honouring the predictor override on the way down).
-            if image.channels.len() >= 3 {
+            if !image.is_grayscale && image.channels.len() >= 3 {
                 return write_modular_stream_with_rct_knobs(image, writer, use_ans, knobs);
             } else {
                 return write_simple_modular_stream_with_predictor(
@@ -931,7 +931,7 @@ pub fn write_modular_stream_with_squeeze(
     let params = default_squeeze_params(image);
     if params.is_empty() {
         // Image too small for squeeze, fall back
-        if image.channels.len() >= 3 {
+        if !image.is_grayscale && image.channels.len() >= 3 {
             return write_modular_stream_with_rct(image, writer, use_ans);
         } else {
             return write_simple_modular_stream(image, writer, use_ans);
@@ -940,7 +940,7 @@ pub fn write_modular_stream_with_squeeze(
 
     // Apply RCT (YCoCg) before squeeze for RGB images to decorrelate channels
     let mut transformed = image.clone();
-    let has_rct = transformed.channels.len() >= 3;
+    let has_rct = !transformed.is_grayscale && transformed.channels.len() >= 3;
     if has_rct {
         let rct_type = RctType::YCOCG;
         crate::modular::rct::forward_rct_stop(&mut transformed.channels, 0, rct_type, None)?;
@@ -3203,7 +3203,7 @@ pub(crate) fn write_modular_stream_with_squeeze_and_tree_stop(
             image,
             writer,
             profile,
-            image.channels.len() >= 3,
+            !image.is_grayscale && image.channels.len() >= 3,
             use_lz77,
             lz77_method,
             None,
@@ -3216,7 +3216,7 @@ pub(crate) fn write_modular_stream_with_squeeze_and_tree_stop(
 
     // Step 1: Apply RCT (YCoCg) before squeeze for RGB images
     let mut transformed = image.clone();
-    let has_rct = transformed.channels.len() >= 3;
+    let has_rct = !transformed.is_grayscale && transformed.channels.len() >= 3;
     if has_rct {
         let rct_type = RctType::YCOCG;
         crate::modular::rct::forward_rct_stop(&mut transformed.channels, 0, rct_type, stop)?;

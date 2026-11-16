@@ -9,6 +9,10 @@
 - Propagate ANS accumulation cancellation before normalization, avoiding
   partial distributions and preserving the caller's typed cancellation error.
 
+- Preserve final shifted modular samples at odd group edges, route
+  eighth-resolution extras through LF groups, and keep grayscale alpha/depth
+  planes out of RGB transforms.
+
 - Enforce ICC presence/model consistency at shared emission and source
   admission, preserve destination bytes on streaming model refusal, update
   canonicalized ICC selectors, and retain grayscale headers in lossy animation

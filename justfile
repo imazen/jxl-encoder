@@ -1158,3 +1158,25 @@ coverage-code-window report function suffix first last:
 extra-rect-oracle source build output:
     python3 scripts/frame_header_oracle.py --component extra_rect {{quote(source)}} {{quote(build)}} {{quote(output)}}
 
+
+extra-edge-unit manifest="Cargo.toml":
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --lib shifted_region_oracle_tests -- --nocapture
+
+
+extra-edge-check manifest="Cargo.toml":
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test shifted_extra_edges -- --nocapture
+
+
+extra-edge-final-validation manifest:
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --lib --no-report
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --test it --no-report -- hash_lock
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --test it --no-report -- strategy_libjxl_byte_lock
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --test it --no-report -- divergence_table_drift
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert --test shifted_extra_edges --no-report
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,parallel-tree-learning --test shifted_extra_edges --no-report -- threaded_shifted_routes
+
+
+extra-edge-resource-coverage manifest output:
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --lib --no-report -- shifted_lf_resource_tests
+    cargo llvm-cov report --manifest-path {{quote(manifest)}} --json --output-path {{quote(output)}}
+

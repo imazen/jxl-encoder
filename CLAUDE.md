@@ -1766,6 +1766,16 @@ misclassify that CLI limitation as an invalid stream or strip the ICC to hide it
 
 ## Known Bugs (ACTIVE)
 
+### 2026-11-16: explicit squeeze channel count twenty overflows its field
+
+The strict public RGB8 16x16 plus seventeen full-size depth-channel request,
+squeeze on with Huffman, panics before output: `bits 0x10 has more than 4 bits`.
+The unmodified v0.12 SqueezeParams writer accepts the selected boundaries
+one through nineteen and refuses twenty/twenty-one. Implicit default counts
+have a different contract. `~/tmp/jxl144/squeeze-count-before.log` retains the
+failing runtime and component controls. Release behavior and remaining
+producers are not yet verified; no production E2 repair is claimed.
+
 ### 2026-11-16: request cancellation lost a one-poll stop
 
 The E1 public cancellation sweep observes a stop at checkpoint nine of the
@@ -1809,6 +1819,28 @@ peak RSS 1.85 GiB, minimum available 20,610 MiB) and
 `ans-cancellation-exact-lint.log` (rc0). These are focused cancellation and
 unchanged-output controls; they do not establish every caller's cancellation
 latency or full encoder coverage.
+
+### RESOLVED 2026-11-16: shifted modular extra samples at group edges (issue 144)
+
+Both unsqueezed modular producers clipped color rectangles before shifting,
+losing final native samples at odd edges. Shift-three channels also went into
+AC groups instead of LF groups. The shared repair shifts the complete group
+rectangle, partitions LF spatial channels and writes their local entropy
+streams. Grayscale alpha/depth planes no longer enter RGB RCT/palette paths.
+Pinned v0.12 rectangle vectors, marker/aligned-canvas decoder comparisons,
+exact native 8/16-bit controls, real-image, packed/strided and supported-policy
+checks pass. All four group sizes and actual one/two-worker paths participate.
+CMYK controls check exact depth, not physical CMYK color accuracy. CLI layout
+forwarding has its own change and controls.
+
+The current pinned-source library, unchanged normal/strict/drift locks, minimal
+feature pixel matrix and threaded route pass in
+`~/tmp/jxl144/extra-edge-current-final-validation.log` (rc0, 599 seconds,
+peak RSS 1.71 GiB, minimum available 20,807 MiB). Focused strict lint passes.
+Selected coverage retains one extraction/error region and eight serializer
+error returns unexecuted; allocator failure and malformed internal serializer
+state were not injected. Existing ignores/byte expectations stay unchanged.
+[Caller inventory, before failures, mutation checks and limits](docs/SHIFTED_EXTRA_CHANNELS.md).
 
 ### RESOLVED 2026-11-16: final ICC pairs, canonicalization and gray animation
 

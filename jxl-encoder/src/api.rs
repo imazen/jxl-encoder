@@ -5810,17 +5810,11 @@ pub struct EncodeRequest<'a> {
 ///
 /// Built via [`Self::depth`] / [`Self::spot_color`] /
 /// [`Self::selection_mask`] / [`Self::thermal`] / [`Self::cfa`].
-/// The buffer dimensions must match the
-/// [`EncodeRequest`]'s `(width, height)`. Only 8-bit u8 buffers are
-/// supported in this iteration; 16-bit + dim_shift > 0 follow-up
-/// ticks will widen the surface.
-///
-/// Wire-up status:
-/// - Lossless RGB(A) + extra channels: WORKING (channels appended to
-///   the modular image; ExtraChannelInfo entries written to file
-///   header)
-/// - Lossy VarDCT + extras beyond alpha: NOT YET (encoder pipeline
-///   for additional modular sub-bitstreams pending)
+/// The buffer contains the native channel grid: each request dimension
+/// divided by `2^dim_shift`, rounded up. Constructors select the sample
+/// precision; [`Self::depth_u16`] and [`Self::black_u16`] accept 16-bit
+/// buffers. Lossless modular encoding supports shifted extra channels;
+/// the lossy VarDCT path rejects nonzero dimension shifts.
 #[derive(Debug, Clone)]
 pub struct ExtraChannel<'a> {
     info: crate::headers::extra_channels::ExtraChannelInfo,
@@ -6084,11 +6078,10 @@ impl<'a> ExtraChannel<'a> {
 
     /// Set the dimension shift (log2 downsampling factor). When
     /// `n > 0`, the buffer must be sized
-    /// `(width >> n) * (height >> n)` samples (or `div_ceil` of
-    /// those dims; we use a plain shift). libjxl accepts
-    /// `dim_shift ∈ {0, 3, 4} ∪ 1..=8` via the size coder. Most
-    /// usage is `dim_shift = 0` (full resolution); `dim_shift = 2`
-    /// gives a 1/4-resolution depth map. Refs #9.
+    /// `width.div_ceil(1 << n) * height.div_ceil(1 << n)` samples.
+    /// JPEG XL permits shifts `0..=3`; the integer coder's wider syntax
+    /// does not make larger values valid. A shift of zero is full
+    /// resolution; a shift of two gives quarter-size channel dimensions.
     ///
     /// Use [`downsample_channel_u8`] to pre-downsample a full-res
     /// buffer with the same box filter libjxl uses on the
@@ -6545,16 +6538,11 @@ impl<'a> EncodeRequest<'a> {
         self
     }
 
-    /// Attach extra-channel buffers (refs #9) — depth, spot color,
-    /// selection mask, thermal, CFA. Each [`ExtraChannel`] carries
-    /// `width * height` bytes of u8 channel data plus the
-    /// metadata that gets written into the file header.
-    ///
-    /// Currently wired through the **lossless** encode path. Lossy
-    /// encodes with extras beyond alpha return
-    /// `EncodeError::InvalidInput("extra channels beyond alpha not
-    /// yet supported in lossy encode")`. 16-bit channels and
-    /// `dim_shift > 0` (per-channel downsampling) follow-up ticks.
+    /// Attach additional channel buffers and their file-header metadata.
+    /// Each constructor selects its sample precision; shifted channels use
+    /// the native grid described by [`ExtraChannel::with_dim_shift`].
+    /// Lossless modular encoding supports these shifted grids. Lossy
+    /// VarDCT encoding rejects nonzero dimension shifts.
     pub fn with_extra_channels(mut self, channels: &'a [ExtraChannel<'a>]) -> Self {
         self.extra_channels = channels;
         self
