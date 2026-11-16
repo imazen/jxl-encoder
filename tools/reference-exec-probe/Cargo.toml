@@ -1,0 +1,11 @@
+[package]
+name = "reference-exec-probe"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[profile.dev]
+debug = 0
+incremental = false

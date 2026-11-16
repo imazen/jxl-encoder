@@ -91,21 +91,31 @@ macro_rules! skip_without_binary {
 pub const REQUIRED_LIBJXL_VERSION: &str = "v0.12";
 
 /// Reports the `--version` line of a libjxl tool, or `None` if it will not run.
+#[cfg(test)]
 fn libjxl_tool_version(path: &str) -> Option<String> {
+    libjxl_tool_probe(path).ok()
+}
+
+fn libjxl_tool_probe(path: &str) -> core::result::Result<String, String> {
     let out = std::process::Command::new(path)
         .arg("--version")
         .output()
-        .ok()?;
+        .map_err(|error| format!("spawn failed: {error}"))?;
     if !out.status.success() {
-        return None;
+        return Err(format!(
+            "version probe exited with {}; stdout={:?}; stderr={:?}",
+            out.status,
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr),
+        ));
     }
     let text = String::from_utf8_lossy(&out.stdout);
     let line = text.lines().next().unwrap_or_default().trim().to_string();
     if line.is_empty() {
         let err = String::from_utf8_lossy(&out.stderr);
-        return Some(err.lines().next().unwrap_or_default().trim().to_string());
+        return Ok(err.lines().next().unwrap_or_default().trim().to_string());
     }
-    Some(line)
+    Ok(line)
 }
 
 /// Resolve a libjxl tool, accepting ONLY [`REQUIRED_LIBJXL_VERSION`].
@@ -117,14 +127,14 @@ fn libjxl_tool_version(path: &str) -> Option<String> {
 fn first_running(env_key: &str, candidates: &[&str]) -> String {
     let mut seen: Vec<String> = Vec::new();
     let mut check = |c: &str| -> Option<String> {
-        match libjxl_tool_version(c) {
-            Some(v) if v.contains(REQUIRED_LIBJXL_VERSION) => Some(c.to_string()),
-            Some(v) => {
+        match libjxl_tool_probe(c) {
+            Ok(v) if v.contains(REQUIRED_LIBJXL_VERSION) => Some(c.to_string()),
+            Ok(v) => {
                 seen.push(alloc::format!("{c}: {v}"));
                 None
             }
-            None => {
-                seen.push(alloc::format!("{c}: does not run"));
+            Err(error) => {
+                seen.push(alloc::format!("{c}: {error}"));
                 None
             }
         }
@@ -165,6 +175,20 @@ fn first_running(env_key: &str, candidates: &[&str]) -> String {
 #[cfg(test)]
 mod libjxl_version_guard_tests {
     use super::*;
+
+    #[test]
+    fn failed_version_probes_retain_actionable_diagnostics() {
+        let missing = std::env::current_exe().unwrap().join("not-a-directory");
+        let error = libjxl_tool_probe(missing.to_str().unwrap()).unwrap_err();
+        assert!(error.starts_with("spawn failed:"), "{error}");
+        let test_binary = std::env::current_exe().unwrap();
+        let error = libjxl_tool_probe(test_binary.to_str().unwrap()).unwrap_err();
+        assert!(error.contains("version probe exited with"), "{error}");
+        assert!(
+            error.contains("stdout=") && error.contains("stderr="),
+            "{error}"
+        );
+    }
 
     /// A wrong-version reference binary must be REFUSED, not silently used.
     ///
