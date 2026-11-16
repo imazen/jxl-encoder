@@ -1154,3 +1154,7 @@ request-cancellation-unit manifest:
 
 coverage-code-window report function suffix first last:
     python3 scripts/coverage_function_regions.py {{quote(report)}} {{quote(function)}} --file-suffix {{quote(suffix)}} --start-line {{first}} --end-line {{last}}
+
+extra-rect-oracle source build output:
+    python3 scripts/frame_header_oracle.py --component extra_rect {{quote(source)}} {{quote(build)}} {{quote(output)}}
+
