@@ -209,12 +209,13 @@ class Parser:
                 if pr == 2:
                     for c in ("red", "green", "blue"):
                         self.custom_xy(f"{p}.{c}")
-            have_gamma = self.f(f"{p}.have_gamma", br.bit())
-            if have_gamma:
-                self.f(f"{p}.gamma", br.bits(24))
-            else:
-                tf = br.enum()
-                self.f(f"{p}.transfer_function", TRANSFER_FN.get(tf, tf))
+            if cs != 2:  # XYB implies its transfer function
+                have_gamma = self.f(f"{p}.have_gamma", br.bit())
+                if have_gamma:
+                    self.f(f"{p}.gamma", br.bits(24))
+                else:
+                    tf = br.enum()
+                    self.f(f"{p}.transfer_function", TRANSFER_FN.get(tf, tf))
             ri = br.enum()
             self.f(f"{p}.rendering_intent", RENDERING_INTENT.get(ri, ri))
         return want_icc

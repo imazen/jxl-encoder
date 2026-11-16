@@ -5,6 +5,27 @@ from jxl_bitstream_diff import BitReader, Parser
 
 
 class ReferenceFrameHeaderTest(unittest.TestCase):
+    def test_xyb_color_grammar_matches_pinned_component_writer(self):
+        # Unmodified v0.12 ColorEncoding output: no white/primaries/TF fields.
+        parser = Parser(bytes.fromhex("0800"))
+        parser.br = BitReader(bytes.fromhex("0800"))
+        parser.color_encoding()
+        self.assertEqual(parser.br.pos, 10)
+        fields = {name: value for _, name, value in parser.fields}
+        self.assertEqual(fields["color_encoding.color_space"], "kXYB")
+        self.assertEqual(fields["color_encoding.rendering_intent"], "kPerceptual")
+        self.assertNotIn("color_encoding.have_gamma", fields)
+
+    def test_unknown_description_has_primaries(self):
+        parser = Parser(bytes.fromhex("18c505"))
+        parser.br = BitReader(bytes.fromhex("18c505"))
+        parser.color_encoding()
+        self.assertEqual(parser.br.pos, 21)
+        fields = {name: value for _, name, value in parser.fields}
+        self.assertEqual(fields["color_encoding.color_space"], "kUnknown")
+        self.assertEqual(fields["color_encoding.primaries"], "kSRGB")
+        self.assertEqual(fields["color_encoding.transfer_function"], "kSRGB")
+
     def test_float_alpha_keeps_pq_metadata_aligned(self):
         # Real issue-138 cell 2965/49033, rendered by jxl-rs and djxl.
         # Full stream SHA256 e5ba20293607ebbad07de42001bc95e617b1037bbc6941a64b409a3eb0482d42.

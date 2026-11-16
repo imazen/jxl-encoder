@@ -593,41 +593,44 @@ impl ColorEncoding {
             self.color_space,
             self.color_space as u8
         );
-        writer.write(2, self.color_space as u64)?;
+        writer.write_enum_default(self.color_space as u32)?;
 
         if self.want_icc {
             // When want_icc=true, white point/primaries/transfer/rendering intent are not written
             return Ok(());
         }
 
-        // white_point - uses jxl-rs default u2S(0, 1, Bits(4)+2, Bits(6)+18)
-        let wp = match self.white_point {
-            WhitePoint::D65 => 1,
-            WhitePoint::Custom => 2,
-            WhitePoint::E => 10,
-            WhitePoint::Dci => 11,
-        };
-        crate::trace::debug_eprintln!(
-            "CENC [bit {}]: white_point = {:?} ({})",
-            writer.bits_written(),
-            self.white_point,
-            wp
-        );
-        writer.write_enum_default(wp)?;
-        if self.white_point == WhitePoint::Custom {
-            let wp_xy = self.custom_white_point.ok_or_else(|| {
-                Error::InvalidInput(
-                    "custom_white_point must be set when white_point is Custom".into(),
-                )
-            })?;
-            let wx = xy_to_fixed(wp_xy.x, "white_point.x")?;
-            let wy = xy_to_fixed(wp_xy.y, "white_point.y")?;
-            write_customxy_value(writer, wx, "white_point.x")?;
-            write_customxy_value(writer, wy, "white_point.y")?;
+        // XYB implies D65; no white-point fields are present (E.2).
+        if self.color_space != ColorSpace::Xyb {
+            // white_point - uses jxl-rs default u2S(0, 1, Bits(4)+2, Bits(6)+18)
+            let wp = match self.white_point {
+                WhitePoint::D65 => 1,
+                WhitePoint::Custom => 2,
+                WhitePoint::E => 10,
+                WhitePoint::Dci => 11,
+            };
+            crate::trace::debug_eprintln!(
+                "CENC [bit {}]: white_point = {:?} ({})",
+                writer.bits_written(),
+                self.white_point,
+                wp
+            );
+            writer.write_enum_default(wp)?;
+            if self.white_point == WhitePoint::Custom {
+                let wp_xy = self.custom_white_point.ok_or_else(|| {
+                    Error::InvalidInput(
+                        "custom_white_point must be set when white_point is Custom".into(),
+                    )
+                })?;
+                let wx = xy_to_fixed(wp_xy.x, "white_point.x")?;
+                let wy = xy_to_fixed(wp_xy.y, "white_point.y")?;
+                write_customxy_value(writer, wx, "white_point.x")?;
+                write_customxy_value(writer, wy, "white_point.y")?;
+            }
         }
 
-        // primaries (only for RGB) - uses jxl-rs default u2S encoding
-        if self.color_space == ColorSpace::Rgb {
+        // RGB and Unknown both carry primaries (E.2).
+        if matches!(self.color_space, ColorSpace::Rgb | ColorSpace::Unknown) {
             let prim = match self.primaries {
                 Primaries::Srgb => 1,
                 Primaries::Custom => 2,
@@ -670,44 +673,47 @@ impl ColorEncoding {
             );
         }
 
-        // have_gamma
-        let have_gamma = self.gamma.is_some();
-        crate::trace::debug_eprintln!(
-            "CENC [bit {}]: have_gamma = {}",
-            writer.bits_written(),
-            have_gamma
-        );
-        writer.write_bit(have_gamma)?;
+        // XYB has an implicit transfer function; no TF fields are present.
+        if self.color_space != ColorSpace::Xyb {
+            // have_gamma
+            let have_gamma = self.gamma.is_some();
+            crate::trace::debug_eprintln!(
+                "CENC [bit {}]: have_gamma = {}",
+                writer.bits_written(),
+                have_gamma
+            );
+            writer.write_bit(have_gamma)?;
 
-        if have_gamma {
-            let g = self.gamma.expect("gamma must be set when have_gamma=true");
-            // JXL spec: 24-bit integer = round(gamma * 10_000_000), clamped to [1, 2^24-1]
-            let encoded = (g * 10_000_000.0).round() as u32;
-            crate::trace::debug_eprintln!(
-                "CENC [bit {}]: gamma = {} (encoded {})",
-                writer.bits_written(),
-                g,
-                encoded
-            );
-            writer.write(24, encoded as u64)?;
-        } else {
-            // transfer_function - uses jxl-rs default u2S encoding
-            let tf = match self.transfer_function {
-                TransferFunction::Bt709 => 1,
-                TransferFunction::Unknown => 2,
-                TransferFunction::Linear => 8,
-                TransferFunction::Srgb => 13,
-                TransferFunction::Pq => 16,
-                TransferFunction::Dci => 17,
-                TransferFunction::Hlg => 18,
-            };
-            crate::trace::debug_eprintln!(
-                "CENC [bit {}]: transfer_function = {:?} ({})",
-                writer.bits_written(),
-                self.transfer_function,
-                tf
-            );
-            writer.write_enum_default(tf)?;
+            if have_gamma {
+                let g = self.gamma.expect("gamma must be set when have_gamma=true");
+                // JXL spec: 24-bit integer = round(gamma * 10_000_000), clamped to [1, 2^24-1]
+                let encoded = (g * 10_000_000.0).round() as u32;
+                crate::trace::debug_eprintln!(
+                    "CENC [bit {}]: gamma = {} (encoded {})",
+                    writer.bits_written(),
+                    g,
+                    encoded
+                );
+                writer.write(24, encoded as u64)?;
+            } else {
+                // transfer_function - uses jxl-rs default u2S encoding
+                let tf = match self.transfer_function {
+                    TransferFunction::Bt709 => 1,
+                    TransferFunction::Unknown => 2,
+                    TransferFunction::Linear => 8,
+                    TransferFunction::Srgb => 13,
+                    TransferFunction::Pq => 16,
+                    TransferFunction::Dci => 17,
+                    TransferFunction::Hlg => 18,
+                };
+                crate::trace::debug_eprintln!(
+                    "CENC [bit {}]: transfer_function = {:?} ({})",
+                    writer.bits_written(),
+                    self.transfer_function,
+                    tf
+                );
+                writer.write_enum_default(tf)?;
+            }
         }
 
         // rendering_intent
@@ -729,6 +735,73 @@ impl ColorEncoding {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn color_grammar_matches_unmodified_libjxl_v012() {
+        for row in include_str!("color_header_v012.tsv")
+            .lines()
+            .filter(|line| !line.starts_with('#'))
+        {
+            let fields: Vec<_> = row.split('\t').collect();
+            let case: Vec<u8> = fields[0].split(':').map(|v| v.parse().unwrap()).collect();
+            let mut color = ColorEncoding::srgb();
+            color.want_icc = case[0] != 0;
+            color.color_space = match case[1] {
+                0 => ColorSpace::Rgb,
+                1 => ColorSpace::Gray,
+                2 => ColorSpace::Xyb,
+                3 => ColorSpace::Unknown,
+                _ => unreachable!(),
+            };
+            color.rendering_intent = match case[2] {
+                0 => RenderingIntent::Perceptual,
+                1 => RenderingIntent::Relative,
+                2 => RenderingIntent::Saturation,
+                3 => RenderingIntent::Absolute,
+                _ => unreachable!(),
+            };
+            let mut writer = BitWriter::new();
+            color.write(&mut writer).unwrap();
+            let bits = writer.bits_written();
+            let bytes = writer.finish_with_padding();
+            let expected: Vec<_> = fields[2]
+                .as_bytes()
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|p| u8::from_str_radix(core::str::from_utf8(p).unwrap(), 16).unwrap())
+                .collect();
+            assert_eq!(
+                (bits, bytes),
+                (fields[1].parse().unwrap(), expected),
+                "case {}",
+                fields[0]
+            );
+        }
+    }
+
+    #[test]
+    fn unknown_description_carries_rgb_primaries() {
+        // E.2: Unknown has RGB's descriptive fields. The six-bit enum value
+        // is independently pinned by the v0.12 ICC-present oracle rows.
+        let color = ColorEncoding {
+            color_space: ColorSpace::Unknown,
+            rendering_intent: RenderingIntent::Perceptual,
+            ..ColorEncoding::srgb()
+        };
+        let mut writer = BitWriter::new();
+        color.write(&mut writer).unwrap();
+        assert_eq!(writer.bits_written(), 21);
+        assert_eq!(writer.finish_with_padding(), [0x18, 0xc5, 0x05]);
+        let color = ColorEncoding {
+            transfer_function: TransferFunction::Unknown,
+            ..color
+        };
+        let mut writer = BitWriter::new();
+        color.write(&mut writer).unwrap();
+        assert_eq!(writer.bits_written(), 21);
+        assert_eq!(writer.finish_with_padding(), [0x18, 0x45, 0x00]);
+    }
 
     #[test]
     fn relative_headers_roundtrip_in_independent_decoders() {
@@ -1165,7 +1238,7 @@ mod tests {
 
         let mut writer = BitWriter::new();
         enc.write(&mut writer).unwrap();
-        // Unknown color space doesn't write primaries
+        // Unknown carries primaries, like RGB.
         assert!(writer.bits_written() > 0);
     }
 

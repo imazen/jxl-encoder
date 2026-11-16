@@ -860,8 +860,9 @@ jxl_encoder_macros::strategy_def! {
         /// `ColorEncoding` (17 bits, the one that still applies when
         /// an alpha channel or a non-8-bit depth blocks the outer
         /// path), and `FrameHeader` (23 bits).
-        /// F.2's blending conditions and covering-crop grammar apply
-        /// independently of this compact-header permission (issue 144).
+        /// F.2's blending conditions and covering-crop grammar, and E.2's
+        /// color enum/conditional fields, apply independently of this
+        /// compact-header permission (issue 144).
         ///
         /// `true` only under [`crate::api::EncoderStrategy::Libjxl`].
         /// The default stays `false` NOT because the long form is

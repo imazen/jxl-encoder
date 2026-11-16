@@ -2134,7 +2134,20 @@ lookup, descriptors, metadata or compact/non-compact decisions.
 
 ## G. RESOLVED divergences (historical)
 
-### Issue 144: explicit ICC selector admission (I144-E2-presence, 2026-11-16)
+### Issue 144: color-description field grammar (I144-E2-grammar, 2026-11-16)
+
+The shared color writer uses enum coding for all color spaces, omits XYB's
+implicit white/transfer fields, and includes primaries for Unknown, following
+Part 1 E.2. RGB/Gray output and every existing normal/strict byte expectation
+remain unchanged. v0.12 component controls match where that writer accepts
+the description; independent vectors and envelope/payload controls cover
+Unknown without ICC. The diagnostic parser also omits XYB's transfer bundle.
+No strategy gate changes. Pinned jxl-rs rejects XYB, and both pinned decoders
+reject Unknown without ICC; those rendering gaps remain explicit.
+[Contract, production routes and limitations](COLOR_METADATA_CONTRACT.md).
+
+
+### Issue 144: explicit ICC selector admission (I144-E2-presence, 2026-11-16, 6e14f07d)
 
 Still and animation requests and the separate lossless streaming writer reject
 `color_encoding.want_icc && icc_profile.is_none()` before encoding. Lossy

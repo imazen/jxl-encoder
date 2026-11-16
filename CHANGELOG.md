@@ -2,9 +2,13 @@
 
 ## [Unreleased]
 
+- Correct shared XYB/Unknown color-space enum and conditional field encoding;
+  keep RGB/Gray byte expectations unchanged and preserve explicit decoder
+  support gaps for the uncommon descriptions.
+
 - Reject an explicit ICC selector without its required profile payload across
   still, streaming and animation requests; preserve automatic ICC selection
-  when metadata supplies a profile.
+  when metadata supplies a profile (`6e14f07d`).
 
 - Correct shared frame-header blending conditions for ReferenceOnly frames and
   crops covering the canvas; retain alpha metadata in lossless GrayAlpha

@@ -1766,6 +1766,18 @@ misclassify that CLI limitation as an invalid stream or strip the ICC to hide it
 
 ## Known Bugs (ACTIVE)
 
+### RESOLVED grammar 2026-11-16: XYB/Unknown color-description fields
+
+The shared writer now uses enum coding, omits XYB's implicit white/transfer
+fields, and includes Unknown primaries. Unmodified v0.12 component vectors
+and independent complete-file/payload controls verify the field repair.
+Corrected XYB streams render in djxl v0.12; pinned jxl-rs rejects the tag,
+and both pinned decoders reject Unknown without ICC. Exact RGB control
+pixels and identical lossless payloads do not constitute observed rendering
+of those refused descriptions. Source-color/admission findings remain open.
+[Measured routes and limitations](docs/COLOR_METADATA_CONTRACT.md).
+
+
 ### RESOLVED 2026-11-16: explicit ICC selector without payload
 
 An explicit `ColorEncoding.want_icc` could promise an absent ICC stream.
