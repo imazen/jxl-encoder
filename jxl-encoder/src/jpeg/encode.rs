@@ -1304,10 +1304,7 @@ fn encode_jpeg_to_jxl_inner(
         file_header.metadata.orientation = exif_orientation(exif).unwrap_or_default();
     }
     file_header.metadata.color_encoding.want_icc = icc_profile.is_some();
-    file_header.write(&mut writer)?;
-    if let Some(icc) = icc_profile {
-        crate::icc::write_icc(icc, &mut writer)?;
-    }
+    file_header.write_with_icc(icc_profile, &mut writer)?;
 
     writer.zero_pad_to_byte();
     let file_header_bytes = writer.bytes_written();

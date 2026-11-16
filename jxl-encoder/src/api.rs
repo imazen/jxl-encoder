@@ -7602,12 +7602,9 @@ impl<'a> EncodeRequest<'a> {
 
         // Write codestream
         let mut writer = BitWriter::new();
-        file_header.write(&mut writer).map_err(EncodeError::from)?;
-        if let Some(meta) = self.metadata
-            && let Some(icc) = meta.icc_profile
-        {
-            crate::icc::write_icc(icc, &mut writer).map_err(EncodeError::from)?;
-        }
+        file_header
+            .write_with_icc(self.metadata.and_then(|meta| meta.icc_profile), &mut writer)
+            .map_err(EncodeError::from)?;
         writer.zero_pad_to_byte();
 
         // Write reference frame and subtract patches from image if detected
@@ -10510,10 +10507,9 @@ impl LosslessEncoder {
             }
 
             let mut writer = BitWriter::new();
-            file_header.write(&mut writer).map_err(EncodeError::from)?;
-            if let Some(ref icc) = self.icc_profile {
-                crate::icc::write_icc(icc, &mut writer).map_err(EncodeError::from)?;
-            }
+            file_header
+                .write_with_icc(self.icc_profile.as_deref(), &mut writer)
+                .map_err(EncodeError::from)?;
             writer.zero_pad_to_byte();
 
             // Write reference frame and subtract patches

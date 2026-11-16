@@ -468,6 +468,16 @@ impl FileHeader {
         }
     }
 
+    /// Write the image header and its optional ICC stream as one operation.
+    /// Byte alignment remains with the caller, matching the existing writers.
+    pub(crate) fn write_with_icc(&self, icc: Option<&[u8]>, writer: &mut BitWriter) -> Result<()> {
+        self.write(writer)?;
+        if let Some(icc) = icc {
+            crate::icc::write_icc(icc, writer)?;
+        }
+        Ok(())
+    }
+
     /// Writes the complete file header (signature + size + metadata + transform_data).
     pub fn write(&self, writer: &mut BitWriter) -> Result<()> {
         // Validate the wire values too: internal header builders bypass API

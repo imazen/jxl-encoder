@@ -222,10 +222,9 @@ pub(crate) fn encode_animation_lossless(
 
     // Write file header
     let mut writer = BitWriter::new();
-    file_header.write(&mut writer).map_err(at_from)?;
-    if let Some(icc) = request.metadata.and_then(|m| m.icc_profile) {
-        crate::icc::write_icc(icc, &mut writer).map_err(at_from)?;
-    }
+    file_header
+        .write_with_icc(request.metadata.and_then(|m| m.icc_profile), &mut writer)
+        .map_err(at_from)?;
     writer.zero_pad_to_byte();
 
     // Frame color interpretation must match the file header.
@@ -895,10 +894,9 @@ pub(crate) fn encode_animation_lossy(
     });
 
     let mut writer = BitWriter::with_capacity(w * h * 4);
-    file_header.write(&mut writer).map_err(at_from)?;
-    if let Some(ref icc) = enc.icc_profile {
-        crate::icc::write_icc(icc, &mut writer).map_err(at_from)?;
-    }
+    file_header
+        .write_with_icc(enc.icc_profile.as_deref(), &mut writer)
+        .map_err(at_from)?;
     writer.zero_pad_to_byte();
 
     // Encode each frame with crop detection

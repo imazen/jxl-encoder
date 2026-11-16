@@ -1272,12 +1272,7 @@ impl VarDctEncoder {
         writer: &mut BitWriter,
     ) -> Result<()> {
         let file_header = self.build_file_header(width, height, extras_info);
-        file_header.write(writer)?;
-
-        // Write ICC profile data if present (after header, before zero pad)
-        if let Some(ref icc) = self.icc_profile {
-            crate::icc::write_icc(icc, writer)?;
-        }
+        file_header.write_with_icc(self.icc_profile.as_deref(), writer)?;
 
         // Zero pad to byte before frame
         writer.zero_pad_to_byte();
