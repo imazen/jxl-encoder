@@ -1134,20 +1134,23 @@ request-cancellation-check manifest:
     cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,parallel-tree-learning --test request_cancellation --no-report
     cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,jpeg-reencoding --test request_cancellation --no-report
 
-request-cancellation-mutation manifest log:
-    python3 scripts/test_request_stop_mutation.py {{quote(manifest)}} {{quote(log)}}
+request-cancellation-mutation manifest log only="still":
+    python3 scripts/test_request_stop_mutation.py {{quote(manifest)}} {{quote(log)}} --only {{quote(only)}}
 
 animation-cancellation-check manifest:
     cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test request_cancellation --no-report -- animation_requests --nocapture
 
 jpeg-cancellation-check manifest:
-    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,jpeg-reencoding --test request_cancellation --no-report -- jpeg_stop_entries --nocapture
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,jpeg-reencoding --test request_cancellation --no-report -- jpeg_ --nocapture
 
 low-level-cancellation-check manifest:
     cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,jpeg-reencoding --test request_cancellation --no-report -- low_level_jpeg_operations --nocapture
 
 request-cancellation-lint manifest coverage_env:
-    bash -c 'set -e; source "$1"; cargo clippy --locked --manifest-path "$2" -p jxl-encoder --features __expert,jpeg-reencoding,parallel,parallel-tree-learning --lib --test request_cancellation --test shifted_extra_edges --example shifted_extra_cmyk -- -D warnings; cargo check --locked --manifest-path "$2" -p jxl-encoder --no-default-features --features std,convenience --lib' _ {{quote(coverage_env)}} {{quote(manifest)}}
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; cargo clippy --locked --manifest-path "$2" -p jxl-encoder --features __expert,jpeg-reencoding,parallel,parallel-tree-learning --lib --test request_cancellation --test shifted_extra_edges --example shifted_extra_cmyk -- -D warnings; cargo check --locked --manifest-path "$2" -p jxl-encoder --no-default-features --features std,convenience --lib' _ {{quote(coverage_env)}} {{quote(manifest)}}
 
 request-cancellation-unit manifest:
     cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,jpeg-reencoding --lib --no-report -- request_stop_tests
+
+coverage-code-window report function suffix first last:
+    python3 scripts/coverage_function_regions.py {{quote(report)}} {{quote(function)}} --file-suffix {{quote(suffix)}} --start-line {{first}} --end-line {{last}}

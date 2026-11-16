@@ -516,3 +516,42 @@ fn low_level_jpeg_operations_retain_every_observed_stop() {
         }
     }
 }
+
+#[cfg(feature = "jpeg-reencoding")]
+#[test]
+fn jpeg_parse_preserves_non_cancellation_decode_errors() {
+    let input = include_bytes!("fixtures/jbrd/base_a_444.jpg");
+    let sos = input.windows(2).position(|v| v == [0xff, 0xda]).unwrap();
+    let mut missing_table = input.to_vec();
+    missing_table[sos + 6] = 0x33; // absent DC/AC tables for the first component
+    let error = jxl_encoder::jpeg::read_jpeg(&missing_table, None, None)
+        .expect_err("a missing Huffman table must fail");
+    assert!(
+        matches!(error, jxl_encoder::jpeg::JpegError::Decode(_)),
+        "{error:?}"
+    );
+}
+
+#[cfg(feature = "jpeg-reencoding")]
+#[test]
+fn jpeg_cancellation_keeps_explicit_limit_controls_byte_identical() {
+    let input = include_bytes!("fixtures/jbrd/base_a_444.jpg");
+    let plain = LosslessConfig::new().with_effort(3).with_threads(1);
+    let limits = jxl_encoder::Limits::new().with_max_pixels(1_000_000);
+    let limited = plain.clone().with_limits(&limits);
+    for container in [false, true] {
+        let expected = if container {
+            plain.encode_jpeg_transcode(input)
+        } else {
+            plain.encode_jpeg_transcode_codestream(input)
+        }
+        .unwrap();
+        let actual = if container {
+            limited.encode_jpeg_transcode_with_stop(input, &enough::Unstoppable)
+        } else {
+            limited.encode_jpeg_transcode_codestream_with_stop(input, &enough::Unstoppable)
+        }
+        .unwrap();
+        assert_eq!(actual, expected);
+    }
+}

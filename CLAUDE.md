@@ -1783,6 +1783,11 @@ Default/parallel/JPEG sweeps pass (request-stop-final.log, rc0, 82 seconds,
 peak RSS 1.02 GiB, minimum available 21,379 MiB); strict library/test/example
 lint and minimal std/convenience compile pass (extra-edge-stop-lint.log, rc0).
 Direct JPEG parser/recompression controls pass with both decoders.
+The exact independently committed source passes without the E1 repair
+(request-stop-exact.log, rc0, 126 seconds; peak RSS 1.77 GiB, minimum available
+20,680 MiB). Retained-binary profiles cover all listed stop adapters and typed
+JPEG mapping; bypass mutations detect each original fault. These are selected
+region/retention checks, not latency bounds or full parser/pipeline coverage.
 [Contract and coverage scope](docs/CANCELLATION.md). The failing full run is retained in
 `~/tmp/jxl144/extra-edge-final-coverage.log` (rc101); all eleven pixel checks
 in that run pass. It is not an accepted coverage or whole-command pass.

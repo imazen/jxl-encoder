@@ -50,6 +50,37 @@ partial entropy distributions valid.
 Run just request-cancellation-check <pinned-manifest> for the default, parallel
 and JPEG feature builds, and just request-cancellation-mutation
 <pinned-manifest> <new-log> to verify the still-request bypass is detected.
-The existing minimal feature compile and normal/strict byte-lock checks remain
-required. Selected function coverage and final validation are recorded with
-the implementation; aggregate test counts do not establish path coverage.
+The exact committed-source control at 0d51719d passes without the shifted-grid
+repair (request-stop-exact.log, rc0, 126 seconds; peak RSS 1.77 GiB, minimum
+available 20,680 MiB). Never-stopped still/animation callbacks retain bytes.
+The malformed-input control selects absent JPEG Huffman tables and retains an
+ordinary Decode error; explicit legal pixel limits retain transcode bytes.
+An empty entropy scan was initially tried as the malformed fixture, but the
+pinned dependency accepts it; that session-added fixture was corrected.
+
+## Selected region coverage
+
+Fresh profiles from retained binaries are exported with their binary/profile
+hashes. The exact-commit snapshot covers the following newly affected methods:
+
+| Selected code | Executed regions | Missing |
+|---|---:|---|
+| RequestStop constructor/check/capability/finish | 30/30 | none |
+| Still request wrapper | 19/19 | none |
+| Animation request wrapper | 20/20 | none |
+| JPEG container stop wrapper, including explicit limits | 43/43 | none |
+| JPEG raw stop wrapper, including explicit limits | 42/42 | none |
+| Typed JPEG error mapping (parse.rs lines 898-905) | 11/11 | none |
+
+The last three rows include the added negative/limit controls. Reports are
+stop-exact-coverage/selected.json and stop-jpeg-controls-coverage/selected.json;
+each has a surviving .inputs.json sidecar. This is coverage of the listed
+adapter/mapping code, not the entire animation pipeline or JPEG parser.
+Whole parser and request-body branches outside the repair remain outside this
+selected coverage claim. No cancellation-latency bound is inferred.
+
+Bypassing the still latch, bypassing the animation latch and reverting the JPEG
+typed mapping each make their regression fail (request-stop-mutations-final.log,
+rc0, 70 seconds; peak RSS 0.98 GiB, minimum available 21,469 MiB). The script
+restores source in finally. Existing byte locks/ignores stay unchanged; no new
+threshold or expected output is substituted for a failure.
