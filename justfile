@@ -1116,3 +1116,15 @@ icc-model-coverage manifest output:
 icc-model-cli-check manifest="Cargo.toml":
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder-cli --test icc_model -- --nocapture
     cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder-cli --test icc_model -- -D warnings
+
+
+archive-test-evidence source destination journal:
+    python3 scripts/archive_test_evidence.py {{quote(source)}} {{quote(destination)}} {{quote(journal)}}
+
+
+coverage-function-regions report *functions:
+    python3 scripts/coverage_function_regions.py {{quote(report)}} --file-suffix modular/frame.rs --file-suffix modular/encode.rs {{functions}}
+
+
+coverage-selected-report llvm_cov profile output +objects:
+    python3 scripts/export_selected_coverage.py {{quote(llvm_cov)}} {{quote(profile)}} {{quote(output)}} {{objects}}
