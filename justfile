@@ -1,5 +1,27 @@
 # jxl-encoder-rs task runner
 
+# Caller supplies an isolated pinned source closure and resource controls.
+frame-header-check manifest="Cargo.toml" features="__expert":
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features {{quote(features)}} --test frame_header_contract -- --nocapture
+
+frame-header-lint manifest="Cargo.toml":
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --lib --test frame_header_contract -- -D warnings
+
+frame-header-oracle source build output:
+    python3 scripts/frame_header_oracle.py {{quote(source)}} {{quote(build)}} {{quote(output)}}
+
+frame-header-mutations manifest logs:
+    python3 scripts/test_frame_header_mutations.py {{quote(manifest)}} {{quote(logs)}}
+
+frame-header-coverage manifest output:
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --lib --no-report -- headers::frame_header::tests
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test frame_header_contract --no-report
+    cargo llvm-cov report --manifest-path {{quote(manifest)}} --json --output-path {{quote(output)}}
+
+reference-tools-check manifest="Cargo.toml":
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --lib test_helpers::libjxl_version_guard_tests
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --lib -- -D warnings
+
 # Independent decoder controls require verified CJXL_PATH/DJXL_PATH on macOS.
 fixed-point-baseline manifest="Cargo.toml":
     cargo test --locked --manifest-path "{{manifest}}" -p jxl-encoder --lib

@@ -1766,6 +1766,20 @@ misclassify that CLI limitation as an invalid stream or strip the ICC to hide it
 
 ## Known Bugs (ACTIVE)
 
+### 2026-11-16: issue 144 frame-header and GrayAlpha animation controls
+
+The strict-mode 64x32 ReferenceOnly RGBA streams and identical 8x8 RGB
+animation fail full rendering in jxl-rs 0.4.3 and djxl v0.12 before the repair.
+The component oracle calls unmodified v0.12 FrameHeader code and distinguishes
+the covering-crop fields. The layout matrix independently exposes missing
+GrayAlpha metadata in a single-frame lossless animation. Shared grammar and
+the existing GrayAlpha constructor correct these local reproductions.
+[Path inventory and evidence](docs/FRAME_HEADER_CONTRACT.md) record the selected
+mode/layout/entry interactions. Measured region coverage and default/minimal
+feature matrices supplement the existing library, lock, divergence, animation
+and auxiliary-frame checks. Remote qualification remains separate; the rest
+of issue 144 remains open.
+
 ### RESOLVED 2026-11-05: concurrent version-bound update imported sibling lock drift
 
 `e7523108` widened the archmage/magetypes bounds but also recorded mutable

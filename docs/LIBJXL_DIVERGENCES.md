@@ -2134,7 +2134,7 @@ lookup, descriptors, metadata or compact/non-compact decisions.
 
 ## G. RESOLVED divergences (historical)
 
-### Issue 144: shared frame-header blending grammar (I144-F2, 2026-11-16)
+### Issue 144: shared frame-header blending grammar (I144-F2, 2026-11-16, fb963c89)
 
 `FrameHeader::write` conditions both blending bundles on Regular/SkipProgressive.
 Its shared canvas-coverage predicate controls main/extra Replace source fields
