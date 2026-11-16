@@ -1766,6 +1766,19 @@ misclassify that CLI limitation as an invalid stream or strip the ICC to hide it
 
 ## Known Bugs (ACTIVE)
 
+### RESOLVED 2026-11-16: impossible ICC tag counts became predictor commands
+
+A 132-byte payload declaring one tag violated the ICC command output bound;
+the primary Rust decoder refused it while djxl rendered it. The selector now
+uses opaque coding for unsafe counts, preserving arbitrary payload acceptance,
+exact ICC bytes, exact lossless samples and JPEG reconstruction. The existing
+4 MiB level-selection fixture and every assertion remain unchanged. Unmodified
+v0.12 shares the permissive predictor/inverse behavior, so independent E.4.4
+preamble checks supply the conformance gate. The new selector's twelve regions
+execute; unrelated ICC operations are not claimed exhaustively covered.
+[Production paths, retained identities and limits](docs/COLOR_METADATA_CONTRACT.md).
+
+
 ### RESOLVED grammar 2026-11-16: XYB/Unknown color-description fields
 
 The shared writer now uses enum coding, omits XYB's implicit white/transfer

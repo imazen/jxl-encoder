@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+- Encode ICC tag lists opaquely when their declared count exceeds the
+  predictor's output bound; preserve arbitrary payload acceptance and every
+  original ICC/JPEG byte.
+
 - Correct shared XYB/Unknown color-space enum and conditional field encoding;
   keep RGB/Gray byte expectations unchanged and preserve explicit decoder
   support gaps for the uncommon descriptions (`c1565d7b`).

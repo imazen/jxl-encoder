@@ -136,3 +136,69 @@ The description probe returns failure when any actual decoder refuses a cell;
 the payload checker reports those decoder outcomes separately from its
 structural/equality checks. None of these tools converts a decoder refusal
 into a pixel pass.
+
+## ICC tag-count predictor bound (H8)
+
+Part 1 E.4.4 permits tag-list commands only when the declared tag count obeys
+`128 + 12 * count <= output_size`. The predictor now tests that condition in
+u64 before its usize arithmetic. It uses the existing opaque tag-list/main
+stream when the condition fails. Header prediction and the decoded ICC bytes
+remain unchanged; arbitrary byte strings stay encodable. This does not claim
+that arbitrary bytes describe a valid color profile.
+
+The first 8x8 RGB8 lossless strict regression, with a 132-byte payload declaring
+one tag, is 84 bytes / SHA256
+`6b55342c8a668961f29530056e39bfbcf80918fd7198c10defae9aedeed03afb`
+before the correction and 86 bytes / SHA256
+`a19cccea6063c60ae312275fef8909c3802acdb8e23c98bb1d91a9cdabffa109`
+with opaque coding. The original primary Rust decoder fails with
+`InvalidIccStream`; pinned djxl renders it. Unmodified v0.12's predictor and
+inverse also accept this bound-violating case, so decoder agreement cannot
+serve as the conformance oracle. The regression independently reads the
+predicted command preamble and checks the bound.
+
+The corrected stream fully renders through jxl-rs and djxl and returns every
+ICC byte in both. Lossless samples are exact. Retained before/after reference
+images match pixel-for-pixel for all paired cells in the selected policy and
+entry-path matrix. This comparison does not turn the invalid profile contents
+into a valid color description. The original test executable's hash was not
+captured before it was rebuilt; source identity, stream hashes and full logs
+bind the before observation. Verified fixed executables are retained separately.
+
+| Affected caller | Recorded paths |
+|---|---|
+| Pixel requests | Lossless/lossy, all named strategies and relevant Custom combinations, both mode values |
+| Streaming | Both writers, including shared lossy request dispatch |
+| Animation | Single displayed integer frame in both compression paths |
+| Existing-buffer output | Successful append preserves the destination prefix |
+| JPEG | Raw and parsed inputs, bare/container, explicit Stop wrappers, RGB/gray, efforts 1/7/9; both Rust and djxl rebuild every original JPEG byte |
+| Optional subsampled RGB8 | 4:2:0, 4:2:2 and 4:4:0 through the shared ICC writer |
+| Container header splitting | Re-encodes the same corrected ICC stream to locate its end; container rendering/reconstruction controls exercise it |
+
+The ICC codec receives no image layout or strategy argument. Precision/row
+handling remains the caller's responsibility. Valid RGB/gray 8/16-bit controls
+at 64x32 and 259x17 check packed/strided byte equality, streaming equality,
+animation, exact source samples and exact profile bytes. Existing mAB/TRC and
+large repetitive-profile controls still pass. New arbitrary-content controls
+include generic ICC type patterns, short tails, a u32::MAX tag count and a
+70,000-byte insertion; both decoders recover the raw bytes and render pixels.
+
+The attempted refusal policy failed the established
+`synthetic_large_icc_forces_level10_jxll_box` expectation for a 4 MiB+1
+arbitrary payload. Its fixture and assertions are unchanged. That attempt is
+preserved at `superseded/issue144-icc-tag-refusal`, commit `2798e128`.
+
+Region evidence for `can_predict_tag_list`: all twelve regions execute,
+including the short-input and unsafe-count cases and the exact valid boundary.
+Artifact SHA256:
+`5e7f04c848a9afe80356bc54e0f3f6b1774480827df8763d0f0ad4c2e1ab965a`.
+This is coverage of the new selector, not a claim of complete coverage of every
+existing ICC predictor operation. Restoring the original selector fails the
+pixel, JPEG and subsampling regressions. Existing byte locks, ignores and
+scientific thresholds remain unchanged.
+
+Harness boundaries: opaque 8-bit controls use PAM plus explicit ICC extraction.
+PNG output can refuse odd-length arbitrary ICC data after successful JXL
+pixel decoding. The secondary decoder's ICC-content parser overflows on the
+u32::MAX fixture; raw-byte checks therefore use the primary API and djxl,
+while valid-profile controls retain secondary inspection.

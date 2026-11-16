@@ -340,6 +340,16 @@ fn predict_flags(order: i32, width: usize, stride: usize) -> u8 {
 
 // ── PredictICC ──────────────────────────────────────────────────────────────
 
+/// Whether E.4.4 permits interpreting the raw tag count as predictor commands.
+/// Other byte strings remain encodable through an opaque tag-list/main stream.
+fn can_predict_tag_list(icc: &[u8]) -> bool {
+    if icc.len() < ICC_HEADER_SIZE + 4 {
+        return false;
+    }
+    let tags = u64::from(decode_uint32(icc, ICC_HEADER_SIZE));
+    ICC_HEADER_SIZE as u64 + tags * 12 <= icc.len() as u64
+}
+
 /// Transform an ICC profile into a more compressible form.
 ///
 /// The output is a varint-encoded size, followed by commands, followed by data.
@@ -379,7 +389,7 @@ fn predict_icc(icc: &[u8]) -> Result<Vec<u8>> {
 
     let mut pos = ICC_HEADER_SIZE;
 
-    if pos + 4 <= size {
+    if can_predict_tag_list(icc) {
         let numtags = decode_uint32(icc, pos) as u64;
         pos += 4;
         encode_var_int(numtags + 1, &mut commands);
@@ -902,6 +912,40 @@ fn icc_prefixes_within_decoder_ratio(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn declared_icc_tags_obey_the_normative_output_bound() {
+        fn varint(data: &[u8], pos: &mut usize) -> u64 {
+            let mut value = 0;
+            for shift in (0..64).step_by(7) {
+                let byte = data[*pos];
+                *pos += 1;
+                value |= u64::from(byte & 127) << shift;
+                if byte < 128 {
+                    return value;
+                }
+            }
+            panic!("invalid varint")
+        }
+        for size in [0, 127, 128, 129, 130, 131] {
+            assert!(!can_predict_tag_list(&vec![0; size]));
+        }
+        for (size, count) in [(132, 1_u32), (139, 1), (140, 1), (144, 1), (132, u32::MAX)] {
+            let mut icc = vec![0_u8; size];
+            icc[..4].copy_from_slice(&(size as u32).to_be_bytes());
+            icc[128..132].copy_from_slice(&count.to_be_bytes());
+            let predicted = predict_icc(&icc).unwrap();
+            let mut pos = 0;
+            assert_eq!(varint(&predicted, &mut pos), size as u64);
+            let commands_len = varint(&predicted, &mut pos) as usize;
+            assert!(commands_len > 0);
+            let tags = varint(&predicted, &mut pos);
+            assert!(
+                tags == 0 || 128 + (tags - 1) * 12 <= size as u64,
+                "size {size} input count {count}: predictor declares {tags} including sentinel"
+            );
+        }
+    }
 
     /// #128: tokens a one-symbol prefix code codes at zero bits break the
     /// decoders' 256:1 check; the one-bit floor restores it.

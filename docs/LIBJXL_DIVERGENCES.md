@@ -2134,6 +2134,19 @@ lookup, descriptors, metadata or compact/non-compact decisions.
 
 ## G. RESOLVED divergences (historical)
 
+### Issue 144: bounded ICC tag-list prediction (I144-E4-tags, 2026-11-16)
+
+`icc::can_predict_tag_list` permits tag-list prediction exactly when
+`icc.len() >= 132 && 128 + 12 * u32_be(icc[128..132]) <= icc.len()`, evaluated
+in u64. Other inputs take the existing opaque tag-list/main path, preserving
+every input byte. v0.12 predicts a tag list whenever four bytes remain after
+its 128-byte header; its inverse also accepts the recorded out-of-bound count.
+The E.4.4 bound is the independent oracle. This shared correction applies to
+strict and other strategies without a new gate. The arbitrary-payload level
+expectation and valid-profile byte locks remain unchanged.
+[Callers, exact evidence and coverage](COLOR_METADATA_CONTRACT.md).
+
+
 ### Issue 144: color-description field grammar (I144-E2-grammar, 2026-11-16, c1565d7b)
 
 The shared color writer uses enum coding for all color spaces, omits XYB's
