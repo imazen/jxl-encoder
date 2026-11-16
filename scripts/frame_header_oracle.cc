@@ -64,6 +64,29 @@ jxl::Status Run() {
       }
     }
   }
+  for (int alpha : {0, 1}) {
+    for (int partial : {0, 1}) {
+      for (int mode : {0, 1, 2, 3, 4}) {
+        jxl::BlendingInfo blend;
+        blend.nonserialized_num_extra_channels = alpha;
+        blend.nonserialized_is_partial_frame = partial;
+        blend.mode = static_cast<jxl::BlendMode>(mode);
+        blend.source = 1;
+        jxl::BitWriter writer(&memory);
+        JXL_RETURN_IF_ERROR(jxl::Bundle::Write(blend, &writer, jxl::LayerType::Header, nullptr));
+        const size_t bits = writer.BitsWritten();
+        JXL_RETURN_IF_ERROR(writer.WithMaxBits(8, jxl::LayerType::Header, nullptr, [&]() -> jxl::Status {
+          writer.ZeroPadToByte();
+          return true;
+        }));
+        std::cout << "blend:" << alpha << ':' << partial << ':' << mode << '\t' << bits << '\t';
+        for (uint8_t byte : writer.GetSpan()) {
+          std::cout << std::hex << std::setw(2) << std::setfill('0') << static_cast<unsigned>(byte);
+        }
+        std::cout << std::dec << '\n';
+      }
+    }
+  }
   return true;
 }
 int main() { return Run() ? 0 : 1; }
