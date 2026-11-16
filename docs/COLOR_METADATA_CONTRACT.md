@@ -202,3 +202,16 @@ PNG output can refuse odd-length arbitrary ICC data after successful JXL
 pixel decoding. The secondary decoder's ICC-content parser overflows on the
 u32::MAX fixture; raw-byte checks therefore use the primary API and djxl,
 while valid-profile controls retain secondary inspection.
+
+Reproduce the H8 checks with `just icc-tag-check <pinned-manifest>` and
+`just icc-tag-feature-check <pinned-manifest>`. The latter includes minimal
+std and optional JPEG/subsampling routes. `just icc-tag-mutation <manifest>
+<new-log>` restores the original decision only in an owned export and requires
+failures in pixel, JPEG and subsampling producers.
+
+Final selected coverage artifact SHA256:
+`5e7f04c848a9afe80356bc54e0f3f6b1774480827df8763d0f0ad4c2e1ab965a`.
+All twelve recorded regions in `can_predict_tag_list` execute; this does not
+claim coverage of the entire ICC predictor. The production repair is
+`e1053a82`. Final minimal/optional feature and mutation checks pass (214 s;
+run-heavy peak RSS 0.91 GiB, minimum available 20,261 MiB).

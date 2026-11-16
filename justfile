@@ -64,6 +64,28 @@ reference-tools-check manifest="Cargo.toml":
 reference-cross-diagnostics:
     bash scripts/reference_cross_diagnostics.sh
 
+icc-tag-mutation manifest log:
+    python3 scripts/test_icc_tag_mutation.py {{quote(manifest)}} {{quote(log)}}
+
+icc-tag-coverage manifest output:
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --lib --no-report -- icc::tests
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test icc_tag_contract --no-report
+    cargo llvm-cov report --manifest-path {{quote(manifest)}} --json --output-path {{quote(output)}}
+
+icc-tag-check manifest="Cargo.toml":
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --lib
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test icc_tag_contract
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test it icc_
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test it hash_lock
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test it strategy_libjxl
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --test it divergence_table_drift
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --lib --test icc_tag_contract -- -D warnings
+
+icc-tag-feature-check manifest="Cargo.toml":
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,__expert --test icc_tag_contract
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,jpeg-reencoding,chroma-subsampling --test icc_tag_contract
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,jpeg-reencoding,chroma-subsampling --lib --test icc_tag_contract -- -D warnings
+
 # Independent decoder controls require verified CJXL_PATH/DJXL_PATH on macOS.
 fixed-point-baseline manifest="Cargo.toml":
     cargo test --locked --manifest-path "{{manifest}}" -p jxl-encoder --lib

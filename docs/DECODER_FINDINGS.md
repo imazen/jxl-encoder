@@ -57,6 +57,7 @@ and required precision remain open; they retain FAIL verdicts.
 | O3 | imazen fork `08395e61` | Panics reconstructing 4:2:0 progressive JPEG transcodes, libjxl's included (single-component scan geometry in `jxl-jbr`); djxl is exact. | `benchmarks/jpeg_transcode_render_vs_jpeg_2026-10-07.md`. | confirmed; our upstream PR tirr-c/jxl-oxide #508 (open since 2026-10-07) |
 | O4 | crates.io 0.12 | Mis-reads some multi-group modular frames that jxl-rs and djxl accept. | 0.3.x aux-frame probe, 2026-10-24 (CLAUDE.md, lossless property bucket entry). | confirmed on 0.12.5; may be the empty-section fix shipped in 0.12.6 (unverified); no upstream issue found (2026-10-25) |
 | O5 | 0.12.x, and jxl-rs | Reject ftyp minor-version-1 files with out-of-order `jxlp` boxes, which libjxl v0.12 writes with `--output_mode 2` (both decoders ignore the minor version). | Part 2 audit, 2026-10-22 (CLAUDE.md). | confirmed; no upstream issue found (2026-10-25); not reported |
+| O6 | imazen fork `08395e61` | ICC-content parsing multiplies a raw u32 tag count without widening (`jxl-color/src/icc/parse.rs:263`); u32::MAX panics in a debug build. The ICC bytes are deliberately not a valid profile, while their opaque JXL coding is valid. | Issue-144 opaque-content control, 8x8 RGB8, encoded SHA256 `7854f88b57e242cc7fbf4e061e6f78a0a1439b51070b7337a01f8556dbf84227`; primary Rust and djxl render and preserve ICC bytes. | reproduced 2026-11-16; no sibling change or external report |
 
 ## libjxl v0.12
 
@@ -68,3 +69,13 @@ and required precision remain open; they retain FAIL verdicts.
 | L4 | Refuses a jbrd with four quantization tables (`jpeg_data.cc:147`), although the field allows 1 to 4. | Part 2 audit, 2026-10-22; 190-byte repro (3-component JPEG with an unused fourth DQT equal to the third, encoded with the check relaxed), djxl v0.12 and main fall back to pixels; with the check relaxed on both sides the JPEG rebuilds byte for byte. Related but distinct: libjxl issue 5055 (the encoder rejects unused or duplicate DQT tables). | confirmed; issue draft ready, awaiting owner approval; no upstream issue for the decoder side (2026-10-25); not reported |
 | L5 | `djxl --bits_per_sample=16` is ignored for PAM and PPM output (MAXVAL 255) while PNG honours it. The PNM reset in `djxl_main.cc:500-504` (added in 9ab6e9d4) tests `opt_jpeg_quality_id` where the help text implies `--bits_per_sample`; adding `--jpeg_quality=90` makes the PAM 16-bit. | Three-format check, djxl v0.12.0 a7a9c78 and main. | confirmed; issue draft ready, awaiting owner approval; no upstream issue (2026-10-25); not reported |
 | L6 | `ComputeBestTree` (enc_ma.cc) does not bound MA tree depth, so libjxl can in principle emit Level 5 codestreams with trees deeper than 64 (our learner had the same gap, fixed 2026-10-25). | Source reading; cjxl e9 on noise, stripes and frymire reached depth 21 at most. | triage; not reproduced; do not report without a trigger |
+
+### ICC tag-count command bound, 2026-11-16
+
+Unmodified v0.12.0 `a7a9c78` PredictICC/UnpredictICC roundtrip 132- and
+139-byte inputs declaring one tag although their predicted commands violate
+Part 1 E.4.4's output bound. The primary Rust decoder rejects the 132-byte
+encoded regression with `InvalidIccStream`; djxl renders it. Encoder selection
+now uses opaque coding for those raw bytes. The independent preamble bound,
+exact recovered bytes and complete rendering supply separate checks. Source:
+`scripts/icc_policy_oracle.cc`. No upstream report is posted.
