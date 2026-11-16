@@ -13,6 +13,9 @@
   eighth-resolution extras through LF groups, and keep grayscale alpha/depth
   planes out of RGB transforms.
 
+- Admit the existing GrayAlpha PNG layouts in the CLI's documented
+  alpha-resampling entry point.
+
 - Enforce ICC presence/model consistency at shared emission and source
   admission, preserve destination bytes on streaming model refusal, update
   canonicalized ICC selectors, and retain grayscale headers in lossy animation

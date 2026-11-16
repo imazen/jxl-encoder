@@ -2237,6 +2237,7 @@ dependencies = [
  "clap",
  "image",
  "jxl 0.4.3",
+ "jxl 0.8.0",
  "jxl-encoder",
  "png",
 ]

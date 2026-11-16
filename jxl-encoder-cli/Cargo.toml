@@ -67,6 +67,7 @@ png = "0.18.1"
 
 [dev-dependencies]
 jxl = "0.4.3"
+jxl-current = { package = "jxl", version = "0.8.0" }
 # Used by integration tests to load + crop the real-photo fixture
 # (jxl-encoder/tests/images/frymire.png) into a small region the CLI
 # can encode quickly.

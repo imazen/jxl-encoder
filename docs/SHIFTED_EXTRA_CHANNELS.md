@@ -119,3 +119,16 @@ is checksum-verified and its journal record is flushed before source removal.
 Retained streams and profiles stay outside git. The stop adapter has since
 changed; its independent current-binary evidence lives in CANCELLATION.md. A report file without a
 successful command and matching provenance is not an accepted verdict.
+
+## CLI and CMYK entry controls
+
+The CLI now forwards both existing GrayAlpha PNG precisions to their matching
+pixel layouts. The ordinary CLI feature build passes the odd-edge resampling
+and GrayAlpha sample checks across all offered strategy spellings, Reference/
+Experimental and bulk/streaming flags. Packed/strided API byte controls and
+full Rust/djxl rendering retain the expected alpha codes.
+`extra-edge-cli-current.log` passes with strict CLI lint (rc0, 49 seconds;
+peak RSS 0.97 GiB, minimum available 20,472 MiB). Run
+`just extra-edge-cli-selected-check <pinned-manifest> <coverage-env>` to repeat
+without combining obsolete profile mappings into a report. The CMYK caller
+probe and mutation commands are retained alongside these controls.

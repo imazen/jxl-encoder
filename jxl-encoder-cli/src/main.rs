@@ -1394,9 +1394,11 @@ fn main() {
         (png::ColorType::Rgb, false) => PixelLayout::Rgb8,
         (png::ColorType::Rgba, false) => PixelLayout::Rgba8,
         (png::ColorType::Grayscale, false) => PixelLayout::Gray8,
+        (png::ColorType::GrayscaleAlpha, false) => PixelLayout::GrayAlpha8,
         (png::ColorType::Rgb, true) => PixelLayout::Rgb16,
         (png::ColorType::Rgba, true) => PixelLayout::Rgba16,
         (png::ColorType::Grayscale, true) => PixelLayout::Gray16,
+        (png::ColorType::GrayscaleAlpha, true) => PixelLayout::GrayAlpha16,
         _ => {
             eprintln!(
                 "Error: Unsupported color type: {:?} {:?}",
@@ -1951,14 +1953,9 @@ fn main() {
                  (got {layout:?})."
             );
         }
-        // Multi-group writer now propagates `dim_shift > 0` through
-        // `extract_region` so downsampled extras (e.g. half-res
-        // alpha) crop in channel-local coordinates per libjxl
-        // `enc_modular.cc:1400-1407`. Previously the CLI refused
-        // multi-group on `--ec_resampling > 1`; the rejection is no
-        // longer needed. Lossy still guards `dim_shift > 0` in
-        // `vardct/encoder.rs` — only the lossless RGBA / BGRA /
-        // GrayAlpha path below exercises the new writer.
+        // Native shifted alpha uses the shared modular group geometry:
+        // shift complete group rectangles before clipping, and route shift 3
+        // to LF groups. The lossy encoder still rejects shifted extras.
 
         if ec_resampling_active {
             if args.streaming_input && !args.quiet {

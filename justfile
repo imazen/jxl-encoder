@@ -1117,17 +1117,82 @@ icc-model-cli-check manifest="Cargo.toml":
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder-cli --test icc_model -- --nocapture
     cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder-cli --test icc_model -- -D warnings
 
+extra-rect-oracle source build output:
+    python3 scripts/frame_header_oracle.py --component extra_rect {{quote(source)}} {{quote(build)}} {{quote(output)}}
 
+extra-edge-unit manifest="Cargo.toml":
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --lib shifted_region_oracle_tests -- --nocapture
+
+extra-edge-check manifest="Cargo.toml":
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test shifted_extra_edges -- --nocapture
+
+extra-edge-cli-check manifest="Cargo.toml":
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder-cli --test shifted_alpha -- --nocapture
+
+extra-edge-validation manifest="Cargo.toml":
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --lib
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --test it hash_lock
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --test it strategy_libjxl_byte_lock
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --test it divergence_table_drift
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --lib --test shifted_extra_edges -- -D warnings
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder-cli --test shifted_alpha -- -D warnings
+
+extra-edge-mutations manifest logs:
+    python3 scripts/test_shifted_extra_mutations.py {{quote(manifest)}} {{quote(logs)}}
+
+extra-edge-mutation-cli manifest logs:
+    python3 scripts/test_shifted_extra_mutations.py {{quote(manifest)}} {{quote(logs)}} --only clipped-cli
+
+extra-edge-coverage manifest output:
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --lib --no-report -- shifted_region_oracle_tests
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test shifted_extra_edges --no-report
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder-cli --features jxl_encoder/__expert --test shifted_alpha --no-report
+    cargo llvm-cov report --manifest-path {{quote(manifest)}} --json --output-path {{quote(output)}}
+
+# Completed evidence only; verifies each destination before removing its source.
 archive-test-evidence source destination journal:
     python3 scripts/archive_test_evidence.py {{quote(source)}} {{quote(destination)}} {{quote(journal)}}
 
+extra-edge-cli-coverage manifest output:
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder-cli --features jxl_encoder/__expert --test shifted_alpha --no-report
+    cargo llvm-cov report --manifest-path {{quote(manifest)}} --json --output-path {{quote(output)}}
+
+extra-edge-gray-mutations manifest logs:
+    python3 scripts/test_shifted_extra_mutations.py {{quote(manifest)}} {{quote(logs)}} --only gray --instrumented
 
 coverage-function-regions report *functions:
     python3 scripts/coverage_function_regions.py {{quote(report)}} --file-suffix modular/frame.rs --file-suffix modular/encode.rs {{functions}}
 
+extra-edge-resource-coverage manifest output:
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --lib --no-report -- shifted_lf_resource_tests
+    cargo llvm-cov report --manifest-path {{quote(manifest)}} --json --output-path {{quote(output)}}
+
+ans-cancellation-check manifest="Cargo.toml":
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --lib --no-report -- cancellation_144
+
+ans-cancellation-coverage manifest output:
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --lib --no-report -- cancellation_144
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,parallel-tree-learning --lib --no-report -- cancellation_144
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,parallel-tree-learning --lib --no-report -- shifted_lf_resource_tests
+    cargo llvm-cov report --manifest-path {{quote(manifest)}} --json --output-path {{quote(output)}}
+
+ans-cancellation-validation manifest:
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --lib --no-report
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --test it --no-report -- hash_lock
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --test it --no-report -- strategy_libjxl_byte_lock
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --test it --no-report -- divergence_table_drift
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,parallel-tree-learning --lib --no-report -- cancellation_144
+
+ans-cancellation-lint manifest coverage_env:
+    bash -c 'set -e; source "$1"; cargo clippy --locked --manifest-path "$2" -p jxl-encoder --features __expert --lib -- -D warnings; cargo clippy --locked --manifest-path "$2" -p jxl-encoder --features __expert,parallel,parallel-tree-learning --lib -- -D warnings' _ {{quote(coverage_env)}} {{quote(manifest)}}
 
 coverage-selected-report llvm_cov profile output +objects:
     python3 scripts/export_selected_coverage.py {{quote(llvm_cov)}} {{quote(profile)}} {{quote(output)}} {{objects}}
+
+extra-edge-final-coverage manifest output:
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --lib --no-report -- request_stop_tests
+    just ans-cancellation-coverage {{quote(manifest)}} {{quote(output + ".resource.json")}}
+    just extra-edge-coverage {{quote(manifest)}} {{quote(output)}}
 
 request-cancellation-check manifest:
     cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test request_cancellation --no-report
@@ -1136,6 +1201,17 @@ request-cancellation-check manifest:
 
 request-cancellation-mutation manifest log only="still":
     python3 scripts/test_request_stop_mutation.py {{quote(manifest)}} {{quote(log)}} --only {{quote(only)}}
+
+extra-edge-cmyk-check manifest profile output:
+    cargo llvm-cov run --profile test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --example shifted_extra_cmyk --no-report -- {{quote(profile)}} {{quote(output)}}
+
+extra-edge-final-validation manifest:
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --lib --no-report
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --test it --no-report -- hash_lock
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --test it --no-report -- strategy_libjxl_byte_lock
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --test it --no-report -- divergence_table_drift
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert --test shifted_extra_edges --no-report
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,parallel-tree-learning --test shifted_extra_edges --no-report -- threaded_shifted_routes
 
 animation-cancellation-check manifest:
     cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test request_cancellation --no-report -- animation_requests --nocapture
@@ -1155,28 +1231,6 @@ request-cancellation-unit manifest:
 coverage-code-window report function suffix first last:
     python3 scripts/coverage_function_regions.py {{quote(report)}} {{quote(function)}} --file-suffix {{quote(suffix)}} --start-line {{first}} --end-line {{last}}
 
-extra-rect-oracle source build output:
-    python3 scripts/frame_header_oracle.py --component extra_rect {{quote(source)}} {{quote(build)}} {{quote(output)}}
-
-
-extra-edge-unit manifest="Cargo.toml":
-    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --lib shifted_region_oracle_tests -- --nocapture
-
-
-extra-edge-check manifest="Cargo.toml":
-    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test shifted_extra_edges -- --nocapture
-
-
-extra-edge-final-validation manifest:
-    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --lib --no-report
-    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --test it --no-report -- hash_lock
-    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --test it --no-report -- strategy_libjxl_byte_lock
-    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --test it --no-report -- divergence_table_drift
-    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert --test shifted_extra_edges --no-report
-    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,parallel-tree-learning --test shifted_extra_edges --no-report -- threaded_shifted_routes
-
-
-extra-edge-resource-coverage manifest output:
-    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --lib --no-report -- shifted_lf_resource_tests
-    cargo llvm-cov report --manifest-path {{quote(manifest)}} --json --output-path {{quote(output)}}
-
+extra-edge-cli-selected-check manifest coverage_env:
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder-cli --test shifted_alpha --no-report
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; cargo clippy --locked --manifest-path "$2" -p jxl-encoder-cli --bin cjxl-rs --test shifted_alpha -- -D warnings' _ {{quote(coverage_env)}} {{quote(manifest)}}

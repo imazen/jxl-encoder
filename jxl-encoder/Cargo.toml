@@ -3404,3 +3404,7 @@ required-features = ["std"]
 [[example]]
 name = "color_description_probe"
 required-features = ["std", "__expert"]
+
+[[example]]
+name = "shifted_extra_cmyk"
+required-features = ["__expert"]
