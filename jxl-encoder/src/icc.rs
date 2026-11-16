@@ -340,6 +340,24 @@ fn predict_flags(order: i32, width: usize, stride: usize) -> u8 {
 
 // ── PredictICC ──────────────────────────────────────────────────────────────
 
+/// Enforce E.4.4's predictor tag-count bound; this is not full ICC validation.
+pub(crate) fn validate_tag_count(icc: &[u8]) -> Result<()> {
+    let size = icc.len();
+    // E.4.4 bounds the declared tag count by the reconstructed output size.
+    // Check in u64 before the predictor's usize arithmetic (also on i686).
+    // A truncated input must not become a command that violates this bound.
+    if size >= ICC_HEADER_SIZE + 4 {
+        let tags = u64::from(decode_uint32(icc, ICC_HEADER_SIZE));
+        if ICC_HEADER_SIZE as u64 + tags * 12 > size as u64 {
+            return Err(crate::error::Error::InvalidInput(format!(
+                "ICC tag count {tags} exceeds the {size}-byte output bound"
+            )));
+        }
+    }
+
+    Ok(())
+}
+
 /// Transform an ICC profile into a more compressible form.
 ///
 /// The output is a varint-encoded size, followed by commands, followed by data.
@@ -351,6 +369,8 @@ fn predict_icc(icc: &[u8]) -> Result<Vec<u8>> {
             "ICC profile too large: {size} bytes (max {SIZE_LIMIT})"
         )));
     }
+
+    validate_tag_count(icc)?;
 
     let mut result = Vec::new();
     let mut commands = Vec::new();
@@ -902,6 +922,47 @@ fn icc_prefixes_within_decoder_ratio(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn declared_icc_tags_obey_the_normative_output_bound() {
+        fn varint(data: &[u8], pos: &mut usize) -> u64 {
+            let mut value = 0;
+            for shift in (0..64).step_by(7) {
+                let byte = data[*pos];
+                *pos += 1;
+                value |= u64::from(byte & 127) << shift;
+                if byte < 128 {
+                    return value;
+                }
+            }
+            panic!("invalid varint")
+        }
+        for (size, count) in [(132, 1_u32), (139, 1), (140, 1), (144, 1), (132, u32::MAX)] {
+            let mut icc = vec![0_u8; size];
+            icc[..4].copy_from_slice(&(size as u32).to_be_bytes());
+            icc[128..132].copy_from_slice(&count.to_be_bytes());
+            if 128 + u64::from(count) * 12 > size as u64 {
+                assert!(
+                    predict_icc(&icc).is_err(),
+                    "invalid tag bound must be refused: {size}/{count}"
+                );
+                let mut writer = BitWriter::new();
+                assert!(write_icc(&icc, &mut writer).is_err());
+                assert_eq!(writer.bits_written(), 0);
+                continue;
+            }
+            let predicted = predict_icc(&icc).unwrap();
+            let mut pos = 0;
+            assert_eq!(varint(&predicted, &mut pos), size as u64);
+            let commands_len = varint(&predicted, &mut pos) as usize;
+            assert!(commands_len > 0);
+            let tags = varint(&predicted, &mut pos);
+            assert!(
+                tags == 0 || 128 + (tags - 1) * 12 <= size as u64,
+                "size {size} input count {count}: predictor declares {tags} including sentinel"
+            );
+        }
+    }
 
     /// #128: tokens a one-symbol prefix code codes at zero bits break the
     /// decoders' 256:1 check; the one-bit floor restores it.

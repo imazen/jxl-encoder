@@ -177,6 +177,7 @@ pub(crate) fn validate_metadata_sizes(
                 ),
             }));
         }
+        crate::icc::validate_tag_count(icc).map_err(at_from)?;
     }
     if let Some(exif) = exif
         && exif.len() > METADATA_SIZE_LIMIT
