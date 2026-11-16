@@ -2134,7 +2134,7 @@ lookup, descriptors, metadata or compact/non-compact decisions.
 
 ## G. RESOLVED divergences (historical)
 
-### Issue 144: color-description field grammar (I144-E2-grammar, 2026-11-16)
+### Issue 144: color-description field grammar (I144-E2-grammar, 2026-11-16, c1565d7b)
 
 The shared color writer uses enum coding for all color spaces, omits XYB's
 implicit white/transfer fields, and includes primaries for Unknown, following

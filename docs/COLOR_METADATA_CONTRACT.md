@@ -116,3 +116,23 @@ Original enum, XYB white/transfer and Unknown-primary mutations all fail the
 focused grammar regressions; removing each of the three ICC-admission calls
 independently fails the production regression. Existing expected bytes,
 ignores and scientific thresholds are unchanged.
+
+Reproduction tools:
+
+- `just color-header-oracle <v0.12-source> <v0.12-build> <new-binary>`
+- `just color-contract-check <pinned-manifest>` and `just color-contract-feature-check <pinned-manifest>`
+- `just color-description-probe <rgb|xyb|unknown> <new-directory> <pinned-manifest>`
+- `just color-payload-controls <rgb-directory> <xyb-directory> <unknown-directory> <new-summary>`
+- `just color-original-writer <pinned-manifest> <original-source-file> <new-directory>`
+- `just color-header-mutations <pinned-manifest> <new-log-directory>`
+- `just color-header-coverage <pinned-manifest> <new-json>`
+
+The original-writer tool verifies the frozen source hash, builds and retains
+both executables, restores the candidate source in `finally`, and rebuilds
+that restored source before returning. Mutation tools refuse ordinary working
+checkouts. All builds/runs require caller-provided resource controls and
+explicit verified reference paths. Probe and mutation outputs must be new.
+The description probe returns failure when any actual decoder refuses a cell;
+the payload checker reports those decoder outcomes separately from its
+structural/equality checks. None of these tools converts a decoder refusal
+into a pixel pass.

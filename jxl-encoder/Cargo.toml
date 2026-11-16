@@ -3399,3 +3399,8 @@ required-features = ["std", "jpeg-reencoding"]
 [[example]]
 name = "streaming_fuzz_replay"
 required-features = ["std"]
+
+# Explicit diagnostic: retained valid syntax exposes decoder support gaps.
+[[example]]
+name = "color_description_probe"
+required-features = ["std", "__expert"]

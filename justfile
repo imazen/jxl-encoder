@@ -4,6 +4,45 @@
 frame-header-check manifest="Cargo.toml" features="__expert":
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features {{quote(features)}} --test frame_header_contract -- --nocapture
 
+color-header-check manifest="Cargo.toml":
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --lib headers::color_encoding::tests
+    python3 -m unittest discover -s scripts -p 'test_jxl*.py'
+
+color-description-probe space output manifest="Cargo.toml":
+    cargo run --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --example color_description_probe -- {{quote(space)}} {{quote(output)}}
+
+color-contract-check manifest="Cargo.toml":
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --lib
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test frame_header_contract
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test it hash_lock
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test it strategy_libjxl
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --test it divergence_table_drift
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --lib --test frame_header_contract --example color_description_probe -- -D warnings
+    python3 -m unittest discover -s scripts -p 'test_jxl*.py'
+
+color-contract-feature-check manifest="Cargo.toml":
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,__expert --test frame_header_contract
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,__expert --lib --test frame_header_contract -- -D warnings
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,jpeg-reencoding,chroma-subsampling --test subsampled_metadata
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,jpeg-reencoding,chroma-subsampling --lib --test subsampled_metadata -- -D warnings
+
+color-payload-controls rgb xyb unknown output:
+    python3 scripts/check_color_description_payloads.py {{quote(rgb)}} {{quote(xyb)}} {{quote(unknown)}} {{quote(output)}}
+
+color-original-writer manifest original output:
+    python3 scripts/probe_original_color_writer.py {{quote(manifest)}} {{quote(original)}} {{quote(output)}}
+
+color-header-mutations manifest logs:
+    python3 scripts/test_color_header_mutations.py {{quote(manifest)}} {{quote(logs)}}
+
+color-header-coverage manifest output:
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --lib --no-report -- headers::color_encoding::tests
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test frame_header_contract --no-report -- explicit_icc_flag
+    cargo llvm-cov report --manifest-path {{quote(manifest)}} --json --output-path {{quote(output)}}
+
+color-header-oracle source build output:
+    python3 scripts/frame_header_oracle.py --component color_header {{quote(source)}} {{quote(build)}} {{quote(output)}}
+
 frame-header-lint manifest="Cargo.toml":
     cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --lib --test frame_header_contract -- -D warnings
 
@@ -171,7 +210,7 @@ pq-dc-validation manifest="Cargo.toml":
     cargo clippy --locked --manifest-path {{quote(manifest)}} --workspace --all-targets -- -D warnings
     cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience --lib -- -D warnings
     cargo fmt -p jxl-encoder -- --check
-    python3 -m unittest discover -s scripts -p test_jxl_bitstream_diff.py
+    python3 -m unittest discover -s scripts -p 'test_jxl*.py'
 
 # Existing HDR quality, signaling, float-depth and fine-quantization contracts.
 pq-existing-hdr-check manifest="Cargo.toml":
@@ -200,7 +239,7 @@ issue138-quant-trace binary out seed index corpus icc opts:
     JXL_AQDBG_DUMP={{quote(out + "/quant-trace")}} {{quote(binary)}} --images {{quote(corpus + "/CID22/CID22-512/validation")}} --images {{quote(corpus + "/gb82-sc")}} --icc {{quote(icc)}} --out {{quote(out + "/sweep")}} --seed {{seed}} --only {{index}} --threads 1 --retain --reference-study --study-max-pixels 100000000 --options {{quote(opts)}}
 
 bitstream-parser-check:
-    python3 -m unittest discover -s scripts -p test_jxl_bitstream_diff.py
+    python3 -m unittest discover -s scripts -p 'test_jxl*.py'
 
 issue138-cell binary out seed index corpus icc:
     {{quote(binary)}} --images {{quote(corpus + "/CID22/CID22-512/validation")}} --images {{quote(corpus + "/gb82-sc")}} --icc {{quote(icc)}} --out {{quote(out)}} --seed {{seed}} --only {{index}} --threads 1 --retain --reference-study --study-max-pixels 100000000
@@ -709,7 +748,7 @@ zensim-dependency-validation manifest="Cargo.toml":
 
 # Caller supplies CODEC_CORPUS_DIR with gb82-sc/imac_g3.png; missing input fails.
 empty-modular-compatibility manifest="Cargo.toml":
-    python3 -m unittest discover -s scripts -p test_jxl_bitstream_diff.py
+    python3 -m unittest discover -s scripts -p 'test_jxl*.py'
     TMPDIR="$HOME/tmp" RAYON_NUM_THREADS=4 RUST_TEST_THREADS=4 CARGO_TARGET_DIR="{{justfile_directory()}}/target" just issue103-test --manifest-path "{{manifest}}" --locked --test it empty_modular_section_roundtrip -- --include-ignored --nocapture
 
 resource-build manifest="Cargo.toml":

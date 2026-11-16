@@ -4,7 +4,7 @@
 
 - Correct shared XYB/Unknown color-space enum and conditional field encoding;
   keep RGB/Gray byte expectations unchanged and preserve explicit decoder
-  support gaps for the uncommon descriptions.
+  support gaps for the uncommon descriptions (`c1565d7b`).
 
 - Reject an explicit ICC selector without its required profile payload across
   still, streaming and animation requests; preserve automatic ICC selection
