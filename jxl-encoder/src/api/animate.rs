@@ -163,7 +163,9 @@ pub(crate) fn encode_animation_lossless(
     if let Some(bits) = request.bits_per_sample {
         sample_image.bit_depth = bits;
     }
-    let mut file_header = if sample_image.is_grayscale {
+    let mut file_header = if sample_image.is_grayscale && sample_image.has_alpha {
+        FileHeader::new_gray_alpha(width, height)
+    } else if sample_image.is_grayscale {
         FileHeader::new_gray(width, height)
     } else if sample_image.has_alpha {
         FileHeader::new_rgba(width, height)
@@ -362,6 +364,7 @@ pub(crate) fn encode_animation_lossless(
                          ec_override: Option<BlendMode>|
          -> FrameEncoderOptions {
             FrameEncoderOptions {
+                canvas_size: Some((width, height)),
                 // The config's knob, not a hardcoded `Auto` — before
                 // 2026-08-30 `with_sectioned_trees` was silently ignored
                 // on the animation path (issue #99 item 4; the same bug
@@ -1019,6 +1022,7 @@ pub(crate) fn encode_animation_lossy(
         }
 
         let frame_options = FrameOptions {
+            canvas_size: Some((width, height)),
             have_animation: true,
             have_timecodes,
             duration: frame.duration,

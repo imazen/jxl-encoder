@@ -31,6 +31,8 @@ pub struct FrameCrop {
 /// without exposing the full FrameHeader construction to callers.
 #[derive(Debug, Clone, Default)]
 pub struct FrameOptions {
+    /// Full image dimensions, independent of a cropped frame's coded dimensions.
+    pub canvas_size: Option<(u32, u32)>,
     /// Whether the file header has animation enabled.
     pub have_animation: bool,
     /// Whether the file header has have_timecodes enabled.
@@ -134,6 +136,8 @@ pub const SKIP_ADAPTIVE_LF_SMOOTHING: u64 = 0x80;
 /// to cover both modes. Use `lossy()` or `lossless()` constructors for defaults.
 #[derive(Debug, Clone)]
 pub struct FrameHeader {
+    /// Nonserialized image dimensions for F.2's covering-crop predicate.
+    pub canvas_size: Option<(u32, u32)>,
     /// Frame type.
     pub frame_type: FrameType,
     /// Encoding method.
@@ -232,6 +236,7 @@ pub struct FrameHeader {
 impl Default for FrameHeader {
     fn default() -> Self {
         Self {
+            canvas_size: None,
             frame_type: FrameType::Regular,
             encoding: Encoding::VarDct,
             xyb_encoded: true,
@@ -333,6 +338,13 @@ impl FrameHeader {
     ///
     /// Follows the JXL codestream specification (ISO 18181-1) Table A.2.
     pub fn write(&self, writer: &mut BitWriter) -> Result<()> {
+        let normal_frame =
+            self.frame_type == FrameType::Regular || self.frame_type == FrameType::SkipProgressive;
+        if normal_frame && self.have_crop() && self.canvas_size.is_none() {
+            return Err(crate::error::Error::InvalidInput(
+                "cropped frame header requires full image dimensions".into(),
+            ));
+        }
         // all_default: true only when all fields match the decoder's default
         // VarDCT default frame: Regular, VarDCT, no flags, do_ycbcr=true,
         // upsampling=1, group_size_shift=1, x/b_qm_scale=2, 1 pass,
@@ -421,7 +433,7 @@ impl FrameHeader {
 
         // have_crop: present for all frame types except LfFrame
         if self.frame_type != FrameType::LfFrame {
-            let have_crop = self.x0 != 0 || self.y0 != 0 || self.width != 0 || self.height != 0;
+            let have_crop = self.have_crop();
             writer.write_bit(have_crop)?;
             if have_crop {
                 // x0, y0: only for Regular/SkipProgressive frames (not ReferenceOnly)
@@ -435,8 +447,6 @@ impl FrameHeader {
         }
 
         // blending_info (for Regular or SkipProgressive frames)
-        let normal_frame =
-            self.frame_type == FrameType::Regular || self.frame_type == FrameType::SkipProgressive;
         if normal_frame {
             self.write_blending_info(writer)?;
         }
@@ -449,9 +459,11 @@ impl FrameHeader {
         // missing entries are treated as `0` — the historical default
         // that all callers but the chunk-2 `with_auto_delta_frames`
         // path actually want.
-        for (i, &mode) in self.ec_blend_modes.iter().enumerate() {
-            let source = self.ec_blend_sources.get(i).copied().unwrap_or(0);
-            self.write_ec_blending_info(mode, source, writer)?;
+        if normal_frame {
+            for (i, &mode) in self.ec_blend_modes.iter().enumerate() {
+                let source = self.ec_blend_sources.get(i).copied().unwrap_or(0);
+                self.write_ec_blending_info(mode, source, writer)?;
+            }
         }
 
         // duration and timecode (for animated normal frames)
@@ -489,9 +501,7 @@ impl FrameHeader {
             if self.frame_type == FrameType::ReferenceOnly {
                 writer.write_bit(self.save_before_ct)?;
             } else {
-                let full_frame =
-                    self.x0 == 0 && self.y0 == 0 && self.width == 0 && self.height == 0;
-                let resets_canvas = self.blend_mode == BlendMode::Replace && full_frame;
+                let resets_canvas = self.blend_mode == BlendMode::Replace && self.covers_canvas();
                 let can_be_referenced = self.duration == 0 || self.save_as_reference != 0;
                 if resets_canvas && can_be_referenced && normal_frame {
                     writer.write_bit(self.save_before_ct)?;
@@ -509,6 +519,22 @@ impl FrameHeader {
         writer.write_u64_coder(0)?;
 
         Ok(())
+    }
+
+    fn have_crop(&self) -> bool {
+        self.x0 != 0 || self.y0 != 0 || self.width != 0 || self.height != 0
+    }
+
+    /// F.2 uses image coverage, including crops extending beyond the canvas.
+    /// Widen before adding so large dimensions and negative origins cannot wrap.
+    fn covers_canvas(&self) -> bool {
+        !self.have_crop()
+            || self.canvas_size.is_some_and(|(width, height)| {
+                self.x0 <= 0
+                    && self.y0 <= 0
+                    && i64::from(self.x0) + i64::from(self.width) >= i64::from(width)
+                    && i64::from(self.y0) + i64::from(self.height) >= i64::from(height)
+            })
     }
 
     /// Writes crop information.
@@ -581,8 +607,7 @@ impl FrameHeader {
 
         // source: only when not (full_frame && Replace) — same as the
         // decoder's `resets_canvas` predicate.
-        let full_frame = self.x0 == 0 && self.y0 == 0 && self.width == 0 && self.height == 0;
-        if !(full_frame && self.blend_mode == BlendMode::Replace) {
+        if !(self.covers_canvas() && self.blend_mode == BlendMode::Replace) {
             writer.write(2, self.blend_source as u64)?;
         }
 
@@ -619,8 +644,7 @@ impl FrameHeader {
             writer.write_bit(false)?; // clamp = false
         }
 
-        let full_frame = self.x0 == 0 && self.y0 == 0 && self.width == 0 && self.height == 0;
-        if !(full_frame && mode == BlendMode::Replace) {
+        if !(self.covers_canvas() && mode == BlendMode::Replace) {
             writer.write(2, source as u64)?;
         }
 
@@ -807,6 +831,204 @@ mod tests {
     use super::*;
 
     #[test]
+    fn both_blending_writers_match_unmodified_libjxl_v012() {
+        for row in include_str!("blending_v012.tsv")
+            .lines()
+            .filter(|l| !l.starts_with('#'))
+        {
+            let fields: Vec<_> = row.split('\t').collect();
+            let case: Vec<u32> = fields[0]
+                .split(':')
+                .skip(1)
+                .map(|v| v.parse().unwrap())
+                .collect();
+            let [alpha, partial, mode] = case.as_slice() else {
+                panic!("invalid oracle case")
+            };
+            let mode = match mode {
+                0 => BlendMode::Replace,
+                1 => BlendMode::Add,
+                2 => BlendMode::Blend,
+                3 => BlendMode::AlphaWeightedAdd,
+                4 => BlendMode::Mul,
+                _ => unreachable!(),
+            };
+            let mut frame = FrameHeader::lossy();
+            frame.canvas_size = Some((64, 32));
+            frame.width = if *partial != 0 { 32 } else { 64 };
+            frame.height = 32;
+            frame.blend_mode = mode;
+            frame.blend_source = 1;
+            frame.ec_blend_modes = vec![mode; *alpha as usize];
+            let expected: Vec<u8> = fields[2]
+                .as_bytes()
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|pair| u8::from_str_radix(core::str::from_utf8(pair).unwrap(), 16).unwrap())
+                .collect();
+            for extra in [false, true] {
+                let mut writer = BitWriter::new();
+                if extra {
+                    frame.write_ec_blending_info(mode, 1, &mut writer).unwrap();
+                } else {
+                    frame.write_blending_info(&mut writer).unwrap();
+                }
+                assert_eq!(
+                    (writer.bits_written(), writer.finish_with_padding()),
+                    (fields[1].parse().unwrap(), expected.clone()),
+                    "{} extra={extra}",
+                    fields[0]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn covering_crop_predicate_checks_every_edge_without_overflow() {
+        let mut frame = FrameHeader::lossy();
+        assert!(frame.covers_canvas());
+        frame.canvas_size = Some((64, 32));
+        for (x, y, width, height, covers) in [
+            (0, 0, 64, 32, true),
+            (-1, -1, 65, 33, true),
+            (-1, -1, 64, 33, false),
+            (-1, -1, 65, 32, false),
+            (1, 0, 64, 32, false),
+            (0, 1, 64, 32, false),
+            (0, 0, 63, 32, false),
+            (0, 0, 64, 31, false),
+            (i32::MIN, i32::MIN, u32::MAX, u32::MAX, true),
+            (i32::MAX, 0, u32::MAX, 32, false),
+        ] {
+            frame.x0 = x;
+            frame.y0 = y;
+            frame.width = width;
+            frame.height = height;
+            assert_eq!(frame.covers_canvas(), covers, "{x},{y},{width},{height}");
+        }
+    }
+
+    #[test]
+    fn cropped_normal_header_needs_canvas_before_writing() {
+        let mut frame = FrameHeader::lossy();
+        frame.width = 8;
+        frame.height = 8;
+        let mut writer = BitWriter::new();
+        assert!(frame.write(&mut writer).is_err());
+        assert_eq!(writer.bits_written(), 0);
+        frame.canvas_size = Some((8, 8));
+        frame.write(&mut writer).unwrap();
+    }
+
+    #[test]
+    fn non_normal_headers_ignore_main_and_extra_blending() {
+        for kind in [FrameType::ReferenceOnly, FrameType::LfFrame] {
+            let mut frame = FrameHeader::lossless();
+            frame.frame_type = kind;
+            frame.is_last = false;
+            frame.save_before_ct = kind == FrameType::ReferenceOnly;
+            frame.lf_level = 1;
+            frame.ec_upsampling = vec![1];
+            let mut baseline = BitWriter::new();
+            frame.write(&mut baseline).unwrap();
+            let expected = (baseline.bits_written(), baseline.finish_with_padding());
+            for mode in [
+                BlendMode::Replace,
+                BlendMode::Add,
+                BlendMode::Blend,
+                BlendMode::AlphaWeightedAdd,
+                BlendMode::Mul,
+            ] {
+                frame.blend_mode = mode;
+                frame.blend_source = 3;
+                frame.ec_blend_modes = vec![mode];
+                frame.ec_blend_sources = vec![3];
+                let mut actual = BitWriter::new();
+                frame.write(&mut actual).unwrap();
+                assert_eq!(
+                    (actual.bits_written(), actual.finish_with_padding()),
+                    expected
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn frame_grammar_matches_unmodified_libjxl_v012() {
+        for row in include_str!("frame_header_v012.tsv")
+            .lines()
+            .filter(|l| !l.starts_with('#'))
+        {
+            let fields: Vec<_> = row.split('\t').collect();
+            let case: Vec<u32> = fields[0].split(':').map(|v| v.parse().unwrap()).collect();
+            let [modular, alpha, kind, crop] = case.as_slice() else {
+                panic!("invalid oracle case")
+            };
+            let mut frame = if *modular != 0 {
+                FrameHeader::lossless()
+            } else {
+                FrameHeader::lossy()
+            };
+            frame.canvas_size = Some((64, 32));
+            frame.frame_type = match kind {
+                0 => FrameType::Regular,
+                2 => FrameType::ReferenceOnly,
+                3 => FrameType::SkipProgressive,
+                _ => unreachable!(),
+            };
+            frame.x_qm_scale = 3;
+            frame.have_animation = true;
+            frame.duration = 10;
+            frame.is_last = false;
+            frame.save_as_reference = 2;
+            frame.save_before_ct = *kind == 2;
+            frame.name = "oracle".into();
+            frame.ec_upsampling = vec![1; *alpha as usize];
+            frame.ec_blend_modes = vec![BlendMode::Replace; *alpha as usize];
+            frame.ec_blend_sources = vec![1; *alpha as usize];
+            frame.blend_source = 1;
+            match crop {
+                0 => {}
+                1 => {
+                    frame.width = 64;
+                    frame.height = 32;
+                }
+                2 => {
+                    frame.x0 = -1;
+                    frame.y0 = -1;
+                    frame.width = 66;
+                    frame.height = 34;
+                }
+                3 => {
+                    frame.x0 = 1;
+                    frame.y0 = 1;
+                    frame.width = 32;
+                    frame.height = 16;
+                }
+                _ => unreachable!(),
+            }
+            let mut writer = BitWriter::new();
+            frame.write(&mut writer).unwrap();
+            let bits = writer.bits_written();
+            let bytes = writer.finish_with_padding();
+            let expected: Vec<u8> = fields[2]
+                .as_bytes()
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|pair| u8::from_str_radix(core::str::from_utf8(pair).unwrap(), 16).unwrap())
+                .collect();
+            assert_eq!(
+                (bits, bytes),
+                (fields[1].parse().unwrap(), expected),
+                "case {}",
+                fields[0]
+            );
+        }
+    }
+
+    #[test]
     fn test_default_frame() {
         let frame = FrameHeader::lossy();
         let mut writer = BitWriter::new();
@@ -852,6 +1074,7 @@ mod tests {
     #[test]
     fn test_frame_with_crop() {
         let mut frame = FrameHeader::lossy();
+        frame.canvas_size = Some((30000, 30000));
         frame.x0 = 0;
         frame.y0 = 0;
         frame.width = 20000;
@@ -865,6 +1088,7 @@ mod tests {
     #[test]
     fn test_frame_with_large_crop_offset() {
         let mut frame = FrameHeader::lossy();
+        frame.canvas_size = Some((30000, 30000));
         frame.x0 = 128;
         frame.y0 = 128;
         frame.width = 20000;

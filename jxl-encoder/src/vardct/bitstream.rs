@@ -4439,6 +4439,7 @@ impl VarDctEncoder {
 
             // Apply animation frame options if provided
             if let Some(opts) = frame_options {
+                fh.canvas_size = opts.canvas_size;
                 fh.have_animation = opts.have_animation;
                 fh.have_timecodes = opts.have_timecodes;
                 fh.duration = opts.duration;

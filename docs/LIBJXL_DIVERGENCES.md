@@ -2134,6 +2134,18 @@ lookup, descriptors, metadata or compact/non-compact decisions.
 
 ## G. RESOLVED divergences (historical)
 
+### Issue 144: shared frame-header blending grammar (I144-F2, 2026-11-16)
+
+`FrameHeader::write` conditions both blending bundles on Regular/SkipProgressive.
+Its shared canvas-coverage predicate controls main/extra Replace source fields
+and `save_before_ct`, including explicit and oversized covering crops. This
+matches the unmodified v0.12 header component oracle across the recorded field
+configurations. Animation writers supply full image dimensions independently
+of cropped coded dimensions. No strategy permission or numeric policy changes.
+The same layout-path validation found lossless GrayAlpha animation selecting a
+gray-only header; it now uses the existing gray-plus-alpha constructor.
+[Selected production paths and remaining gates](FRAME_HEADER_CONTRACT.md).
+
 ### Gain-map alternate-color bundle validation (2026-11-04)
 
 `hdr/bundle.rs::serialized_size` refuses nonzero bundle versions and alternate

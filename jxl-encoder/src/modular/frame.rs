@@ -111,6 +111,8 @@ mod tree_mode_tests {
 /// Options for frame encoding.
 #[derive(Debug, Clone)]
 pub struct FrameEncoderOptions {
+    /// Full image dimensions when this encoder is coding an animation crop.
+    pub canvas_size: Option<(u32, u32)>,
     /// Use modular mode (lossless).
     /// #76: retained for construction-site symmetry; nothing reads these
     /// three legacy fields any more (the encode path dispatches on the
@@ -221,6 +223,7 @@ pub struct FrameEncoderOptions {
 impl Default for FrameEncoderOptions {
     fn default() -> Self {
         Self {
+            canvas_size: None,
             use_modular: true, // Default to lossless
             effort: 7,
             use_ans: false,
@@ -325,6 +328,11 @@ impl FrameEncoder {
     /// sites (encode_modular, encode_modular_with_patches,
     /// multi-group inner) stay in sync.
     fn apply_animation_to_header(&self, fh: &mut FrameHeader) {
+        fh.canvas_size = Some(
+            self.options
+                .canvas_size
+                .unwrap_or((self.width as u32, self.height as u32)),
+        );
         fh.have_animation = self.options.have_animation;
         fh.have_timecodes = self.options.have_timecodes;
         fh.duration = self.options.duration;

@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+- Correct shared frame-header blending conditions for ReferenceOnly frames and
+  crops covering the canvas; retain alpha metadata in lossless GrayAlpha
+  animation. Applies to every strategy without a new policy gate.
+
 - Keep strict CI checks working with Rust 1.100: iterate bounded entropy, modular and VarDCT data directly, remove duplicate attributes, and update the matching tests/examples without changing assertions, arithmetic or quality gates.
 
 - Compile the Linux x86 fuzz runtime comparison callbacks with hardware POPCNT; retain Rust sanitizer/coverage instrumentation and all existing timeout, RSS and input-size limits.
