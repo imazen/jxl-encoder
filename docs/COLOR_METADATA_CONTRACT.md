@@ -289,3 +289,13 @@ model selection, canonical selector or gray-animation behavior; each fails
 its regression. Normal/strict byte expectations and existing ignores remain
 unchanged. Reproduction uses the `icc-model-*` justfile recipes with the exact
 CI sibling closure and verified v0.12 reference tools.
+
+The production repair is `64bac12c`. Reproduce with
+`just icc-model-check <pinned-manifest>`,
+`just icc-model-feature-check <pinned-manifest>` and
+`just icc-model-cli-check <pinned-manifest>`.
+`just icc-model-mutations <manifest> <new-log-directory>` requires an owned
+export and restores source files after each fault. `just icc-model-coverage
+<manifest> <new-json>` emits the selected LLVM report. CLI tests reuse the
+existing primary-decoder helper at the already-pinned jxl 0.4.3 version;
+adding that test dependency changes no resolved package version.

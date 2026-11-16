@@ -2236,6 +2236,7 @@ version = "0.4.0"
 dependencies = [
  "clap",
  "image",
+ "jxl 0.4.3",
  "jxl-encoder",
  "png",
 ]

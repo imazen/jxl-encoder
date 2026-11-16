@@ -4,7 +4,8 @@
 
 - Enforce ICC presence/model consistency at shared emission and source
   admission, preserve destination bytes on streaming model refusal, update
-  canonicalized ICC selectors, and retain grayscale headers in lossy animation.
+  canonicalized ICC selectors, and retain grayscale headers in lossy animation
+  (`64bac12c`).
 
 - Encode ICC tag lists opaquely when their declared count exceeds the
   predictor's output bound; preserve arbitrary payload acceptance and every

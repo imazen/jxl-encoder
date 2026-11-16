@@ -2510,7 +2510,7 @@ are recorded with the implementation evidence. No public API or gate count
 changes.
 
 
-### Issue 144: final ICC pair and source model (I144-E2-model, 2026-11-16)
+### Issue 144: final ICC pair and source model (I144-E2-model, 2026-11-16, 64bac12c)
 
 The shared image-header/ICC writer enforces selector/payload presence and
 Gray/profile correspondence before writing bits. Source-layout admission also

@@ -1093,3 +1093,26 @@ ci-iteration-regressions manifest="Cargo.toml":
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --lib -- --test-threads=2
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --test it clic2025::test_ans_skewed_histogram_roundtrip -- --exact --test-threads=1
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --test it clic2025::test_ans_single_symbol -- --test-threads=1
+
+# Profile-model checks include refusal and valid/canonicalized producer controls.
+icc-model-check manifest="Cargo.toml":
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,jpeg-reencoding,chroma-subsampling --lib headers::file_header::tests
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,jpeg-reencoding,chroma-subsampling --test color_profile_contract --test icc_tag_contract --test frame_header_contract
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,jpeg-reencoding,chroma-subsampling --lib --test color_profile_contract --test icc_tag_contract --test frame_header_contract -- -D warnings
+
+icc-model-feature-check manifest="Cargo.toml":
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,__expert --test color_profile_contract
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,jpeg-reencoding,chroma-subsampling,__pre_quantized --test color_profile_contract
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,jpeg-reencoding,chroma-subsampling,__pre_quantized --lib --test color_profile_contract -- -D warnings
+
+icc-model-mutations manifest logs:
+    python3 scripts/test_icc_model_mutations.py {{quote(manifest)}} {{quote(logs)}}
+
+icc-model-coverage manifest output:
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,jpeg-reencoding,chroma-subsampling,__pre_quantized --lib --no-report -- headers::file_header::tests
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,jpeg-reencoding,chroma-subsampling,__pre_quantized --test color_profile_contract --no-report
+    cargo llvm-cov report --manifest-path {{quote(manifest)}} --json --output-path {{quote(output)}}
+
+icc-model-cli-check manifest="Cargo.toml":
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder-cli --test icc_model -- --nocapture
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder-cli --test icc_model -- -D warnings
