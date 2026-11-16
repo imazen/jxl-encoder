@@ -5,6 +5,7 @@ from pathlib import Path
 import subprocess
 
 p = argparse.ArgumentParser(description=__doc__)
+p.add_argument("--component", choices=["frame_header", "color_header", "color_profile"], default="frame_header")
 p.add_argument("source", type=Path, help="source exported from v0.12.0")
 p.add_argument("build", type=Path, help="existing Ninja build of v0.12.0")
 p.add_argument("output", type=Path, help="new executable path")
@@ -21,7 +22,7 @@ objects = [str(a.build / word) for word in line.split() if word.endswith(".o")]
 command = ["c++", "-std=c++17", "-O2", "-fno-rtti", "-DNDEBUG",
            "-I" + str(a.source), "-I" + str(a.source / "lib/include"),
            "-I" + str(a.build / "lib/include"),
-           str(Path(__file__).with_suffix(".cc")), *objects,
+           str(Path(__file__).with_name(a.component + "_oracle.cc")), *objects,
            "-L" + str(a.build / "lib"), "-Wl,-rpath," + str(a.build / "lib"),
            "-ljxl_cms", "-lhwy", "-lbrotlidec", "-lbrotlicommon", "-lbrotlienc",
            "-pthread", "-o", str(a.output)]
