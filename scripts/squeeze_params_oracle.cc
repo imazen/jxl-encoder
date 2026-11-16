@@ -17,7 +17,7 @@
 jxl::Status PrintDefaults(JxlMemoryManager& memory) {
     for (const auto shape : std::vector<std::pair<size_t, size_t>>{
         {1,17}, {17,1}, {8,8}, {16,16}, {259,17}, {17,259}, {8,65665}, {65665,8}}) {
-      for (const int channels : {3, 19, 20, 21, 259}) {
+      for (const int channels : {1, 2, 3, 19, 20, 21, 259}) {
         if (channels == 259 && shape != std::make_pair(size_t{16}, size_t{16})) continue;
         JXL_ASSIGN_OR_RETURN(auto image, jxl::Image::Create(&memory, shape.first, shape.second, 8, channels));
         std::vector<jxl::SqueezeParams> defaults;

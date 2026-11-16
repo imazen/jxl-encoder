@@ -10,7 +10,7 @@ control. `SOURCE` must be the source used by that existing build.
 
 The parameter executable supports:
 
-- `--defaults`: `DefaultSqueezeParameters`, including the 259-channel case
+- `--defaults`: `DefaultSqueezeParameters`, including one/two-channel controls and the 259-channel case
   at 16x16. Columns are width, height, channel count, operation index,
   horizontal, in-place, begin channel, and channel count for that operation.
 - `--wire`: the actual bundle writer's count, bit length, and hex bytes.
