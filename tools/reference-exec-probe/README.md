@@ -27,3 +27,11 @@ a local release test worker. The image's `/linux-runner i686` defaults to
 native execution, so calling that local control QEMU execution was incorrect.
 CI now records normal and seccomp-disabled diagnostic controls before the
 unchanged full library gate. Neither control establishes pixel correctness.
+
+Run 43877137348 executes the paired control on the hosted runner:
+normal container `normal_rc=101` with ENOSYS, identical binary/image with
+seccomp disabled `unconfined_rc=0`. The following full library step still
+used the normal policy and failed reference launches. CI therefore scopes
+`--security-opt seccomp=unconfined` to its i686 probe and full library
+execution steps. The full suite's remote confirmation remains separate.
+`just reference-cross-diagnostics` retains the paired diagnostic recipe.

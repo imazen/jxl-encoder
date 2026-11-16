@@ -1766,14 +1766,28 @@ misclassify that CLI limitation as an invalid stream or strip the ICC to hide it
 
 ## Known Bugs (ACTIVE)
 
+### RESOLVED 2026-11-16: explicit ICC selector without payload
+
+An explicit `ColorEncoding.want_icc` could promise an absent ICC stream.
+Shared still/animation admission and the separate lossless streaming writer
+now refuse that request; lossy streaming delegates to still admission.
+Present-profile controls retain exact ICC bytes, render through the primary
+Rust decoder and pinned djxl v0.12, and match streaming bytes across the
+selected policies. Channel correspondence and profile structure remain open.
+[Contract and exact scope](docs/COLOR_METADATA_CONTRACT.md).
+
+
 ### 2026-11-16: i686 reference subprocess admission
 
 Run 43874324031 fails reference launches with ENOSYS (os error 38), including
 a test-executable child. The checksum-pinned v0.12 tool works in local cross
 controls with Rust 1.99.1 and 1.100.0, including a release test worker and the
 same container image digest. The image runner defaults to native i686.
-CI records normal and seccomp-disabled execution probes; the complete library
-gate remains unchanged. Root cause and remote repair are not established.
+The paired control in run 43877137348 fails under the normal container policy
+and succeeds with seccomp disabled, using the identical binary and image.
+CI now scopes that setting to i686 execution; all library/decoder assertions
+remain unchanged. The exact rejected syscall and full-suite remote verdict
+remain separate from this policy isolation.
 
 
 ### 2026-11-16: issue 144 frame-header and GrayAlpha animation controls
