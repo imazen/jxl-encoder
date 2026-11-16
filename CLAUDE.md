@@ -1766,6 +1766,16 @@ misclassify that CLI limitation as an invalid stream or strip the ICC to hide it
 
 ## Known Bugs (ACTIVE)
 
+### 2026-11-16: i686 reference subprocess admission
+
+Run 43874324031 fails reference launches with ENOSYS (os error 38), including
+a test-executable child. The checksum-pinned v0.12 tool works in local cross
+controls with Rust 1.99.1 and 1.100.0, including a release test worker and the
+same container image digest. The image runner defaults to native i686.
+CI records normal and seccomp-disabled execution probes; the complete library
+gate remains unchanged. Root cause and remote repair are not established.
+
+
 ### 2026-11-16: issue 144 frame-header and GrayAlpha animation controls
 
 The strict-mode 64x32 ReferenceOnly RGBA streams and identical 8x8 RGB

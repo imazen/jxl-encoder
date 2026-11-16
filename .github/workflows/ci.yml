@@ -228,6 +228,11 @@ jobs:
       - name: Build (cross)
         run: cross build --locked --workspace --exclude zenjxl-tuning-runner --release --no-default-features --features "std" --target ${{ matrix.target }}
 
+      - name: Diagnose reference subprocess execution
+        if: matrix.run_tests
+        continue-on-error: true
+        run: bash scripts/reference_cross_diagnostics.sh
+
       - name: Test lib (cross/QEMU)
         if: matrix.run_tests
         run: cross test --locked --workspace --exclude zenjxl-tuning-runner --release --no-default-features --features "std" --lib --target ${{ matrix.target }}

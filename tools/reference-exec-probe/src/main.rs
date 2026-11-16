@@ -16,3 +16,8 @@ fn main() {
         Err(error) => panic!("reference spawn failed: {error:?}"),
     }
 }
+
+#[test]
+fn reference_runs_from_a_test_worker() {
+    main();
+}

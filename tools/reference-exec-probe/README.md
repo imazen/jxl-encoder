@@ -20,3 +20,10 @@ The checksum-pinned Linux v0.12 release decoder runs through this probe in
 the local cross 0.2.5 i686 image. That local control does not explain CI run
 43870680134's reference-execution failure; failed version probes now retain
 their actual spawn/exit diagnostics rather than only saying “does not run”.
+
+Run 43874324031 identifies `Function not implemented (os error 38)` from
+Rust subprocess spawning. The same image digest and Rust 1.100.0 succeed in
+a local release test worker. The image's `/linux-runner i686` defaults to
+native execution, so calling that local control QEMU execution was incorrect.
+CI now records normal and seccomp-disabled diagnostic controls before the
+unchanged full library gate. Neither control establishes pixel correctness.

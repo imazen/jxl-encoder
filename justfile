@@ -22,6 +22,9 @@ reference-tools-check manifest="Cargo.toml":
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --lib test_helpers::libjxl_version_guard_tests
     cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --lib -- -D warnings
 
+reference-cross-diagnostics:
+    bash scripts/reference_cross_diagnostics.sh
+
 # Independent decoder controls require verified CJXL_PATH/DJXL_PATH on macOS.
 fixed-point-baseline manifest="Cargo.toml":
     cargo test --locked --manifest-path "{{manifest}}" -p jxl-encoder --lib
