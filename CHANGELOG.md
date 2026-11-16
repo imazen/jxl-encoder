@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Apply the existing RCT bit budget in every lossless squeeze writer, preserving binary32 sample bits across request, legacy and streaming routes.
+
 - Retain an observed cancellation for each still/animation request and
   cancellable JPEG transcode; preserve destination bytes on failure. Map
   JPEG coefficient decoding cancellation to the typed cancellation error.

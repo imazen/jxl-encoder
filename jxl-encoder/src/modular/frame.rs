@@ -2469,7 +2469,9 @@ impl FrameEncoder {
         // Step 1: Apply RCT (YCoCg) before squeeze for RGB images, then squeeze
         let squeeze_params = default_squeeze_params(image);
         let mut squeezed = image.clone();
-        let has_rct = !squeezed.is_grayscale && squeezed.channels.len() >= 3;
+        let has_rct = !squeezed.is_grayscale
+            && squeezed.channels.len() >= 3
+            && squeezed.bit_depth < super::encode::RCT_BUDGET_LIMIT;
         if has_rct {
             super::rct::forward_rct_stop(&mut squeezed.channels, 0, RctType::YCOCG, stop)?;
         }

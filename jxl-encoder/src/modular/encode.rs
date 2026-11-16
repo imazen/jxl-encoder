@@ -940,7 +940,9 @@ pub fn write_modular_stream_with_squeeze(
 
     // Apply RCT (YCoCg) before squeeze for RGB images to decorrelate channels
     let mut transformed = image.clone();
-    let has_rct = !transformed.is_grayscale && transformed.channels.len() >= 3;
+    let has_rct = !transformed.is_grayscale
+        && transformed.channels.len() >= 3
+        && transformed.bit_depth < RCT_BUDGET_LIMIT;
     if has_rct {
         let rct_type = RctType::YCOCG;
         crate::modular::rct::forward_rct_stop(&mut transformed.channels, 0, rct_type, None)?;
@@ -3216,7 +3218,9 @@ pub(crate) fn write_modular_stream_with_squeeze_and_tree_stop(
 
     // Step 1: Apply RCT (YCoCg) before squeeze for RGB images
     let mut transformed = image.clone();
-    let has_rct = !transformed.is_grayscale && transformed.channels.len() >= 3;
+    let has_rct = !transformed.is_grayscale
+        && transformed.channels.len() >= 3
+        && transformed.bit_depth < RCT_BUDGET_LIMIT;
     if has_rct {
         let rct_type = RctType::YCOCG;
         crate::modular::rct::forward_rct_stop(&mut transformed.channels, 0, rct_type, stop)?;

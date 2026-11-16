@@ -1766,6 +1766,19 @@ misclassify that CLI limitation as an invalid stream or strip the ICC to hide it
 
 ## Known Bugs (ACTIVE)
 
+### RESOLVED 2026-11-17: binary32 squeeze widened through an unbudgeted RCT
+
+The simple/learned single-group and learned multi-group squeeze writers now
+apply the existing RCT bit budget. The finite-float regression panics before
+repair with checked arithmetic and produces four wrong samples in the retained
+unchecked control. After repair, every selected color/alpha bit is exact in
+jxl-rs and pinned djxl through packed/strided requests, legacy and streaming
+entries. The isolated main-only library and unchanged normal/strict/drift
+checks pass. The unchecked replay also passes, with an executing arithmetic
+marker verifying disabled overflow checks. No expectation or ignore changes.
+[Admission contract, route scope and evidence](docs/SQUEEZE_RCT_ADMISSION.md).
+The separate channel-count and anisotropic-group defects remain open.
+
 ### 2026-11-16: explicit squeeze channel count twenty overflows its field
 
 The strict public RGB8 16x16 plus seventeen full-size depth-channel request,

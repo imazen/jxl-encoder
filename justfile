@@ -1234,3 +1234,14 @@ coverage-code-window report function suffix first last:
 extra-edge-cli-selected-check manifest coverage_env:
     cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder-cli --test shifted_alpha --no-report
     bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; cargo clippy --locked --manifest-path "$2" -p jxl-encoder-cli --bin cjxl-rs --test shifted_alpha -- -D warnings' _ {{quote(coverage_env)}} {{quote(manifest)}}
+
+squeeze-native-reference-controls manifest:
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test squeeze_reference --no-report -- --nocapture --test-threads=1
+
+squeeze-f32-route-controls manifest:
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test squeeze_f32_routes --no-report -- --nocapture --test-threads=1
+
+squeeze-rct-guard-regions report:
+    python3 scripts/coverage_function_regions.py {{quote(report)}} 33write_modular_stream_with_squeeze --file-suffix modular/encode.rs --start-line 943 --end-line 946
+    python3 scripts/coverage_function_regions.py {{quote(report)}} write_modular_stream_with_squeeze_and_tree_stop --file-suffix modular/encode.rs --start-line 3221 --end-line 3224
+    python3 scripts/coverage_function_regions.py {{quote(report)}} encode_modular_multi_group_squeeze_with_tree --file-suffix modular/frame.rs --start-line 2472 --end-line 2475

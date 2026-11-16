@@ -2571,3 +2571,15 @@ corresponding libjxl v0.12 callback type, no public API or policy change, and
 no change to entropy or pixel arithmetic. The public checkpoint sweep first
 failed at strict global-tree checkpoint nine; the focused repaired sweep passes.
 Broad unchanged-byte and coverage checks remain required.
+
+### Issue 144: squeeze RCT bit budget (I144-E5, repaired)
+
+The two single-group squeeze writers and learned multi-group squeeze now
+require `bit_depth < RCT_BUDGET_LIMIT` (30) before RGB YCoCg, sharing the
+existing simple multi-group/ordinary modular permission. This repairs signed
+binary32 source codes widening past squeeze's admitted range. Grayscale stays
+outside RGB RCT; integer/f16 choices stay unchanged. The reference's bit budget
+also excludes binary32 RCT, but our source-range check can still admit squeeze
+without RCT, so full responsive-stream byte parity is not claimed. No new gate,
+constant, public signature or registry permission is introduced.
+[Route evidence and limits](SQUEEZE_RCT_ADMISSION.md).
