@@ -1766,6 +1766,19 @@ misclassify that CLI limitation as an invalid stream or strip the ICC to hide it
 
 ## Known Bugs (ACTIVE)
 
+### RESOLVED 2026-11-16: final ICC pairs, canonicalization and gray animation
+
+Source admission and the shared header/ICC writer enforce the grayscale model
+and selector/payload coupling. Canonicalization updates its derived selector;
+lossy gray animation now selects the gray header. Streaming admission catches
+model errors before CLI output creation and rechecks after attaching a profile.
+Unmodified v0.12 CMS-backed API controls distinguish model errors that decoders
+can render. Arbitrary non-gray profile bytes retain the opaque-codec contract.
+[Actual paths, failing controls and limits](docs/COLOR_METADATA_CONTRACT.md).
+Full ICC-content validation, H10 CMYK requirements and H4/H5 color mathematics
+remain separate work. Existing expectations and scientific bounds are unchanged.
+
+
 ### RESOLVED 2026-11-16: impossible ICC tag counts became predictor commands
 
 A 132-byte payload declaring one tag violated the ICC command output bound;

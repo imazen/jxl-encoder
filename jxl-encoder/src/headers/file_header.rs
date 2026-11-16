@@ -471,6 +471,23 @@ impl FileHeader {
     /// Write the image header and its optional ICC stream as one operation.
     /// Byte alignment remains with the caller, matching the existing writers.
     pub(crate) fn write_with_icc(&self, icc: Option<&[u8]>, writer: &mut BitWriter) -> Result<()> {
+        // E.2 couples the selector to stream presence and the Gray tag to
+        // the profile model. Check the final pair before changing the writer:
+        // pixel canonicalization and JPEG imports can change either input.
+        if self.metadata.color_encoding.want_icc != icc.is_some() {
+            return Err(crate::error::Error::InvalidInput(
+                "ICC selector must match profile presence".into(),
+            ));
+        }
+        if let Some(icc) = icc {
+            let gray =
+                self.metadata.color_encoding.color_space == super::color_encoding::ColorSpace::Gray;
+            if gray != (icc.get(16..20) == Some(b"GRAY")) {
+                return Err(crate::error::Error::InvalidInput(
+                    "ICC profile grayscale model must match the image color space".into(),
+                ));
+            }
+        }
         self.write(writer)?;
         if let Some(icc) = icc {
             crate::icc::write_icc(icc, writer)?;
@@ -1034,6 +1051,76 @@ mod tests {
             m.force_modular_32bit = true;
             assert!(!m.modular_16bit_buffer_sufficient());
         }
+    }
+
+    #[test]
+    fn icc_pair_validation_precedes_header_writes() {
+        use super::super::color_encoding::ColorSpace;
+        let mut gray = vec![0; 20];
+        gray[16..20].copy_from_slice(b"GRAY");
+        let rgb = vec![0; 20];
+        for compact in [false, true] {
+            for space in [
+                ColorSpace::Rgb,
+                ColorSpace::Gray,
+                ColorSpace::Xyb,
+                ColorSpace::Unknown,
+            ] {
+                for want_icc in [false, true] {
+                    for profile in [None, Some(rgb.as_slice()), Some(gray.as_slice())] {
+                        let mut header = FileHeader::new_rgb(8, 8);
+                        header.header_all_default_fast_paths = compact;
+                        header.metadata.color_encoding.color_space = space;
+                        header.metadata.color_encoding.want_icc = want_icc;
+                        let valid = want_icc == profile.is_some()
+                            && profile.is_none_or(|icc| {
+                                (space == ColorSpace::Gray) == (icc.get(16..20) == Some(b"GRAY"))
+                            });
+                        let mut writer = BitWriter::new();
+                        writer.write(3, 5).unwrap();
+                        let result = header.write_with_icc(profile, &mut writer);
+                        assert_eq!(
+                            result.is_ok(),
+                            valid,
+                            "{compact} {space:?} {want_icc} {profile:?}"
+                        );
+                        if !valid {
+                            assert!(matches!(result, Err(crate::error::Error::InvalidInput(_))));
+                            assert_eq!(writer.bits_written(), 3);
+                            assert_eq!(writer.finish_with_padding(), [5]);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn icc_writer_propagates_header_validation_failure() {
+        for compact in [false, true] {
+            let mut header = FileHeader::new_rgb(8, 8);
+            header.header_all_default_fast_paths = compact;
+            header.metadata.intensity_target = 0.0;
+            let mut writer = BitWriter::new();
+            writer.write(3, 5).unwrap();
+            assert!(matches!(
+                header.write_with_icc(None, &mut writer),
+                Err(crate::error::Error::InvalidInput(_))
+            ));
+            assert_eq!(writer.bits_written(), 3);
+            assert_eq!(writer.finish_with_padding(), [5]);
+        }
+    }
+
+    #[test]
+    fn icc_writer_propagates_empty_profile_error() {
+        let mut header = FileHeader::new_rgb(8, 8);
+        header.metadata.color_encoding.want_icc = true;
+        let mut writer = BitWriter::new();
+        let result = header.write_with_icc(Some(&[]), &mut writer);
+        assert!(
+            matches!(result, Err(crate::error::Error::InvalidInput(message)) if message.contains("must not be empty"))
+        );
     }
 
     #[test]

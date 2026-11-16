@@ -29,8 +29,8 @@ modes. Present-profile controls fully render through jxl-rs and djxl v0.12,
 retain the exact Display P3 profile, and match streaming bytes. The selected
 profile control uses packed RGB8; it does not qualify every profile class or
 pixel layout. The admission guard itself does not inspect samples or layout.
-Gray/RGB ICC correspondence and malformed profile tables remain separate open
-items. This change does not validate ICC contents.
+Gray/RGB correspondence and bounded tag-list prediction are covered below.
+Full ICC-content validation remains outside these checks.
 
 ## Evidence
 
@@ -88,8 +88,7 @@ still refuses XYB with `InvalidColorEncoding`, and both pinned decoders refuse
 Unknown without ICC. That is a decoder-support limit, not evidence against
 valid syntax. No sibling or reference implementation is modified. Primary
 Rust rendering of those descriptions remains unavailable. Admission and color
-interpretation findings H4/H5, ICC channel correspondence and ICC structure
-remain open.
+interpretation findings H4/H5 and full ICC-content validation remain open.
 
 The first strict 64x32 RGB8 still controls illustrate the retained identities:
 
@@ -215,3 +214,78 @@ All twelve recorded regions in `can_predict_tag_list` execute; this does not
 claim coverage of the entire ICC predictor. The production repair is
 `e1053a82`. Final minimal/optional feature and mutation checks pass (214 s;
 run-heavy peak RSS 0.91 GiB, minimum available 20,261 MiB).
+
+
+## Final ICC pair and source model (H7)
+
+Part 1 E.2 couples profile presence to `want_icc` and the Gray tag to a
+profile's grayscale model. The v0.12 public encoder API with its CMS accepts
+matched RGB/gray profiles and refuses both mismatches; the frozen control is
+`scripts/icc_policy_oracle.cc`. Decoders can render mismatched profiles, so
+acceptance alone does not establish this invariant.
+
+The private `FileHeader::write_with_icc` checks the final pair before changing
+the output writer. All six production emission sites use it: lossless still
+and streaming, both animation writers, VarDCT and JPEG coefficients. Direct
+precomputed and prequantized entry points also reach the VarDCT writer.
+The container header-length helper re-encodes ICC bytes only to locate their
+end; it does not construct a new description/profile pair.
+
+Request admission checks the source layout's model. Both streaming encoders
+check before input admission and finish; attaching a profile invalidates prior
+admission. The wire check remains necessary after canonicalization, which can
+replace/remove a profile, and for direct encoder and JPEG callers.
+`GRAY` at ICC bytes 16..20 selects grayscale; this is a model check, not a full
+ICC validator. Short/arbitrary non-gray payload acceptance and H8's opaque
+coding remain intact. Black-channel/CMYK requirements are a separate H10 item.
+
+Two further paths were exposed by the production controls. Canonicalization
+retained an explicit ICC flag after removing its source profile. The derived
+request now describes its resulting metadata. Lossy grayscale animation had
+never set the encoder's grayscale flag; it now advertises Gray consistently
+with its still-image counterpart and accepts a matched gray profile.
+
+The failing canonical control was 61 bytes, SHA256
+`16416ea3d6d437eab00667914bb67cbc64b3af74b4e2ceb2e2b0ca8e05a2416b`;
+jxl-rs reports `AnsChecksumMismatch` and djxl refuses it. Its flag-unset
+control renders. RGB/gray profile mismatches reproduce through still,
+streaming, animation and raw/parsed JPEG calls. A CLI run with both streaming
+flags records 48 empty prior-output files after late model rejection; with
+admission checks those same cases retain their original bytes.
+
+| Surface | Selected production controls |
+|---|---|
+| All offered policies/modes | Four named bundles, Custom compact-header/smoothing combinations and Reference/Experimental; CLI includes all six accepted strategy spellings |
+| Source models | Opposite profiles refused for all 26 current input layouts before pixel dispatch; full ICC validation is not claimed |
+| Integer paths | RGB/gray, alpha, 8/16-bit still/streaming/animation; matched gray animation at efforts 1/7/8, 64x32 and 259x17 |
+| Canonicalization | sRGB and Display P3, RGBA8/16, packed/padded rows, both explicit selector values; selector values produce identical resulting bytes |
+| Float/BGR | Zero-color f16/f32 and BGR/BGRA controls, padded rows and split streaming; lossless nonlinear-f32 layouts retain explicit unsupported refusals; float animation is unsupported |
+| Direct VarDCT | Precomputed and prequantized, with/without alpha, RGB/gray, matched/mismatched/missing profiles at 32x16 and 259x17; these APIs have no named-strategy selector |
+| JPEG | Raw/parsed, bare/container, Stop wrappers, efforts 1/7/9; JPEG APIs do not consume named strategy bundles |
+| Optional subsampling | All three modes refuse gray profiles on RGB samples; matched-profile rendering retains the H8 controls |
+| Destinations | Request append/Write, streaming finish_to and CLI bulk/input/output routes preserve existing bytes on model rejection |
+
+Both decoders fully render supported outputs; lossless source colors and
+recovered ICC bytes are checked independently. Float reference output uses
+PFM with declared endianness and complete payload checks: djxl's default PAM
+writer cannot represent its float input bit-depth selection. These zero-color
+float controls establish the metadata route, not arbitrary HDR color fidelity
+or alpha precision. No GPU computation or new rate-control policy is claimed.
+Existing byte expectations, ignores and quality bounds stay unchanged.
+
+Selected LLVM region evidence (union by source coordinates across library-test
+and producer-test binaries): `write_with_icc` 28/28, `validate_icc_model` 12/12,
+and each streaming `check_input_limits` 16/16. Both streaming profile setters
+reach 6/6, including admission invalidation. Header/empty-profile failures
+exercise both shared writer error returns. Canonical controls include an unset
+color description as well as both explicit selector values. These are selected
+functions and regions, not whole-encoder or whole-ICC-codec coverage.
+
+Final artifact SHA256:
+`c60bd22a886429c239699c3c759c2329bc97be3a5ae77f976b7b8786b149d9a3`.
+The final instrumented run passes (62 s; run-heavy peak RSS 1.84 GiB, minimum
+available 20,478 MiB). Four isolated mutations restore incorrect presence,
+model selection, canonical selector or gray-animation behavior; each fails
+its regression. Normal/strict byte expectations and existing ignores remain
+unchanged. Reproduction uses the `icc-model-*` justfile recipes with the exact
+CI sibling closure and verified v0.12 reference tools.

@@ -2167,8 +2167,8 @@ Still and animation requests and the separate lossless streaming writer reject
 streaming delegates to the still request. An attached profile continues to
 select ICC output automatically. This enforces Part 1 E.2 independently of
 strategy and compact-header policy; v0.12's writer receives an internally
-consistent ColorEncoding/ICC pair. ICC channel correspondence and profile
-contents remain separate open items. No strategy gate or numeric policy
+consistent ColorEncoding/ICC pair. The final-pair/source-model extension is
+recorded below; full profile-content validation remains separate. No strategy gate or numeric policy
 changes. [Caller inventory and evidence](COLOR_METADATA_CONTRACT.md).
 
 
@@ -2508,3 +2508,16 @@ The isolated control passes all ten original quality cases with the decoder
 closure unchanged; broader qualification and the final shared-policy regression
 are recorded with the implementation evidence. No public API or gate count
 changes.
+
+
+### Issue 144: final ICC pair and source model (I144-E2-model, 2026-11-16)
+
+The shared image-header/ICC writer enforces selector/payload presence and
+Gray/profile correspondence before writing bits. Source-layout admission also
+checks the model, including streaming admission refreshed after a profile
+change. This matches the v0.12 CMS-backed public API's model refusal and Part
+1 E.2. Canonicalized requests update the selector to their derived metadata;
+lossy gray animation sets the same grayscale header flag as still encoding.
+The raw ICC codec still accepts arbitrary non-gray contents. No numeric or
+strategy gate changes. H10 Black/CMYK validation remains separate.
+[Caller inventory, before evidence and limits](COLOR_METADATA_CONTRACT.md).

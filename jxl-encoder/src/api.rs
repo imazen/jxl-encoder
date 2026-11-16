@@ -6095,6 +6095,10 @@ impl<'a> EncodeRequest<'a> {
             self.color_encoding.as_ref(),
             self.metadata.and_then(|metadata| metadata.icc_profile),
         )?;
+        validate_icc_model(
+            self.layout,
+            self.metadata.and_then(|metadata| metadata.icc_profile),
+        )?;
         validate_metadata_sizes(
             self.metadata.and_then(|m| m.icc_profile),
             self.metadata.and_then(|m| m.exif),
@@ -6535,6 +6539,10 @@ impl<'a> EncodeRequest<'a> {
             self.color_encoding.as_ref(),
             self.metadata.and_then(|metadata| metadata.icc_profile),
         )?;
+        validate_icc_model(
+            self.layout,
+            self.metadata.and_then(|metadata| metadata.icc_profile),
+        )?;
         // Defensive caps on caller-supplied metadata buffers (see
         // `validate_metadata_sizes` for rationale).
         validate_metadata_sizes(
@@ -6612,10 +6620,18 @@ impl<'a> EncodeRequest<'a> {
                 } else {
                     self.bits_per_sample
                 };
+                // The converter may replace or remove the source profile.
+                // The derived request's selector describes that output pair,
+                // while the original explicit selector was validated above.
+                let mut color_encoding = self.color_encoding.clone();
+                if let Some(color) = &mut color_encoding {
+                    color.want_icc = metadata.icc_profile.is_some();
+                }
                 let request = EncodeRequest {
                     layout,
                     row_stride: Some(view.stride()),
                     bits_per_sample,
+                    color_encoding,
                     metadata: Some(&metadata),
                     ..self
                 };
@@ -9367,6 +9383,7 @@ impl LossyEncoder {
     /// Attach an ICC color profile.
     pub fn with_icc_profile(mut self, data: &[u8]) -> Self {
         self.icc_profile = Some(data.to_vec());
+        self.input_admitted = false;
         self
     }
 
@@ -9643,6 +9660,7 @@ impl LossyEncoder {
     }
 
     fn check_input_limits(&self) -> Result<()> {
+        validate_icc_model(self.layout, self.icc_profile.as_deref())?;
         let mut request = self
             .cfg
             .encode_request(self.width, self.height, self.layout);
@@ -9706,8 +9724,8 @@ impl LossyEncoder {
 mod canonicalize;
 mod validate;
 use validate::{
-    validate_dims, validate_icc_presence, validate_intrinsic_size, validate_metadata_sizes,
-    validate_source_gamma, validate_tone_mapping_full,
+    validate_dims, validate_icc_model, validate_icc_presence, validate_intrinsic_size,
+    validate_metadata_sizes, validate_source_gamma, validate_tone_mapping_full,
 };
 
 impl LossyConfig {
@@ -9892,6 +9910,7 @@ impl LosslessEncoder {
     /// Attach an ICC color profile.
     pub fn with_icc_profile(mut self, data: &[u8]) -> Self {
         self.icc_profile = Some(data.to_vec());
+        self.input_admitted = false;
         self
     }
 
@@ -10287,6 +10306,7 @@ impl LosslessEncoder {
     }
 
     fn check_input_limits(&self) -> Result<()> {
+        validate_icc_model(self.layout, self.icc_profile.as_deref())?;
         let mut request = self
             .cfg
             .encode_request(self.width, self.height, self.layout);
@@ -10314,6 +10334,7 @@ impl LosslessEncoder {
         // `EncodeRequest::encode_inner`.
         self.cfg.validate().map_err(at_from)?;
         validate_icc_presence(self.color_encoding.as_ref(), self.icc_profile.as_deref())?;
+        validate_icc_model(self.layout, self.icc_profile.as_deref())?;
         // Defensive caps on caller-supplied metadata buffers (mirrors
         // EncodeRequest::encode_inner).
         validate_metadata_sizes(

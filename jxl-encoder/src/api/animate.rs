@@ -803,6 +803,7 @@ pub(crate) fn encode_animation_lossy(
     let has_alpha = layout.has_alpha();
     let bit_depth_16 = layout.is_16bit();
     enc.bit_depth_16 = bit_depth_16;
+    enc.is_grayscale = layout.is_grayscale();
 
     enc.loop_trace = request.loop_trace.clone();
     enc.source_gamma = request.source_gamma;

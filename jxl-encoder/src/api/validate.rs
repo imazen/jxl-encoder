@@ -152,6 +152,19 @@ pub(crate) fn validate_icc_presence(
     Ok(())
 }
 
+/// The caller's pixel channel model must agree with its attached profile.
+/// Output builders independently validate their final pair after rewrites.
+pub(crate) fn validate_icc_model(layout: PixelLayout, icc: Option<&[u8]>) -> Result<()> {
+    if let Some(icc) = icc
+        && layout.is_grayscale() != (icc.get(16..20) == Some(b"GRAY"))
+    {
+        return Err(at!(EncodeError::InvalidInput {
+            message: "ICC profile grayscale model must match the input pixel layout".into(),
+        }));
+    }
+    Ok(())
+}
+
 /// Apply [`METADATA_SIZE_LIMIT`] to caller-supplied ICC, EXIF, and
 /// XMP buffers. Empty ICC is also rejected (the encoder cannot
 /// embed a zero-byte ICC profile). Used by `EncodeRequest`,
