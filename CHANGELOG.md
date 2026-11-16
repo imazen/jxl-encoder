@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+- Retain an observed cancellation for each still/animation request and
+  cancellable JPEG transcode; preserve destination bytes on failure. Map
+  JPEG coefficient decoding cancellation to the typed cancellation error.
+
 - Propagate ANS accumulation cancellation before normalization, avoiding
   partial distributions and preserving the caller's typed cancellation error.
 

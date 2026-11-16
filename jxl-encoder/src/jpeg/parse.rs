@@ -895,7 +895,13 @@ fn extract_coefficients_zenjpeg(
     if let Some(s) = stop {
         s.check().map_err(|_| JpegError::Cancelled)?;
     }
-    let (decoded, jbrd_meta) = decode_result.map_err(|e| JpegError::Decode(format!("{e}")))?;
+    let (decoded, jbrd_meta) = decode_result.map_err(|e| {
+        if matches!(e.kind(), zenjpeg::decoder::ErrorKind::Cancelled(_)) {
+            JpegError::Cancelled
+        } else {
+            JpegError::Decode(format!("{e}"))
+        }
+    })?;
 
     if decoded.components.len() != jpeg.components.len() {
         return Err(JpegError::Invalid(format!(

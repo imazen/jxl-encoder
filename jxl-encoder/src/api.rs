@@ -2050,19 +2050,24 @@ impl LosslessConfig {
         jpeg_bytes: &[u8],
         stop: &dyn Stop,
     ) -> Result<Vec<u8>> {
-        let max_pixels = self.limits.as_ref().and_then(|l| l.max_pixels());
-        let budget = self.transcode_budget();
-        let jpeg =
-            crate::jpeg::read_jpeg_with_stop(jpeg_bytes, max_pixels, Some(stop), Some(&budget))
-                .map_err(|e| at(EncodeError::from(e)))?;
-        crate::jpeg::encode_jpeg_to_jxl_container_with_effort_stop(
-            &jpeg,
-            self.effort,
-            Some(stop),
-            Some(&budget),
-            max_pixels,
-        )
-        .map_err(|e| at(EncodeError::from(e)))
+        let retained_stop = RequestStop::new(stop);
+        let stop: &dyn Stop = &retained_stop;
+        let result = (|| {
+            let max_pixels = self.limits.as_ref().and_then(|l| l.max_pixels());
+            let budget = self.transcode_budget();
+            let jpeg =
+                crate::jpeg::read_jpeg_with_stop(jpeg_bytes, max_pixels, Some(stop), Some(&budget))
+                    .map_err(|e| at(EncodeError::from(e)))?;
+            crate::jpeg::encode_jpeg_to_jxl_container_with_effort_stop(
+                &jpeg,
+                self.effort,
+                Some(stop),
+                Some(&budget),
+                max_pixels,
+            )
+            .map_err(|e| at(EncodeError::from(e)))
+        })();
+        retained_stop.finish(result)
     }
 
     /// Cancellable variant of [`Self::encode_jpeg_transcode_codestream`].
@@ -2078,18 +2083,23 @@ impl LosslessConfig {
         jpeg_bytes: &[u8],
         stop: &dyn Stop,
     ) -> Result<Vec<u8>> {
-        let max_pixels = self.limits.as_ref().and_then(|l| l.max_pixels());
-        let budget = self.transcode_budget();
-        let jpeg =
-            crate::jpeg::read_jpeg_with_stop(jpeg_bytes, max_pixels, Some(stop), Some(&budget))
-                .map_err(|e| at(EncodeError::from(e)))?;
-        crate::jpeg::encode_jpeg_to_jxl_with_effort_stop(
-            &jpeg,
-            self.effort,
-            Some(stop),
-            Some(&budget),
-        )
-        .map_err(|e| at(EncodeError::from(e)))
+        let retained_stop = RequestStop::new(stop);
+        let stop: &dyn Stop = &retained_stop;
+        let result = (|| {
+            let max_pixels = self.limits.as_ref().and_then(|l| l.max_pixels());
+            let budget = self.transcode_budget();
+            let jpeg =
+                crate::jpeg::read_jpeg_with_stop(jpeg_bytes, max_pixels, Some(stop), Some(&budget))
+                    .map_err(|e| at(EncodeError::from(e)))?;
+            crate::jpeg::encode_jpeg_to_jxl_with_effort_stop(
+                &jpeg,
+                self.effort,
+                Some(stop),
+                Some(&budget),
+            )
+            .map_err(|e| at(EncodeError::from(e)))
+        })();
+        retained_stop.finish(result)
     }
 
     /// Build the per-encode [`crate::budget::MemoryBudget`] for the
@@ -5641,6 +5651,93 @@ struct LossyPixels {
     synthesised_black_u16: Option<Vec<u16>>,
 }
 
+/// Retain the first observed stop for the duration of one request. Some
+/// algorithm helpers exit early and poll again at their caller; a Stop
+/// implementation is not required to repeat an error on subsequent checks.
+struct RequestStop<'a> {
+    inner: &'a dyn Stop,
+    stopped: core::sync::atomic::AtomicBool,
+}
+
+impl<'a> RequestStop<'a> {
+    fn new(inner: &'a dyn Stop) -> Self {
+        Self {
+            inner,
+            stopped: core::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    #[track_caller]
+    fn finish<T>(&self, result: Result<T>) -> Result<T> {
+        if self.stopped.load(core::sync::atomic::Ordering::Relaxed) {
+            Err(at!(EncodeError::Cancelled))
+        } else {
+            result
+        }
+    }
+}
+
+impl Stop for RequestStop<'_> {
+    #[track_caller]
+    fn check(&self) -> core::result::Result<(), enough::StopReason> {
+        use core::sync::atomic::Ordering;
+        if self.stopped.load(Ordering::Relaxed) {
+            return Err(enough::StopReason::Cancelled);
+        }
+        let result = self.inner.check();
+        if result.is_err() {
+            self.stopped.store(true, Ordering::Relaxed);
+        }
+        result
+    }
+
+    fn may_stop(&self) -> bool {
+        self.inner.may_stop()
+    }
+}
+
+#[cfg(test)]
+mod request_stop_tests {
+    use super::*;
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    struct Once(AtomicUsize);
+    impl Stop for Once {
+        fn check(&self) -> core::result::Result<(), enough::StopReason> {
+            if self.0.fetch_add(1, Ordering::Relaxed) == 0 {
+                Err(enough::StopReason::Cancelled)
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    #[test]
+    fn request_stop_retains_an_error_without_poisoning_a_new_request() {
+        let inner = Once(AtomicUsize::new(0));
+        let first = RequestStop::new(&inner);
+        assert!(first.may_stop());
+        assert!(first.check().is_err());
+        assert!(first.check().is_err());
+        assert_eq!(inner.0.load(Ordering::Relaxed), 1);
+        assert!(
+            matches!(first.finish(Ok(7_u8)), Err(e) if matches!(e.error(), EncodeError::Cancelled))
+        );
+        assert!(
+            matches!(first.finish::<u8>(Err(at!(EncodeError::InvalidInput { message: "partial inner work".into() }))), Err(e) if matches!(e.error(), EncodeError::Cancelled))
+        );
+        let next = RequestStop::new(&inner);
+        assert!(next.check().is_ok());
+        let never = RequestStop::new(&enough::Unstoppable);
+        assert!(!never.may_stop());
+        assert!(never.check().is_ok());
+        assert_eq!(never.finish(Ok(7_u8)).unwrap(), 7);
+        assert!(
+            matches!(never.finish::<u8>(Err(at!(EncodeError::InvalidInput { message: "invalid source".into() }))), Err(e) if matches!(e.error(), EncodeError::InvalidInput { .. }))
+        );
+    }
+}
+
 /// An encoding request — binds config + image dimensions + pixel layout.
 ///
 /// Created via [`LosslessConfig::encode_request`] or [`LossyConfig::encode_request`].
@@ -6062,6 +6159,23 @@ impl<'a> EncodeRequest<'a> {
     /// association explicitly first.
     #[track_caller]
     pub fn encode_animation(
+        self,
+        animation: &AnimationParams,
+        frames: &[AnimationFrame<'_>],
+    ) -> Result<Vec<u8>> {
+        let stop = self.stop.map(RequestStop::new);
+        let result = EncodeRequest {
+            stop: stop.as_ref().map(|s| s as &dyn Stop),
+            ..self
+        }
+        .encode_animation_with_request_stop(animation, frames);
+        match stop.as_ref() {
+            Some(stop) => stop.finish(result),
+            None => result,
+        }
+    }
+
+    fn encode_animation_with_request_stop(
         self,
         animation: &AnimationParams,
         frames: &[AnimationFrame<'_>],
@@ -6498,6 +6612,19 @@ impl<'a> EncodeRequest<'a> {
     }
 
     fn encode_inner(self, pixels: &[u8]) -> Result<EncodeResult> {
+        let stop = self.stop.map(RequestStop::new);
+        let result = EncodeRequest {
+            stop: stop.as_ref().map(|s| s as &dyn Stop),
+            ..self
+        }
+        .encode_inner_with_stop(pixels);
+        match stop.as_ref() {
+            Some(stop) => stop.finish(result),
+            None => result,
+        }
+    }
+
+    fn encode_inner_with_stop(self, pixels: &[u8]) -> Result<EncodeResult> {
         if let Some(stop) = self.stop {
             stop.check().map_err(|_| at!(EncodeError::Cancelled))?;
         }

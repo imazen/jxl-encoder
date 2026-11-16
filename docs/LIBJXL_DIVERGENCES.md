@@ -2533,3 +2533,16 @@ This is the Rust cooperative-cancellation contract; libjxl v0.12 has no matching
 Rust Stop interface. No strategy permission, entropy constant or public
 signature changes. Direct accumulation and existing byte locks remain the
 unchanged-output controls; validation is recorded in Known Bugs.
+
+
+### Issue 144: request-local cancellation retention (I144-stop-latch, 2026-11-16)
+
+The public still/animation request pipeline and cancellable JPEG transcode
+methods retain an observed stop until the operation returns. JPEG parsing also
+maps the coefficient decoder's typed cancellation directly. Existing algorithm helpers that return early and re-poll at a caller
+cannot lose a one-poll error. Requests without Stop keep the None path; new
+requests receive independent state. This is the Rust Stop contract, with no
+corresponding libjxl v0.12 callback type, no public API or policy change, and
+no change to entropy or pixel arithmetic. The public checkpoint sweep first
+failed at strict global-tree checkpoint nine; the focused repaired sweep passes.
+Broad unchanged-byte and coverage checks remain required.

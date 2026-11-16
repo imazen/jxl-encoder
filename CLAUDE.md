@@ -1766,6 +1766,28 @@ misclassify that CLI limitation as an invalid stream or strip the ICC to hide it
 
 ## Known Bugs (ACTIVE)
 
+### 2026-11-16: request cancellation lost a one-poll stop
+
+The E1 public cancellation sweep observes a stop at checkpoint nine of the
+strict global-tree request, yet encoding returns success and appends output.
+The Stop trait does not require repeated errors. Some learner helpers return
+early and rely on a later caller poll, so a transient stop can disappear.
+The animation request independently loses a one-poll stop at strict lossy
+checkpoint two (`animation-stop-before.log`). The raw JPEG stop API instead
+returns JpegParse at checkpoint one after its coefficient decoder reports
+cancellation (`jpeg-stop-controls.log`); this is an error-classification defect,
+not a successful output. A private latch retains the stop for still/animation requests and cancellable
+JPEG transcodes. Public JPEG parsing translates the coefficient decoder's typed
+cancellation directly. No-Stop requests retain None; no public signature changes.
+Default/parallel/JPEG sweeps pass (request-stop-final.log, rc0, 82 seconds,
+peak RSS 1.02 GiB, minimum available 21,379 MiB); strict library/test/example
+lint and minimal std/convenience compile pass (extra-edge-stop-lint.log, rc0).
+Direct JPEG parser/recompression controls pass with both decoders.
+[Contract and coverage scope](docs/CANCELLATION.md). The failing full run is retained in
+`~/tmp/jxl144/extra-edge-final-coverage.log` (rc101); all eleven pixel checks
+in that run pass. It is not an accepted coverage or whole-command pass.
+
+
 ### 2026-11-16: cancelled ANS accumulation built partial distributions (issue 144)
 
 An immediate Stop on a one-token ANS build panicked during normalization:

@@ -1128,3 +1128,26 @@ coverage-function-regions report *functions:
 
 coverage-selected-report llvm_cov profile output +objects:
     python3 scripts/export_selected_coverage.py {{quote(llvm_cov)}} {{quote(profile)}} {{quote(output)}} {{objects}}
+
+request-cancellation-check manifest:
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test request_cancellation --no-report
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,parallel-tree-learning --test request_cancellation --no-report
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,jpeg-reencoding --test request_cancellation --no-report
+
+request-cancellation-mutation manifest log:
+    python3 scripts/test_request_stop_mutation.py {{quote(manifest)}} {{quote(log)}}
+
+animation-cancellation-check manifest:
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test request_cancellation --no-report -- animation_requests --nocapture
+
+jpeg-cancellation-check manifest:
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,jpeg-reencoding --test request_cancellation --no-report -- jpeg_stop_entries --nocapture
+
+low-level-cancellation-check manifest:
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,jpeg-reencoding --test request_cancellation --no-report -- low_level_jpeg_operations --nocapture
+
+request-cancellation-lint manifest coverage_env:
+    bash -c 'set -e; source "$1"; cargo clippy --locked --manifest-path "$2" -p jxl-encoder --features __expert,jpeg-reencoding,parallel,parallel-tree-learning --lib --test request_cancellation --test shifted_extra_edges --example shifted_extra_cmyk -- -D warnings; cargo check --locked --manifest-path "$2" -p jxl-encoder --no-default-features --features std,convenience --lib' _ {{quote(coverage_env)}} {{quote(manifest)}}
+
+request-cancellation-unit manifest:
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,jpeg-reencoding --lib --no-report -- request_stop_tests
