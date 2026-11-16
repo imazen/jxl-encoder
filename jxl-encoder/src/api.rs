@@ -6091,6 +6091,10 @@ impl<'a> EncodeRequest<'a> {
         if let Some(ref ce) = self.color_encoding {
             crate::vardct::xyb::validate_color_encoding(ce).map_err(at_from)?;
         }
+        validate_icc_presence(
+            self.color_encoding.as_ref(),
+            self.metadata.and_then(|metadata| metadata.icc_profile),
+        )?;
         validate_metadata_sizes(
             self.metadata.and_then(|m| m.icc_profile),
             self.metadata.and_then(|m| m.exif),
@@ -6527,6 +6531,10 @@ impl<'a> EncodeRequest<'a> {
         if let Some(ref ce) = self.color_encoding {
             crate::vardct::xyb::validate_color_encoding(ce).map_err(at_from)?;
         }
+        validate_icc_presence(
+            self.color_encoding.as_ref(),
+            self.metadata.and_then(|metadata| metadata.icc_profile),
+        )?;
         // Defensive caps on caller-supplied metadata buffers (see
         // `validate_metadata_sizes` for rationale).
         validate_metadata_sizes(
@@ -9701,8 +9709,8 @@ impl LossyEncoder {
 mod canonicalize;
 mod validate;
 use validate::{
-    validate_dims, validate_intrinsic_size, validate_metadata_sizes, validate_source_gamma,
-    validate_tone_mapping_full,
+    validate_dims, validate_icc_presence, validate_intrinsic_size, validate_metadata_sizes,
+    validate_source_gamma, validate_tone_mapping_full,
 };
 
 impl LossyConfig {
@@ -10308,6 +10316,7 @@ impl LosslessEncoder {
         // Run the full config validator. Mirrors
         // `EncodeRequest::encode_inner`.
         self.cfg.validate().map_err(at_from)?;
+        validate_icc_presence(self.color_encoding.as_ref(), self.icc_profile.as_deref())?;
         // Defensive caps on caller-supplied metadata buffers (mirrors
         // EncodeRequest::encode_inner).
         validate_metadata_sizes(

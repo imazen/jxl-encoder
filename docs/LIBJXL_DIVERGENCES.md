@@ -2134,6 +2134,18 @@ lookup, descriptors, metadata or compact/non-compact decisions.
 
 ## G. RESOLVED divergences (historical)
 
+### Issue 144: explicit ICC selector admission (I144-E2-presence, 2026-11-16)
+
+Still and animation requests and the separate lossless streaming writer reject
+`color_encoding.want_icc && icc_profile.is_none()` before encoding. Lossy
+streaming delegates to the still request. An attached profile continues to
+select ICC output automatically. This enforces Part 1 E.2 independently of
+strategy and compact-header policy; v0.12's writer receives an internally
+consistent ColorEncoding/ICC pair. ICC channel correspondence and profile
+contents remain separate open items. No strategy gate or numeric policy
+changes. [Caller inventory and evidence](COLOR_METADATA_CONTRACT.md).
+
+
 ### Issue 144: shared frame-header blending grammar (I144-F2, 2026-11-16, fb963c89)
 
 `FrameHeader::write` conditions both blending bundles on Regular/SkipProgressive.

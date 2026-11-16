@@ -316,3 +316,143 @@ fn covering_and_partial_identity_crops_all_modes() {
         }
     }
 }
+
+#[test]
+fn explicit_icc_flag_requires_payload_at_every_color_request_entry() {
+    use jxl_encoder::ColorEncoding;
+    let pixels = [64_u8, 96, 128].repeat(8 * 8);
+    for (name, strategy, mode) in policies() {
+        let mut ce = ColorEncoding::srgb();
+        ce.want_icc = true;
+        let lossy = LossyConfig::new(1.0)
+            .with_effort(1)
+            .with_strategy(strategy.clone())
+            .with_mode(mode);
+        let lossless = LosslessConfig::new()
+            .with_effort(1)
+            .with_strategy(strategy)
+            .with_mode(mode);
+        for animation in [false, true] {
+            let frames = [AnimationFrame::new(&pixels, 10)];
+            let a = lossy
+                .encode_request(8, 8, PixelLayout::Rgb8)
+                .with_color_encoding(ce.clone());
+            let b = lossless
+                .encode_request(8, 8, PixelLayout::Rgb8)
+                .with_color_encoding(ce.clone());
+            let result_a = if animation {
+                a.encode_animation(&AnimationParams::default(), &frames)
+            } else {
+                a.encode(&pixels)
+            };
+            let result_b = if animation {
+                b.encode_animation(&AnimationParams::default(), &frames)
+            } else {
+                b.encode(&pixels)
+            };
+            assert!(
+                result_a.is_err(),
+                "{name} lossy animation={animation} accepted want_icc without profile"
+            );
+            assert!(
+                result_b.is_err(),
+                "{name} lossless animation={animation} accepted want_icc without profile"
+            );
+        }
+        let mut stream = lossless
+            .encoder(8, 8, PixelLayout::Rgb8)
+            .unwrap()
+            .with_color_encoding(ce.clone());
+        stream.push_rows(&pixels, 8).unwrap();
+        assert!(
+            stream.finish().is_err(),
+            "{name} lossless streaming accepted want_icc without profile"
+        );
+        let mut stream = lossy
+            .encoder(8, 8, PixelLayout::Rgb8)
+            .unwrap()
+            .with_color_encoding(ce);
+        stream.push_rows(&pixels, 8).unwrap();
+        assert!(
+            stream.finish().is_err(),
+            "{name} lossy streaming accepted want_icc without profile"
+        );
+        // A present profile is accepted even when the explicit flag is unset:
+        // attaching metadata selects ICC output automatically.
+        let metadata =
+            ImageMetadata::new().with_icc_profile(zenpixels_convert::icc_profiles::DISPLAY_P3_V4);
+        for flag in [false, true] {
+            let mut ce = ColorEncoding::display_p3();
+            ce.want_icc = flag;
+            for animation in [false, true] {
+                let frames = [AnimationFrame::new(&pixels, 10)];
+                let a = lossy
+                    .encode_request(8, 8, PixelLayout::Rgb8)
+                    .with_color_encoding(ce.clone())
+                    .with_metadata(&metadata);
+                let b = lossless
+                    .encode_request(8, 8, PixelLayout::Rgb8)
+                    .with_color_encoding(ce.clone())
+                    .with_metadata(&metadata);
+                for (kind, result) in [
+                    (
+                        "lossy",
+                        if animation {
+                            a.encode_animation(&AnimationParams::default(), &frames)
+                        } else {
+                            a.encode(&pixels)
+                        },
+                    ),
+                    (
+                        "lossless",
+                        if animation {
+                            b.encode_animation(&AnimationParams::default(), &frames)
+                        } else {
+                            b.encode(&pixels)
+                        },
+                    ),
+                ] {
+                    let bytes = result.unwrap();
+                    let directory = run_dir("icc-present");
+                    let path = directory.join(format!("{name}-{kind}-{flag}-{animation}.jxl"));
+                    std::fs::write(&path, &bytes).unwrap();
+                    assert_eq!(rust_frames(&bytes, 3).len(), 1);
+                    render_reference(&path);
+                    let image = jxl_oxide::JxlImage::builder()
+                        .read(std::io::Cursor::new(&bytes))
+                        .unwrap();
+                    assert_eq!(
+                        image.original_icc().unwrap(),
+                        metadata.icc_profile().unwrap()
+                    );
+                }
+            }
+            let mut stream = lossless
+                .encoder(8, 8, PixelLayout::Rgb8)
+                .unwrap()
+                .with_color_encoding(ce.clone())
+                .with_icc_profile(metadata.icc_profile().unwrap());
+            stream.push_rows(&pixels, 8).unwrap();
+            let expected = lossless
+                .encode_request(8, 8, PixelLayout::Rgb8)
+                .with_color_encoding(ce.clone())
+                .with_metadata(&metadata)
+                .encode(&pixels)
+                .unwrap();
+            assert_eq!(stream.finish().unwrap(), expected);
+            let mut stream = lossy
+                .encoder(8, 8, PixelLayout::Rgb8)
+                .unwrap()
+                .with_color_encoding(ce.clone())
+                .with_icc_profile(metadata.icc_profile().unwrap());
+            stream.push_rows(&pixels, 8).unwrap();
+            let expected = lossy
+                .encode_request(8, 8, PixelLayout::Rgb8)
+                .with_color_encoding(ce)
+                .with_metadata(&metadata)
+                .encode(&pixels)
+                .unwrap();
+            assert_eq!(stream.finish().unwrap(), expected);
+        }
+    }
+}

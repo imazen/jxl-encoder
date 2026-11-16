@@ -303,3 +303,32 @@ fn subsampled_rgb8_animation_refuses_unimplemented_sampling() {
         "ignored animation sampling: {accepted:?}"
     );
 }
+
+#[test]
+fn subsampled_requests_reject_icc_flag_without_payload() {
+    use jxl_encoder::api::EncoderStrategy;
+    let pixels = [64_u8, 96, 128].repeat(8 * 8);
+    for strategy in [
+        EncoderStrategy::Libjxl,
+        EncoderStrategy::LeanFaster,
+        EncoderStrategy::Zenjxl,
+        EncoderStrategy::Aggressive,
+    ] {
+        for mode in MODES {
+            let mut color = ColorEncoding::srgb();
+            color.want_icc = true;
+            let error = LossyConfig::new(1.0)
+                .with_effort(1)
+                .with_strategy(strategy.clone())
+                .with_chroma_subsampling(mode)
+                .encode_request(8, 8, PixelLayout::Rgb8)
+                .with_color_encoding(color)
+                .encode(&pixels)
+                .expect_err("ICC selector requires profile before subsampled dispatch");
+            assert!(
+                format!("{error:?}").contains("requires an ICC profile payload"),
+                "{error:?}"
+            );
+        }
+    }
+}

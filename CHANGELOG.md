@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+- Reject an explicit ICC selector without its required profile payload across
+  still, streaming and animation requests; preserve automatic ICC selection
+  when metadata supplies a profile.
+
 - Correct shared frame-header blending conditions for ReferenceOnly frames and
   crops covering the canvas; retain alpha metadata in lossless GrayAlpha
   animation. Applies to every strategy without a new policy gate (`fb963c89`).

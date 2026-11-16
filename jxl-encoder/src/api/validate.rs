@@ -139,6 +139,19 @@ pub(crate) fn validate_tone_mapping_full(
     Ok(())
 }
 
+/// An explicit ICC selector must have the payload it promises (Part 1 E.2).
+pub(crate) fn validate_icc_presence(
+    color: Option<&crate::ColorEncoding>,
+    icc: Option<&[u8]>,
+) -> Result<()> {
+    if color.is_some_and(|color| color.want_icc) && icc.is_none() {
+        return Err(at!(EncodeError::InvalidInput {
+            message: "ColorEncoding.want_icc requires an ICC profile payload".into(),
+        }));
+    }
+    Ok(())
+}
+
 /// Apply [`METADATA_SIZE_LIMIT`] to caller-supplied ICC, EXIF, and
 /// XMP buffers. Empty ICC is also rejected (the encoder cannot
 /// embed a zero-byte ICC profile). Used by `EncodeRequest`,
