@@ -104,7 +104,9 @@ pub struct AnimationFrame<'a> {
     /// `FrameHeader::timecode`). `None` writes no timecode. Setting
     /// `Some(_)` on **any** frame in the animation flips the file-level
     /// `have_timecodes` flag and emits a 32-bit timecode field for every
-    /// frame (frames left at `None` get timecode `0`).
+    /// normal frame (frames left at `None` get timecode `0`). ReferenceOnly
+    /// frames do not serialize this field. A nonzero timecode must exceed
+    /// all preceding positive-duration normal-frame timecodes.
     pub timecode: Option<u32>,
 }
 

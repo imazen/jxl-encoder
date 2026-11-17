@@ -1779,6 +1779,21 @@ misclassify that CLI limitation as an invalid stream or strip the ICC to hide it
 
 ## Known Bugs (ACTIVE)
 
+### RESOLVED 2026-11-17: descending and equal animation clocks
+
+Both animation writers now share Part 1 F.2 clock-order admission. Nonzero
+clocks must exceed earlier positive-duration clocks; unset zero does not reset
+history, hidden normal frames compare without advancing it, and ReferenceOnly
+fields are ignored. Actual before streams contain 2→1 and 2→2, confirmed by
+an independent complete envelope/TOC walk. Native v0.12 also accepts those
+orders, so the normative guard intentionally goes beyond that reference.
+
+[Clock contract and exact evidence](docs/ANIMATION_CLOCK_CONTRACT.md). The
+isolated clock-only source passes its unit/public controls, with both decoders
+fully rendering legal frames. Default/minimal controls and both writer faults
+pass; the scoped order window observes 13/13 regions. Valid bytes and existing
+expectations remain unchanged. Crop references and cumulative area are separate.
+
 ### RESOLVED 2026-11-17: envelope parser conditional reference bit and timecodes
 
 The diagnostic parser read `save_before_ct` after an unsaved positive-duration
@@ -1805,7 +1820,7 @@ ignored. Factor-one controls retain full rendering.
 [Contract, exact evidence and gaps](docs/DISPLAY_EXTENT_CONTRACT.md). Existing
 library/byte-lock/drift expectations remain unchanged. Animation now refuses effective spatial factors above one, with explicit,
 automatic and registered Custom permission controls; factor-one inputs retain
-rendering. Clock order and cumulative zero-duration area remain separate work. No full-input/platform coverage
+rendering. Clock order is repaired separately; cumulative zero-duration area remains open. No full-input/platform coverage
 claim follows from these selected geometry checks.
 
 

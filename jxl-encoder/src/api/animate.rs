@@ -119,6 +119,7 @@ fn validate_animation_input(
         }));
     }
     let num_frames = frames.len();
+    let mut last_displayed_timecode = 0;
     for (i, frame) in frames.iter().enumerate() {
         if frame.pixels.len() != expected_size {
             return Err(at!(EncodeError::InvalidInput {
@@ -163,6 +164,22 @@ fn validate_animation_input(
             return Err(at!(EncodeError::InvalidInput {
                 message: format!("frame {i}: blend_source {src} out of range (must be 0..=3)"),
             }));
+        }
+        // Part 1 F.2: a nonzero clock exceeds previous positive-duration
+        // frames. Hidden normal frames compare but do not advance that
+        // history; ReferenceOnly has no serialized clock or duration.
+        if !frame.reference_only {
+            let timecode = frame.timecode.unwrap_or(0);
+            if timecode != 0 && timecode <= last_displayed_timecode {
+                return Err(at!(EncodeError::InvalidInput {
+                    message: format!(
+                        "frame {i}: nonzero timecode {timecode} must exceed previous displayed timecode {last_displayed_timecode}"
+                    ),
+                }));
+            }
+            if frame.duration != 0 {
+                last_displayed_timecode = last_displayed_timecode.max(timecode);
+            }
         }
     }
     Ok(())
@@ -1552,5 +1569,50 @@ mod reference_domain_tests {
             ]),
             [true, false, false]
         );
+    }
+}
+
+#[cfg(test)]
+mod clock_order_tests {
+    use super::*;
+
+    #[test]
+    fn clock_history_obeys_normal_frame_duration_and_unset_fields() {
+        let pixels = [0_u8; 3];
+        let cases = [
+            (true, vec![(0, 10, false), (0, 10, false)]),
+            (true, vec![(1, 10, false), (2, 10, false)]),
+            (true, vec![(2, 10, false), (0, 10, false)]),
+            (true, vec![(2, 10, false), (100, 0, false), (3, 10, false)]),
+            (true, vec![(u32::MAX, 0, false), (1, 10, false)]),
+            (true, vec![(2, 10, false), (1, 77, true), (3, 10, false)]),
+            (true, vec![(u32::MAX, 10, true), (1, 10, false)]),
+            (false, vec![(2, 10, false), (1, 10, false)]),
+            (false, vec![(2, 10, false), (2, 10, false)]),
+            (false, vec![(2, 10, false), (0, 10, false), (1, 10, false)]),
+            (false, vec![(2, 10, false), (1, 0, false), (3, 10, false)]),
+            (false, vec![(2, 10, false), (2, 0, false), (3, 10, false)]),
+            (false, vec![(u32::MAX, 10, false), (1, 10, false)]),
+        ];
+        for (valid, specification) in cases {
+            let frames: Vec<_> = specification
+                .iter()
+                .map(|&(clock, duration, reference)| {
+                    AnimationFrame::new(&pixels, duration)
+                        .with_timecode(clock)
+                        .with_reference_only(reference)
+                })
+                .collect();
+            let result = validate_animation_input(1, 1, PixelLayout::Rgb8, &frames);
+            if valid {
+                result.unwrap_or_else(|error| panic!("{specification:?}: {error}"));
+            } else {
+                let error = result.unwrap_err();
+                assert!(
+                    error.to_string().contains("nonzero timecode"),
+                    "{specification:?}: {error}"
+                );
+            }
+        }
     }
 }

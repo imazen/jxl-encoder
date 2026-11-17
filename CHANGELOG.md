@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- Reject descending/equal nonzero animation clocks before encoding while
+  preserving unset, hidden-normal and ReferenceOnly history semantics.
+
 - Reject unimplemented spatial resampling in animation before frame work,
   including automatic factors; preserve the factor-one no-op.
 

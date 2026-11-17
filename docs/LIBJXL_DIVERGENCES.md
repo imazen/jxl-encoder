@@ -2797,3 +2797,10 @@ Remaining layout inventory is tracked separately in the progressive contract.
 | Site | Encoder | libjxl v0.12 / format | Status |
 |---|---|---|---|
 | Shared `EncodeRequest` animation admission | Reject `effective_resampling() > 1`; factor one remains supported, including the already-downsampled no-op | The format permits spatial upsampling, but both current animation writers omit the configuration. Actual before outputs remain 33×17 for factors 2/4/8. | RESOLVED ignored-setting path by explicit unsupported-combination refusal. Default/minimal and preset/Custom controls, complete rendering and guard fault pass. No new strategy gate or registry metadata changes. |
+
+
+## Issue 144 animation clock ordering
+
+| Site | Encoder | libjxl v0.12 / format | Status |
+|---|---|---|---|
+| Shared animation input validation | Nonzero clocks exceed previous positive-duration clocks; zero preserves history, zero-duration normal frames do not advance it, ReferenceOnly fields do not participate | Part 1 F.2 order rule; native public encoder/decoder accept and render the retained descending/equal controls | RESOLVED H12 with the normative guard. Isolated exact-source, default/minimal, both writer admission faults and 13/13 new order regions pass. No registry gate/value/metadata changes. [Contract](ANIMATION_CLOCK_CONTRACT.md). |
