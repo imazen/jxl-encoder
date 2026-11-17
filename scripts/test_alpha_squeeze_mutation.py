@@ -18,6 +18,27 @@ if (root / '.git').exists() or not (root.parent.parent / 'provenance.json').is_f
     p.error('requires an owned clean-source export')
 a.output.mkdir(exist_ok=False)
 cases = [
+    ('extra-shift', 'jxl-encoder/src/headers/extra_channels.rs',
+     'if self.dim_shift > 3 {', 'if false {', None, 'metadata_limit_tests'),
+    ('extra-cfa', 'jxl-encoder/src/headers/extra_channels.rs',
+     '&& self.cfa_channel > 274', '&& false', None, 'metadata_limit_tests'),
+    ('extra-solidity', 'jxl-encoder/src/headers/extra_channels.rs',
+     'if !(0.0..=1.0).contains(&self.spot_color[3]) {', 'if false {', None, 'metadata_limit_tests'),
+    ('extra-name', 'jxl-encoder/src/headers/extra_channels.rs',
+     'if self.name.len() > 1071 {', 'if false {', None, 'metadata_limit_tests'),
+    ('extra-f16', 'jxl-encoder/src/headers/extra_channels.rs',
+     'crate::f16::f16_roundtrip(value)?;', 'let _ = value;', None, 'metadata_limit_tests'),
+    ('extra-header', 'jxl-encoder/src/headers/file_header.rs',
+     '        for extra in &meta.extra_channels {\n            extra.validate()?;\n        }\n', '', None, 'metadata_limit_tests'),
+    ('extra-public', 'jxl-encoder/src/api.rs',
+     '            extra.info.validate().map_err(at_from)?;\n', '',
+     'extra_metadata_contract', 'extra_metadata_public_admission'),
+    ('extra-direct', 'jxl-encoder/src/vardct/encoder.rs', '__EXTRA_DIRECT__', '',
+     'extra_metadata_contract', 'extra_metadata_prepared'),
+    ('extra-prepared', 'jxl-encoder/src/vardct/encoder.rs', '__EXTRA_PREPARED__', '',
+     'extra_metadata_contract', 'extra_metadata_prepared'),
+    ('extra-prequantized', 'jxl-encoder/src/vardct/encoder.rs', '__EXTRA_PREQUANTIZED__', '',
+     'extra_metadata_contract', 'extra_metadata_prepared'),
     ('color-icc-source-gamma', 'jxl-encoder/src/api/validate.rs',
      '&& (!gamma.is_finite() || gamma <= 0.0)', '&& false',
      'source_color_contract', 'attached_icc_does_not_admit_'),
@@ -156,6 +177,14 @@ else:
 for name, source, before, after, target, selection in cases:
     path = root / source
     original = path.read_text()
+    if before.startswith('__EXTRA_'):
+        function = {'__EXTRA_DIRECT__': 'encode_with_extras_stop_impl',
+                    '__EXTRA_PREPARED__': 'encode_from_precomputed_with_extras',
+                    '__EXTRA_PREQUANTIZED__': 'encode_from_pre_quantized_ac_with_extras'}[before]
+        start = original.index('    ', original.index('fn '+function+'('))
+        end = original.index('            ec.info().validate()?;', start) + len('            ec.info().validate()?;')
+        before = original[start:end]
+        after = before.replace('            ec.info().validate()?;', '')
     if before in ('__BLEND_LOSSLESS_CROP__','__BLEND_LOSSY_CROP__'):
         function='encode_animation_lossless' if before=='__BLEND_LOSSLESS_CROP__' else 'encode_animation_lossy'
         start=original.index('        let crop = if frame.reference_only || frame.blend_mode.is_some() {',original.index('fn '+function+'('))
@@ -263,6 +292,8 @@ for name, source, before, after, target, selection in cases:
                         '--source', 'scripts/check_animation_width_headers.py',
                         '--source', 'scripts/jxl_bitstream_diff.py',
                         '--source', 'scripts/jxl_container.py']
+        if name in ('extra-direct', 'extra-prepared', 'extra-prequantized'):
+            command += ['--features', '__expert,__internals,__pre_quantized,parallel']
         if name.startswith('color-icc-source-'):
             command += ['--source', 'jxl-encoder/src/api/validate.rs',
                         '--source', 'jxl-encoder/tests/source_color_contract/icc_source.rs']

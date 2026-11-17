@@ -405,6 +405,7 @@ jobs:
           --test squeeze_group_geometry --test alpha_squeeze_contract
           --test alpha_squeeze_matrix --test alpha_squeeze_progressive
           --test progressive_ac_contract --test progressive_dispatch --test source_color_contract
+          --test extra_metadata_contract
           -- --test-threads=1
       - name: Check progressive alpha wire controls
         run: >-
@@ -425,6 +426,13 @@ jobs:
           cargo test --locked -p jxl-encoder --release
           --features "__expert,__internals,__pre_quantized,parallel"
           --test progressive_ac_contract progressive_prepared -- --test-threads=1
+      - name: Test extra metadata prepared entries
+        env:
+          JXL_ENCODER_OUTPUT_DIR: ${{ runner.temp }}/issue144-contracts
+        run: >-
+          cargo test --locked -p jxl-encoder --release
+          --features "__expert,__internals,__pre_quantized,parallel"
+          --test extra_metadata_contract extra_metadata_prepared -- --test-threads=1
       - name: Test progressive AC rate-control callers
         env:
           JXL_ENCODER_OUTPUT_DIR: ${{ runner.temp }}/issue144-contracts

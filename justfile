@@ -2150,3 +2150,57 @@ color-last-numeric-evidence manifest output coverage_env:
 
 color-final-model-trace manifest artifacts coverage_env:
     bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3/color-last-model-mismatch" mismatched_icc_channel_models_are_refused --test-target color_profile_contract --features __expert,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/validate.rs --source jxl-encoder/src/api/ingest.rs; python3 scripts/run_selected_test_evidence.py "$2" "$3/color-last-trace-header" headers::color_encoding:: --features __expert,parallel,trace-bitstream --source jxl-encoder/src/headers/color_encoding.rs --source jxl-encoder/src/headers/file_header.rs --source jxl-encoder/src/color_math.rs --source jxl-encoder/src/vardct/xyb.rs --source jxl-encoder/src/trace.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+
+extra-metadata-before-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3/public" "" --test-target extra_metadata_contract --features __expert,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/validate.rs --source jxl-encoder/src/headers/extra_channels.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+extra-metadata-writer-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" metadata_limit_tests --features __expert,parallel --source jxl-encoder/src/headers/extra_channels.rs --source jxl-encoder/src/headers/file_header.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+extra-metadata-native source build output:
+    python3 scripts/frame_header_oracle.py --component extra_metadata {{quote(source)}} {{quote(build)}} {{quote(output)}}
+
+extra-metadata-after-evidence manifest output coverage_env:
+    just extra-metadata-writer-evidence {{quote(manifest)}} {{quote(output + "/writer")}} {{quote(coverage_env)}}
+    just extra-metadata-before-evidence {{quote(manifest)}} {{quote(output)}} {{quote(coverage_env)}}
+
+extra-metadata-prepared-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" extra_metadata_prepared --test-target extra_metadata_contract --features __expert,__internals,__pre_quantized,parallel --source jxl-encoder/src/vardct/encoder.rs --source jxl-encoder/src/headers/extra_channels.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+extra-metadata-final-evidence manifest output coverage_env:
+    just extra-metadata-writer-evidence {{quote(manifest)}} {{quote(output + "/writer")}} {{quote(coverage_env)}}
+    just extra-metadata-before-evidence {{quote(manifest)}} {{quote(output)}} {{quote(coverage_env)}}
+    just extra-metadata-prepared-evidence {{quote(manifest)}} {{quote(output + "/prepared")}} {{quote(coverage_env)}}
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3/minimal" "" --test-target extra_metadata_contract --no-default-features --features std,convenience,__expert --source jxl-encoder/src/api.rs --source jxl-encoder/src/headers/extra_channels.rs --source jxl-encoder/src/headers/file_header.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+extra-metadata-faults manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/test_alpha_squeeze_mutation.py "$2" "$3" --case extra-shift --case extra-cfa --case extra-solidity --case extra-name --case extra-f16 --case extra-header --case extra-public --case extra-direct --case extra-prepared --case extra-prequantized' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+extra-metadata-regions llvm output *archives:
+    python3 scripts/color_admission_coverage.py {{quote(llvm)}} {{quote(output)}} {{archives}} --extra-metadata
+
+extra-metadata-public-admission-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" extra_metadata_public_admission --test-target extra_metadata_contract --features __expert,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/headers/extra_channels.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+extra-metadata-broad-validation manifest lint_home lint_target:
+    just alpha-squeeze-broad-baseline {{quote(manifest)}}
+    env CARGO_HOME={{quote(lint_home)}} CARGO_TARGET_DIR={{quote(lint_target)}} cargo +1.100.0 clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel --lib --test extra_metadata_contract -- -D warnings
+    env CARGO_HOME={{quote(lint_home)}} CARGO_TARGET_DIR={{quote(lint_target)}} cargo +1.100.0 clippy --locked --manifest-path {{quote(manifest)}} --workspace --all-targets -- -D warnings
+    cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder -p jxl-encoder-cli -p jxl-encoder-simd --check
+
+extra-metadata-prequantized-fault manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/test_alpha_squeeze_mutation.py "$2" "$3" --case extra-prequantized' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+extra-metadata-finish-validation manifest artifacts coverage_env llvm lint_home lint_target:
+    just extra-metadata-writer-evidence {{quote(manifest)}} {{quote(artifacts + "/extra-metadata-header-final")}} {{quote(coverage_env)}}
+    just extra-metadata-public-admission-evidence {{quote(manifest)}} {{quote(artifacts + "/extra-metadata-admission-final")}} {{quote(coverage_env)}}
+    just extra-metadata-regions {{quote(llvm)}} {{quote(artifacts + "/extra-metadata-regions")}} {{quote(artifacts + "/extra-metadata-complete/writer")}} {{quote(artifacts + "/extra-metadata-complete/public")}} {{quote(artifacts + "/extra-metadata-complete/prepared")}} {{quote(artifacts + "/extra-metadata-complete/minimal")}} {{quote(artifacts + "/extra-metadata-header-final")}} {{quote(artifacts + "/extra-metadata-admission-final")}}
+    just extra-metadata-broad-validation {{quote(manifest)}} {{quote(lint_home)}} {{quote(lint_target)}}
+
+extra-metadata-all-header-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" headers::extra_channels:: --features __expert,parallel --source jxl-encoder/src/headers/extra_channels.rs --source jxl-encoder/src/headers/file_header.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+extra-metadata-complete-regions manifest artifacts coverage_env llvm:
+    just extra-metadata-all-header-evidence {{quote(manifest)}} {{quote(artifacts + "/extra-metadata-all-header-final")}} {{quote(coverage_env)}}
+    just extra-metadata-regions {{quote(llvm)}} {{quote(artifacts + "/extra-metadata-regions-final")}} {{quote(artifacts + "/extra-metadata-complete/writer")}} {{quote(artifacts + "/extra-metadata-complete/public")}} {{quote(artifacts + "/extra-metadata-complete/prepared")}} {{quote(artifacts + "/extra-metadata-complete/minimal")}} {{quote(artifacts + "/extra-metadata-header-final")}} {{quote(artifacts + "/extra-metadata-admission-final")}} {{quote(artifacts + "/extra-metadata-all-header-final")}}
