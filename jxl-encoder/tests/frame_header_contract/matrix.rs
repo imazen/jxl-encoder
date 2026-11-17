@@ -2,8 +2,7 @@ use super::*;
 use jxl_encoder::api::EncoderMode;
 use jxl_encoder::{ImageMetadata, Limits};
 
-#[path = "../support/encoder_policies.rs"]
-mod encoder_policies;
+use super::encoder_policies;
 use encoder_policies::policies;
 
 #[allow(clippy::too_many_arguments)]

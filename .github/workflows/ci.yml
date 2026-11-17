@@ -190,6 +190,20 @@ jobs:
           --features __expert,parallel,corpus-tests
           --test source_color_contract source_white_animation -- --test-threads=1
 
+      - name: Verify explicit blends in original source profiles
+        if: matrix.name == 'Linux'
+        run: >-
+          cargo test --locked --release -p jxl-encoder
+          --features __expert,parallel,corpus-tests
+          --test frame_header_contract accepted_blend_layouts -- --test-threads=1
+
+      - name: Verify blends in the original ICC profile
+        if: matrix.name == 'Linux'
+        run: >-
+          cargo test --locked --release -p jxl-encoder
+          --features __expert,parallel,corpus-tests
+          --test frame_header_contract original_icc_addition -- --test-threads=1
+
   # ==========================================================================
   # Cross-compiled testing with QEMU emulation (32-bit targets)
   # ==========================================================================

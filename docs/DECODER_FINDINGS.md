@@ -23,6 +23,17 @@ Status values: `triage` (not yet known whether it is the decoder), `confirmed`
 
 ## Upstream jxl-rs (crates.io `jxl`)
 
+### One-pixel Multiply, 2026-11-17
+
+The pinned 0.4.3 API returns zero for a 1x1 RGB8 animation multiplying 64/255
+by 64/255. Native v0.12 and current 0.8.0 return 0.06299116462469101, the
+specified product. An independent complete envelope/TOC walk accounts for
+every frame byte. Retained stream SHA256
+`0a019dda8359bf0bad3b75cdaebf1ca9f7378f2daa94e03ebad9441791917b32`;
+original failed matrix: `explicit-blend-independent-headers`. The current
+primary matrix passes the cell. No dependency repair or external report.
+
+
 ### Tall grayscale global squeeze bands, 2026-11-17
 
 Both pinned jxl-rs versions (0.4.3 and 0.8.0) panic at the image row bound
@@ -91,6 +102,15 @@ and required precision remain open; they retain FAIL verdicts.
 
 ## jxl-oxide
 
+The pinned fork 08395e61 reports IncompleteFrame on the retained 1x1 RGB8
+full-canvas Add stream
+`e2407eb29f58211f350a43699920cbce049040c5460244a49f5fcfc42b214a55`.
+Both pinned jxl-rs APIs and native v0.12 recover the specified sum; an
+independent complete envelope/TOC walk accounts for the sequence. Sequential
+inspection reproduces the error (`explicit-blend-sequential-inspection`).
+This is a selected decoder limitation; no sibling change or external report.
+
+
 | # | Version | Finding | Evidence | Status |
 |---|---|---|---|---|
 | O1 | imazen fork `08395e61` | JPEG reconstruction matches DQT tables to components by DQT identifier instead of array position (`jxl-jbr/src/reconstruct.rs:638`), so swapped-DQT files rebuild with the wrong tables. libjxl uses the position, as the format specifies. | `tests/it/jbrd_spec_validity.rs` (djxl is the oracle for those cells). | confirmed; still on upstream main (line 638 unchanged since 2025-04); no upstream issue or PR (checked 2026-10-25); not reported |
@@ -99,6 +119,7 @@ and required precision remain open; they retain FAIL verdicts.
 | O4 | crates.io 0.12 | Mis-reads some multi-group modular frames that jxl-rs and djxl accept. | 0.3.x aux-frame probe, 2026-10-24 (CLAUDE.md, lossless property bucket entry). | confirmed on 0.12.5; may be the empty-section fix shipped in 0.12.6 (unverified); no upstream issue found (2026-10-25) |
 | O5 | 0.12.x, and jxl-rs | Reject ftyp minor-version-1 files with out-of-order `jxlp` boxes, which libjxl v0.12 writes with `--output_mode 2` (both decoders ignore the minor version). | Part 2 audit, 2026-10-22 (CLAUDE.md). | confirmed; no upstream issue found (2026-10-25); not reported |
 | O6 | imazen fork `08395e61` | ICC-content parsing multiplies a raw u32 tag count without widening (`jxl-color/src/icc/parse.rs:263`); u32::MAX panics in a debug build. The ICC bytes are deliberately not a valid profile, while their opaque JXL coding is valid. | Issue-144 opaque-content control, 8x8 RGB8, encoded SHA256 `7854f88b57e242cc7fbf4e061e6f78a0a1439b51070b7337a01f8556dbf84227`; primary Rust and djxl render and preserve ICC bytes. | reproduced 2026-11-16; no sibling change or external report |
+| O7 | imazen fork `08395e61` | The builder rejects a selected 16x17 RGBA8 ICC animation with `ValidationFailed("non-UTF-8 name")`. Numeric/parser attribution remains open. | Issue144 original-ICC Add, stream SHA256 `4b55e6a61c8cfbf8bc987674598e48af7b7a733d81acbcb6f87adce0f10649d6`. Exact identical bytes fully render in current jxl-rs and native v0.12, with exact source/Add/alpha codes in the original Display P3 space. The first encompassing run retains its failed verdict. | reproduced 2026-11-17; no sibling change or external report |
 
 ## libjxl v0.12
 

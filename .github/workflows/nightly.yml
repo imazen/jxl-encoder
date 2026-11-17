@@ -122,6 +122,14 @@ jobs:
           CODEC_CORPUS_DIR: ${{ runner.temp }}/codec-corpus
         run: cargo test --locked --release -p jxl-encoder --features corpus-tests,parallel --test production_resources -- --test-threads=1 --nocapture
 
+      - name: Preserve animation color sources across winning patch dictionaries
+        env:
+          CODEC_CORPUS_DIR: ${{ runner.temp }}/codec-corpus
+        run: >-
+          cargo test --locked --release -p jxl-encoder
+          --features corpus-tests,__expert,parallel
+          --test frame_header_contract color_source_three -- --test-threads=1
+
       - name: Validate lossless LZ77 keep-best selection
         env:
           CODEC_CORPUS_DIR: ${{ runner.temp }}/codec-corpus

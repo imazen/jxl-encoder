@@ -5,6 +5,11 @@ use jxl_encoder::api::EncoderStrategy;
 use jxl_encoder::{AnimationFrame, AnimationParams, LosslessConfig, LossyConfig, PixelLayout};
 use std::{path::Path, process::Command};
 
+#[path = "support/encoder_policies.rs"]
+mod encoder_policies;
+
+#[path = "frame_header_contract/blends.rs"]
+mod blends;
 #[path = "frame_header_contract/matrix.rs"]
 mod frame_header_matrix;
 
