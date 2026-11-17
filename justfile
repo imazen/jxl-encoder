@@ -1708,3 +1708,9 @@ progressive-ac-typed-animation-evidence manifest output coverage_env:
 
 progressive-ac-typed-minimal-evidence manifest output coverage_env:
     bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" progressive_typed --test-target progressive_ac_contract --no-default-features --features std,convenience,__expert --source jxl-encoder/src/vardct/bitstream.rs --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/api.rs --source jxl-encoder/tests/images/frymire.png' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+animation-alpha-native source build output:
+    python3 scripts/frame_header_oracle.py --component animation_alpha {{quote(source)}} {{quote(build)}} {{quote(output)}}
+
+animation-alpha-native-check log djxl output:
+    python3 scripts/check_animation_alpha_native.py {{quote(log)}} {{quote(djxl)}} {{quote(output)}}
