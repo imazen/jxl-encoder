@@ -14,7 +14,7 @@ import re
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('output', type=Path)
 p.add_argument('--pair', action='append', nargs=2, required=True)
-p.add_argument('--scope', choices=['alpha', 'progressive', 'partition', 'admission', 'ac'], default='alpha')
+p.add_argument('--scope', choices=['alpha', 'progressive', 'partition', 'admission', 'ac', 'source-white', 'source-metric', 'rate-color'], default='alpha')
 a = p.parse_args()
 if a.output.exists():
     p.error('refusing existing result')
@@ -49,6 +49,15 @@ if a.scope == 'ac':
         'jxl-encoder/src/vardct/ac_group.rs': ['count_nonzero_except_llf', 'num_nonzero_except_llf'],
         'jxl-encoder/src/vardct/bitstream.rs': ['tokenize_ac_group', 'split_coefficients_into_passes'],
     }
+if a.scope == 'source-white':
+    functions = {
+        'jxl-encoder/src/vardct/xyb.rs': ['primaries_to_srgb_matrix'],
+        'jxl-encoder/src/vardct/source_white.rs': ['to_srgb', 'rgb_to_xyz', 'bradford_adapt', 'mul_mv', 'mul_3x3', 'invert_3x3', 'solve_3x3'],
+    }
+elif a.scope == 'source-metric':
+    functions = {'jxl-encoder/src/vardct/encoder.rs': ['prepare_metric_reference']}
+elif a.scope == 'rate-color':
+    functions = {'jxl-encoder/src/vardct/rate_control.rs': ['metric_reference', 'decode_jxl_to_linear']}
 rows = []
 for relative, names in functions.items():
     for name in names:
@@ -56,7 +65,7 @@ for relative, names in functions.items():
         for archive, _ in inputs:
             lines = (archive / 'source' / relative).read_text().splitlines()
             starts = [i for i, line in enumerate(lines)
-                      if re.search(r'\bfn ' + re.escape(name) + r'\(', line)]
+                      if re.search(r'\bfn ' + re.escape(name) + r'(?:<[^>]*>)?\(', line)]
             assert len(starts) == 1, (archive, name, starts)
             start = starts[0]
             indent = lines[start][:len(lines[start]) - len(lines[start].lstrip())]

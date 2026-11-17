@@ -1763,3 +1763,70 @@ animation-alpha-final-evidence manifest artifacts coverage_env llvm lint_home li
     just animation-alpha-delta-evidence {{quote(manifest)}} {{quote(artifacts + "/animation-alpha-identical-delta")}} {{quote(coverage_env)}}
     just animation-alpha-combined-regions {{quote(llvm)}} {{quote(artifacts + "/animation-alpha-minimal")}} {{quote(artifacts + "/animation-alpha-still-registered-path")}} {{quote(artifacts + "/animation-alpha-region-report")}}
     env CARGO_HOME={{quote(lint_home)}} CARGO_TARGET_DIR={{quote(lint_target)}} cargo +1.100.0 clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel,corpus-tests,rate-control --test progressive_ac_contract -- -D warnings
+
+source-color-before-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" linear_p3_white_point --test-target source_color_contract --features __expert,parallel --source jxl-encoder/src/vardct/xyb.rs --source jxl-encoder/src/vardct/precomputed.rs --source jxl-encoder/src/vardct/encoder.rs --source jxl-encoder/src/api.rs --source jxl-encoder/src/headers/color_encoding.rs --source jxl-encoder/src/vardct/color_matrices_v012.tsv' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+source-color-native-vectors-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" all_native_color_matrix_vectors_match --source jxl-encoder/src/vardct/xyb.rs --source jxl-encoder/src/vardct/source_white.rs --source jxl-encoder/src/vardct/color_matrices_v012.tsv' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+source-color-public-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" source_white_public --test-target source_color_contract --features __expert,parallel --source jxl-encoder/src/vardct/xyb.rs --source jxl-encoder/src/vardct/source_white.rs --source jxl-encoder/src/vardct/precomputed.rs --source jxl-encoder/src/vardct/encoder.rs --source jxl-encoder/src/api.rs --source jxl-encoder/src/headers/color_encoding.rs --source jxl-encoder/src/vardct/color_matrices_v012.tsv' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+source-color-animation-evidence manifest output coverage_env oracle:
+    LIBJXL_ORIGINAL_PROFILE_ORACLE={{quote(oracle)}} bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" source_white_ --test-target source_color_contract --features __expert,parallel,corpus-tests --source jxl-encoder/src/vardct/xyb.rs --source jxl-encoder/src/vardct/source_white.rs --source jxl-encoder/src/vardct/precomputed.rs --source jxl-encoder/src/vardct/encoder.rs --source jxl-encoder/src/api.rs --source jxl-encoder/src/headers/color_encoding.rs --source jxl-encoder/src/vardct/color_matrices_v012.tsv --source scripts/libjxl_original_profile.cc' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+source-color-rate-domain-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" rate_control_color_ --features __expert,parallel,rate-control --source jxl-encoder/src/vardct/xyb.rs --source jxl-encoder/src/vardct/source_white.rs --source jxl-encoder/src/vardct/rate_control.rs --source jxl-encoder/src/vardct/precomputed.rs --source jxl-encoder/src/vardct/encoder.rs --source jxl-encoder/src/vardct/color_matrices_v012.tsv --source jxl-encoder/tests/support/pfm.rs --source jxl-encoder/tests/support/source_colors.rs --source jxl-encoder/src/headers/color_profiles_v012.tsv' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+source-color-engine-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" source_white_prepared --test-target source_color_contract --features __expert,__internals,__pre_quantized,parallel,rate-control --source jxl-encoder/src/vardct/xyb.rs --source jxl-encoder/src/vardct/source_white.rs --source jxl-encoder/src/vardct/rate_control.rs --source jxl-encoder/src/vardct/precomputed.rs --source jxl-encoder/src/vardct/encoder.rs --source jxl-encoder/src/api.rs --source jxl-encoder/src/vardct/color_matrices_v012.tsv' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+source-color-metric-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" source_white_metric --test-target source_color_contract --features __expert,__external_metric,parallel --source jxl-encoder/src/vardct/xyb.rs --source jxl-encoder/src/vardct/source_white.rs --source jxl-encoder/src/vardct/encoder.rs --source jxl-encoder/src/api.rs --source jxl-encoder/src/vardct/color_matrices_v012.tsv' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+source-color-minimal-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" source_white_public --test-target source_color_contract --no-default-features --features std,convenience,__expert --source jxl-encoder/src/vardct/xyb.rs --source jxl-encoder/src/vardct/source_white.rs --source jxl-encoder/src/vardct/precomputed.rs --source jxl-encoder/src/vardct/encoder.rs --source jxl-encoder/src/api.rs --source jxl-encoder/src/vardct/color_matrices_v012.tsv' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+source-color-complete-lint manifest:
+    cargo +1.100.0 clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,__pre_quantized,__external_metric,parallel,corpus-tests,rate-control --lib --test source_color_contract --example progressive_ac_cmyk -- -D warnings
+    cargo +1.100.0 clippy --locked --manifest-path {{quote(manifest)}} --workspace --all-targets -- -D warnings
+
+source-color-validation manifest artifacts coverage_env lint_home lint_target:
+    just source-color-rate-domain-evidence {{quote(manifest)}} {{quote(artifacts + "/source-color-rate-domain-expanded")}} {{quote(coverage_env)}}
+    just source-color-native-vectors-evidence {{quote(manifest)}} {{quote(artifacts + "/source-color-native-vectors-expanded")}} {{quote(coverage_env)}}
+    just source-color-minimal-evidence {{quote(manifest)}} {{quote(artifacts + "/source-color-minimal")}} {{quote(coverage_env)}}
+    cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features
+    just alpha-squeeze-broad-baseline {{quote(manifest)}}
+    just progressive-ac-rate-control-evidence {{quote(manifest)}} {{quote(artifacts + "/source-color-existing-rate-control")}} {{quote(coverage_env)}}
+    env CARGO_HOME={{quote(lint_home)}} CARGO_TARGET_DIR={{quote(lint_target)}} just source-color-complete-lint {{quote(manifest)}}
+
+source-color-faults manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/test_alpha_squeeze_mutation.py "$2" "$3" --case source-white-d65-only --case source-white-custom-d65 --case rate-default-profile --case rate-source-primaries --case rate-raw-reference' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+source-color-neutral-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" source_white_neutral --test-target source_color_contract --features __expert,parallel --source jxl-encoder/src/vardct/xyb.rs --source jxl-encoder/src/vardct/source_white.rs --source jxl-encoder/src/vardct/encoder.rs --source jxl-encoder/src/api.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+source-color-final-paths manifest artifacts coverage_env lint_home lint_target:
+    just source-color-neutral-evidence {{quote(manifest)}} {{quote(artifacts + "/source-color-neutral")}} {{quote(coverage_env)}}
+    just source-color-engine-evidence {{quote(manifest)}} {{quote(artifacts + "/source-color-engine-zero")}} {{quote(coverage_env)}}
+    just source-color-rate-domain-evidence {{quote(manifest)}} {{quote(artifacts + "/source-color-rate-domain-final")}} {{quote(coverage_env)}}
+    env CARGO_HOME={{quote(lint_home)}} CARGO_TARGET_DIR={{quote(lint_target)}} just source-color-complete-lint {{quote(manifest)}}
+    just source-color-faults {{quote(manifest)}} {{quote(artifacts + "/source-color-faults")}} {{quote(coverage_env)}}
+
+source-color-metric-budget-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" borrowed_metric_source --features __expert,parallel --source jxl-encoder/src/vardct/xyb.rs --source jxl-encoder/src/vardct/source_white.rs --source jxl-encoder/src/vardct/encoder.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+source-color-final-evidence manifest artifacts coverage_env oracle llvm:
+    just source-color-native-vectors-evidence {{quote(manifest)}} {{quote(artifacts + "/source-color-native-final")}} {{quote(coverage_env)}}
+    just source-color-animation-evidence {{quote(manifest)}} {{quote(artifacts + "/source-color-public-final")}} {{quote(coverage_env)}} {{quote(oracle)}}
+    just source-color-metric-evidence {{quote(manifest)}} {{quote(artifacts + "/source-color-metric-final")}} {{quote(coverage_env)}}
+    just source-color-metric-budget-evidence {{quote(manifest)}} {{quote(artifacts + "/source-color-budget-final")}} {{quote(coverage_env)}}
+    python3 scripts/source_color_coverage.py {{quote(llvm)}} {{quote(artifacts + "/source-color-region-report")}} --source-white {{quote(artifacts + "/source-color-native-final")}} {{quote(artifacts + "/source-color-public-final")}} {{quote(artifacts + "/source-color-engine-zero")}} {{quote(artifacts + "/source-color-neutral")}} --source-metric {{quote(artifacts + "/source-color-engine-zero")}} {{quote(artifacts + "/source-color-metric-final")}} {{quote(artifacts + "/source-color-budget-final")}} --rate-color {{quote(artifacts + "/source-color-rate-domain-final")}} {{quote(artifacts + "/source-color-engine-zero")}}
+
+source-color-regions-final llvm artifacts:
+    python3 scripts/source_color_coverage.py {{quote(llvm)}} {{quote(artifacts + "/source-color-region-report-final")}} --source-white {{quote(artifacts + "/source-color-native-final")}} {{quote(artifacts + "/source-color-public-final")}} {{quote(artifacts + "/source-color-engine-zero")}} {{quote(artifacts + "/source-color-neutral")}} --source-metric {{quote(artifacts + "/source-color-engine-zero")}} {{quote(artifacts + "/source-color-metric-final")}} {{quote(artifacts + "/source-color-budget-final")}} --rate-color {{quote(artifacts + "/source-color-rate-domain-final")}} {{quote(artifacts + "/source-color-engine-zero")}}
+
+source-color-last-regions manifest artifacts coverage_env llvm:
+    just source-color-native-vectors-evidence {{quote(manifest)}} {{quote(artifacts + "/source-color-native-d65-controls")}} {{quote(coverage_env)}}
+    python3 scripts/source_color_coverage.py {{quote(llvm)}} {{quote(artifacts + "/source-color-region-report-complete")}} --source-white {{quote(artifacts + "/source-color-native-d65-controls")}} {{quote(artifacts + "/source-color-public-final")}} {{quote(artifacts + "/source-color-engine-zero")}} {{quote(artifacts + "/source-color-neutral")}} {{quote(artifacts + "/source-color-rate-domain-final")}} --source-metric {{quote(artifacts + "/source-color-engine-zero")}} {{quote(artifacts + "/source-color-metric-final")}} {{quote(artifacts + "/source-color-budget-final")}} {{quote(artifacts + "/source-color-rate-domain-final")}} --rate-color {{quote(artifacts + "/source-color-rate-domain-final")}} {{quote(artifacts + "/source-color-engine-zero")}}

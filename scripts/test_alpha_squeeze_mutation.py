@@ -18,6 +18,20 @@ if (root / '.git').exists() or not (root.parent.parent / 'provenance.json').is_f
     p.error('requires an owned clean-source export')
 a.output.mkdir(exist_ok=False)
 cases = [
+    ('source-white-d65-only', 'jxl-encoder/src/vardct/xyb.rs',
+     '__D65_ONLY__', '', 'source_color_contract', 'linear_p3_white_point'),
+    ('source-white-custom-d65', 'jxl-encoder/src/vardct/xyb.rs',
+     '(wp.x, wp.y)', '{ let _ = wp; (0.3127, 0.3290) }',
+     'source_color_contract', 'source_white_public'),
+    ('rate-default-profile', 'jxl-encoder/src/vardct/rate_control.rs',
+     '__RATE_LINEAR_PROFILE__', '', None, 'rate_control_color_'),
+    ('rate-source-primaries', 'jxl-encoder/src/vardct/rate_control.rs',
+     '__RATE_DECODE_MATRIX__', '    let _ = source_is_parametric; let _ = source_encoding; let encoding = None;',
+     None, 'rate_control_color_'),
+    ('rate-raw-reference', 'jxl-encoder/src/vardct/rate_control.rs',
+     '__RATE_RAW_REFERENCE__',
+     "fn metric_reference<'a>(_encoder: &VarDctEncoder, linear_rgb: &'a [f32]) -> Result<(super::encoder::LinearSource<'a>, crate::budget::BudgetGuard)> {\n    Ok((super::encoder::LinearSource::Borrowed(linear_rgb), crate::budget::BudgetGuard::inert()))\n}",
+     None, 'rate_control_color_'),
     ('animation-alpha-u8', 'jxl-encoder/src/api/animate.rs',
      '__FLOAT_ALPHA_CODING__', '    let float_alpha_coding: Option<AlphaCoding> = None;',
      'progressive_ac_contract', 'animation_float_alpha_preserves_source_precision'),
@@ -70,6 +84,22 @@ else:
 for name, source, before, after, target, selection in cases:
     path = root / source
     original = path.read_text()
+    if before == '__D65_ONLY__':
+        start = original.index('    if ce.white_point != WhitePoint::D65 {')
+        end = original.index('    match ce.primaries {', start)
+        before = original[start:end]
+    if before == '__RATE_LINEAR_PROFILE__':
+        start = original.index('    let linear_profile =')
+        end = original.index('    dwi.set_output_color_profile(linear_profile).ok()?;', start) + len('    dwi.set_output_color_profile(linear_profile).ok()?;')
+        before = original[start:end]
+    if before == '__RATE_DECODE_MATRIX__':
+        start = original.index('    let encoding = if source_is_parametric {')
+        end = original.index('    };', start) + len('    };')
+        before = original[start:end]
+    if before == '__RATE_RAW_REFERENCE__':
+        start = original.index("fn metric_reference<'a>(")
+        end = original.index('\n}', start) + len('\n}')
+        before = original[start:end]
     if before == '__FLOAT_ALPHA_CODING__':
         start = original.index('    let float_alpha_coding =')
         end = original.index('    });', start) + len('    });')
@@ -107,6 +137,16 @@ for name, source, before, after, target, selection in cases:
                    '--source', 'jxl-encoder/src/vardct/progressive_ac_v012.tsv',
                    '--source', 'jxl-encoder/src/vardct/alpha_squeeze_thin_v012.tsv',
                    '--source', 'jxl-encoder/src/vardct/progressive_brackets_v012.tsv']
+        if name.startswith('rate-'):
+            command += ['--features', '__expert,parallel,rate-control']
+        if name.startswith(('rate-', 'source-white-')):
+            command += ['--source', 'jxl-encoder/src/vardct/source_white.rs',
+                        '--source', 'jxl-encoder/src/vardct/xyb.rs',
+                        '--source', 'jxl-encoder/src/vardct/rate_control.rs',
+                        '--source', 'jxl-encoder/tests/support/pfm.rs',
+                        '--source', 'jxl-encoder/tests/support/source_colors.rs',
+                        '--source', 'jxl-encoder/src/vardct/color_matrices_v012.tsv',
+                        '--source', 'jxl-encoder/src/headers/color_profiles_v012.tsv']
         if target:
             command += ['--test-target', target]
         with (a.output / (name + '.log')).open('x') as log:
