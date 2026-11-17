@@ -34,6 +34,30 @@ jxl::Status Run() {
       JxlEncoderDestroy(enc);
     }
   }
+  for (size_t size : {size_t{132}, size_t{4194305}}) {
+    std::vector<uint8_t> raw(size, size == 132 ? 0 : 0xAB);
+    if (size == 132) { raw[3] = 132; raw[131] = 1; }
+    jxl::ColorEncoding raw_color;
+    raw_color.SetICCRaw(jxl::IccBytes(raw.begin(), raw.end()));
+    JXL_RETURN_IF_ERROR(raw_color.WantICC() && !raw_color.HaveFields());
+    JXL_RETURN_IF_ERROR(raw_color.ICC().size() == raw.size() &&
+                        std::equal(raw.begin(), raw.end(), raw_color.ICC().data()));
+    std::cout << "raw:" << size << ":internal_raw\t1\n";
+    for (bool cms : {false, true}) {
+      JxlEncoder* enc = JxlEncoderCreate(nullptr);
+      JXL_RETURN_IF_ERROR(enc != nullptr);
+      if (cms) JxlEncoderSetCms(enc, *JxlGetDefaultCms());
+      JxlBasicInfo info;
+      JxlEncoderInitBasicInfo(&info);
+      info.xsize = info.ysize = 8;
+      info.num_color_channels = 3;
+      info.uses_original_profile = JXL_TRUE;
+      JXL_RETURN_IF_ERROR(JxlEncoderSetBasicInfo(enc, &info) == JXL_ENC_SUCCESS);
+      auto status = JxlEncoderSetICCProfile(enc, raw.data(), raw.size());
+      std::cout << "raw:" << size << ":explicit_cms:" << cms << '\t' << (status == JXL_ENC_SUCCESS) << '\n';
+      JxlEncoderDestroy(enc);
+    }
+  }
   for (size_t size : {132, 139, 140, 144}) {
     std::vector<uint8_t> input(size, 0);
     input[0] = static_cast<uint8_t>(size >> 24);

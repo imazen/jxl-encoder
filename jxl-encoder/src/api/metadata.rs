@@ -61,7 +61,11 @@ impl<'a> ImageMetadata<'a> {
         self
     }
 
-    /// Attach an ICC color profile.
+    /// Attach raw ICC profile bytes.
+    ///
+    /// Accepted bytes are preserved exactly. The encoder checks selector/model
+    /// consistency and codec bounds, but does not validate complete ICC content.
+    /// The caller supplies a profile that describes the intended image colors.
     pub fn with_icc_profile(mut self, data: &'a [u8]) -> Self {
         self.icc_profile = Some(data);
         self

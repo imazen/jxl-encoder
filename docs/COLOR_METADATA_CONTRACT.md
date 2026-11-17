@@ -145,6 +145,19 @@ stream when the condition fails. Header prediction and the decoded ICC bytes
 remain unchanged; arbitrary byte strings stay encodable. This does not claim
 that arbitrary bytes describe a valid color profile.
 
+Owner decision (2026-11-17): preserve raw payload acceptance, including the
+established 4,194,305-byte all-0xAB fixture. ICC-content validity stays the
+caller's responsibility; selector/model consistency and the codec's command
+bounds remain enforced. The raw-codec contract is distinct from asking a CMS
+to parse a profile. Pinned v0.12 initializes its encoder with a default CMS.
+Fresh public SetICCProfile controls reject both the 132-byte missing-tag input
+and the 4,194,305-byte all-0xAB input, with the default CMS and with an explicitly
+attached default CMS. Its internal SetICCRaw instead preserves bytes without
+parsing. Preserving this crate's approved raw acceptance is therefore an API
+difference from that public setter. Valid prediction behavior follows the
+reference; unsafe command counts retain the independently required opaque
+coding. `icc-raw-policy-oracle2.log` retains the direct public/internal observations.
+
 The first 8x8 RGB8 lossless strict regression, with a 132-byte payload declaring
 one tag, is 84 bytes / SHA256
 `6b55342c8a668961f29530056e39bfbcf80918fd7198c10defae9aedeed03afb`

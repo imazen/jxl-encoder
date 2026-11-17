@@ -353,7 +353,8 @@ fn can_predict_tag_list(icc: &[u8]) -> bool {
 /// Transform an ICC profile into a more compressible form.
 ///
 /// The output is a varint-encoded size, followed by commands, followed by data.
-/// This matches libjxl's `PredictICC()`.
+/// Follows libjxl's `PredictICC()`, with opaque tag-list coding when the raw
+/// count cannot meet the format's command output bound.
 fn predict_icc(icc: &[u8]) -> Result<Vec<u8>> {
     let size = icc.len();
     if size > SIZE_LIMIT {

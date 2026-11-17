@@ -1878,6 +1878,10 @@ exact ICC bytes, exact lossless samples and JPEG reconstruction. The existing
 v0.12 shares the permissive predictor/inverse behavior, so independent E.4.4
 preamble checks supply the conformance gate. The new selector's twelve regions
 execute; unrelated ICC operations are not claimed exhaustively covered.
+Owner decision on November 17 retains raw ICC acceptance. Pinned v0.12
+public-setter controls reject malformed profiles through the default CMS;
+its internal raw setter preserves the same bytes without parsing. The API
+difference and independent codec-bound correction are intentional.
 [Production paths, retained identities and limits](docs/COLOR_METADATA_CONTRACT.md).
 
 

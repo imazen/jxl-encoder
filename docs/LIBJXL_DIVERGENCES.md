@@ -2143,7 +2143,10 @@ every input byte. v0.12 predicts a tag list whenever four bytes remain after
 its 128-byte header; its inverse also accepts the recorded out-of-bound count.
 The E.4.4 bound is the independent oracle. This shared correction applies to
 strict and other strategies without a new gate. The arbitrary-payload level
-expectation and valid-profile byte locks remain unchanged.
+expectation and valid-profile byte locks remain unchanged. Owner-approved raw
+payload acceptance follows the internal v0.12 `SetICCRaw` contract; its public
+CMS-backed `JxlEncoderSetICCProfile` rejects malformed contents. This API
+difference is intentional; complete ICC-content validation is caller-owned.
 [Callers, exact evidence and coverage](COLOR_METADATA_CONTRACT.md).
 
 
