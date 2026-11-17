@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- Count progressive AC nonzeros outside the normalized rectangular LLF region,
+  preserving final coefficients for large transforms across progressive passes.
+
 - Apply remaining-band group admission to the alpha-only squeeze builder,
   preserving exact selected native alpha samples on elongated images.
 

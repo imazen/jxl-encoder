@@ -2699,3 +2699,16 @@ plan is detected. Passing-only selected regions are 71/75 builder and 91/95
 admission. Un-injected errors and caller-inapplicable branches remain explicit
 in [the contract](ALPHA_SQUEEZE_CONTRACT.md); registry Rust's separate global-band
 panic is retained as a decoder gap.
+
+
+### Issue 144: progressive rectangular LLF counting (I144-V1, local validation)
+
+Progressive pass nonzeros previously skipped the first `covered_blocks` flat
+positions. Part 1 I.3.2/I.4 and unmodified native natural orders instead place
+LLF in the top-left normalized rectangle. Native DCT16x16 positions 2/3 are AC,
+while positions 16/17 are LLF. Both sparse tokens and real-image final colors
+fail before repair. The candidate shares the original quantizer's rectangular
+count with progressive tokenization, preserving original count arithmetic,
+rounding, pass schedules, policy gates and public API. Selected real-image/policy/public/layout/animation/prepared-engine/CLI callers
+and the unchanged byte-lock/library baseline pass. Full caller/region and
+feature verification remain open in [the contract](PROGRESSIVE_AC_CONTRACT.md).

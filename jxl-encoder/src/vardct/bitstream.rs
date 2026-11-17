@@ -776,12 +776,14 @@ fn tokenize_ac_group(
                     let pass_blocks = split_coefficients_into_passes(full_block, pass_config);
 
                     for (pass, pass_coeffs) in pass_blocks.iter().enumerate() {
-                        // Count non-zeros for this pass's coefficients
-                        // (skip covered_blocks positions = LLF coefficients)
-                        let pass_nz: u16 = pass_coeffs[covered_blocks..]
-                            .iter()
-                            .filter(|&&v| v != 0)
-                            .count() as u16;
+                        // LLF is a rectangle in normalized coefficient storage,
+                        // not the first covered_blocks flat positions. Use the
+                        // same count as original transform quantization.
+                        let pass_nz = super::ac_group::count_nonzero_except_llf(
+                            covered_x.max(covered_y),
+                            covered_x.min(covered_y),
+                            pass_coeffs,
+                        );
 
                         // Compute shifted nzeros for prediction context
                         let log2_cb = covered_blocks.ilog2() as usize;
@@ -6614,3 +6616,7 @@ mod alpha_squeeze_section_tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "progressive_ac_token_tests.rs"]
+mod progressive_ac_token_tests;

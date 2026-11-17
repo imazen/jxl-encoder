@@ -175,25 +175,11 @@ pub fn num_nonzero_8x8_except_dc(block: &[i32; DCT_BLOCK_SIZE], nzeros_pos: &mut
     nzeros
 }
 
-/// Count non-zero coefficients excluding LLF (Low-Low Frequency / DC region).
-///
-/// For larger transforms (DCT16x8, DCT8x16), the LLF region is larger than 1 coefficient.
-/// The LLF region is cx*cy coefficients at the top-left.
-///
-/// Also stores the shifted nzeros (nzeros / covered_blocks) in each 8x8 block position.
-pub fn num_nonzero_except_llf(
-    cx: usize,
-    cy: usize,
-    block: &[i32],
-    nzeros_stride: usize,
-    nzeros_pos: &mut [u8],
-    covered_blocks_x: usize,
-    covered_blocks_y: usize,
-) -> u16 {
+/// Count AC coefficients outside the normalized transform's LLF rectangle.
+/// Shared by original quantization and progressive pass tokenization (Part 1 I.3.2/I.4).
+pub(crate) fn count_nonzero_except_llf(cx: usize, cy: usize, block: &[i32]) -> u16 {
     let block_dim = 8;
     let covered_blocks = cx * cy;
-    let log2_covered_blocks = covered_blocks.trailing_zeros() as usize;
-
     let mut nzeros = 0i32;
     let total_coeffs = cx * cy * DCT_BLOCK_SIZE;
 
@@ -220,6 +206,30 @@ pub fn num_nonzero_except_llf(
     // Clamp to valid range (u16 supports up to 65535, max AC for DCT64x64 = 4032)
     let nzeros = nzeros.max(0) as u16;
 
+    let max_ac = (total_coeffs - covered_blocks) as u16;
+    nzeros.min(max_ac)
+}
+
+/// Count non-zero coefficients excluding LLF (Low-Low Frequency / DC region).
+///
+/// For larger transforms (DCT16x8, DCT8x16), the LLF region is larger than 1 coefficient.
+/// The LLF region is cx*cy coefficients at the top-left.
+///
+/// Also stores the shifted nzeros (nzeros / covered_blocks) in each 8x8 block position.
+pub fn num_nonzero_except_llf(
+    cx: usize,
+    cy: usize,
+    block: &[i32],
+    nzeros_stride: usize,
+    nzeros_pos: &mut [u8],
+    covered_blocks_x: usize,
+    covered_blocks_y: usize,
+) -> u16 {
+    let covered_blocks = cx * cy;
+    let log2_covered_blocks = covered_blocks.trailing_zeros() as usize;
+
+    let nzeros = count_nonzero_except_llf(cx, cy, block);
+
     // Compute shifted nzeros for per-8x8-block storage (always fits in u8, max 63)
     let shifted_nzeros = ((nzeros as usize + covered_blocks - 1) >> log2_covered_blocks) as u8;
 
@@ -230,10 +240,7 @@ pub fn num_nonzero_except_llf(
         }
     }
 
-    // Return actual nzeros (not the total_coeffs, but only AC)
-    // For consistency, clamp to the number of AC coefficients
-    let max_ac = (total_coeffs - covered_blocks) as u16;
-    nzeros.min(max_ac)
+    nzeros
 }
 
 /// Predict number of non-zeros from top and left neighbors.

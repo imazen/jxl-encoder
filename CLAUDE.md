@@ -1766,6 +1766,25 @@ misclassify that CLI limitation as an invalid stream or strip the ICC to hide it
 
 ## Known Bugs (ACTIVE)
 
+### 2026-11-17: progressive AC flat-prefix nonzero count (issue 144 V1)
+
+Retained sparse production tokens lose native DCT16x16 position 2 value +2
+(recovered zero) and miscount nonzero LLF positions. The independent native
+order has LLF positions 0,1,16,17, so position 2 is AC. Real frymire controls at
+64x64 and 259x133 differ from single-pass final pixels in both Rust and djxl
+for raw types 3,4,10,11,16,17,18; twelve other offered types remain unchanged.
+Both actual before tests fail with exact objects/profiles/source and streams
+retained under `progressive-ac-unit-before`, `progressive-ac-real-before` and
+`live-tests/progressive-ac-contract/run-0` at the issue artifact root.
+The candidate reuses the original quantizer's rectangular LLF count through a
+shared private helper. Sparse and real-image controls now pass, as do selected
+policy/public/layout/animation/prepared-engine/CLI callers and the unchanged
+library/byte-lock baseline, minimal feature controls and strict lint. Selected
+region evidence and original-count mutation are retained. Full caller validation remains open
+in [the contract](docs/PROGRESSIVE_AC_CONTRACT.md). Existing nearest precision
+rounding and preset schedules remain unchanged.
+
+
 ### 2026-11-17: expert wire-control command required an absent tool
 
 Expert job 133923235773 in run 44049340538 passes the issue-144 production
