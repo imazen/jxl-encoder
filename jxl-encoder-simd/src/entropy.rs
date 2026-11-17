@@ -517,7 +517,9 @@ pub fn fast_log2f(x: f32) -> f32 {
     num / den + exp_val
 }
 
-/// Fast base-2 exponentiation. Max relative error ~3e-7.
+/// Fast base-2 exponentiation for inputs in [-126, 128).
+/// Max relative error in that normal-f32 domain is approximately 3e-7.
+/// Outside it, exponent-bit construction does not implement under/overflow.
 ///
 /// Matches libjxl's `FastPow2f` from `fast_math-inl.h` (line 72).
 /// Uses integer bit manipulation for the integer exponent part and a (3,3)
@@ -543,11 +545,14 @@ pub fn fast_pow2f(x: f32) -> f32 {
     num / den
 }
 
-/// Fast power function: `base^exponent`. Max relative error ~3e-5.
+/// Approximate `base^exponent` through a logarithm and base-2 exponentiation.
+/// Logarithm error is amplified by `exponent`; there is no uniform error bound
+/// over arbitrary exponents. Use `powf` when the full power domain is needed.
 ///
 /// Matches libjxl's `FastPowf` from `fast_math-inl.h` (line 90).
 /// Computes `2^(log2(base) * exponent)` using [`fast_log2f`] and [`fast_pow2f`].
-/// Input `base` must be > 0.
+/// Input `base` must be > 0 and the computed base-2 exponent must be in
+/// [-126, 128), the normal-f32 domain supported by [`fast_pow2f`].
 #[inline(always)]
 pub fn fast_powf(base: f32, exponent: f32) -> f32 {
     fast_pow2f(fast_log2f(base) * exponent)

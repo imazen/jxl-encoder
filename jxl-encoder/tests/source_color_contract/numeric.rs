@@ -37,6 +37,11 @@ pub(super) fn cases() -> Vec<(&'static str, ColorEncoding, PixelLayout)> {
         ("white-y-over-one", white(0.3, 1.1), PixelLayout::Rgb8),
         ("white-wire-zero", white(0.3, 0.0000004), PixelLayout::Rgb8),
         ("white-chad-range", white(0.3, 0.666961), PixelLayout::Rgb8),
+        (
+            "white-cone-zero",
+            white(0.14969, 0.80257),
+            PixelLayout::Rgb8,
+        ),
         ("gray-fixed-range", gray_range, PixelLayout::Gray8),
         (
             "primaries-singular",

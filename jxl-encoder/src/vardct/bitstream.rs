@@ -2811,9 +2811,8 @@ impl VarDctEncoder {
         // Mirrors the ordering in `encode_two_pass` (still-image entry
         // point) at the patches branch around line 1592 — but that path
         // also writes the file header itself. The animation entry point
-        // already wrote the file header in `encode_animation_lossy`
-        // (api.rs around line 6107) before the per-frame loop, so we only
-        // emit the reference frame here.
+        // finalizes the common file header after the per-frame loop;
+        // this writer emits only the reference and regular frame payloads.
         if let Some(ref pd) = patches_data {
             super::patches::encode_reference_frame(
                 pd,
@@ -2827,6 +2826,7 @@ impl VarDctEncoder {
             writer.zero_pad_to_byte();
         }
 
+        Self::note_dc_modular_width(&self.force_modular_32bit, &transform_out.quant_dc);
         self.encode_two_pass_to_writer(
             width,
             height,

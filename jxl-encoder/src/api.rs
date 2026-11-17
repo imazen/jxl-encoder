@@ -6231,6 +6231,13 @@ impl<'a> EncodeRequest<'a> {
         if let Some(ref ce) = self.color_encoding {
             crate::vardct::xyb::validate_color_encoding(ce).map_err(at_from)?;
         }
+        if matches!(self.config, ConfigRef::Lossy(_)) {
+            validate_lossy_source_encoding(
+                self.layout,
+                self.source_gamma,
+                self.color_encoding.as_ref(),
+            )?;
+        }
         validate_icc_presence(
             self.color_encoding.as_ref(),
             self.metadata.and_then(|metadata| metadata.icc_profile),
@@ -6290,23 +6297,15 @@ impl<'a> EncodeRequest<'a> {
             Some(PremultipliedAlphaMode::Off) => false,
             _ => animation.premultiplied_alpha || self.premultiplied_alpha,
         };
-        let (codestream, lossless) = match self.config {
-            ConfigRef::Lossless(cfg) => (
-                encode_animation_lossless(cfg, &self, &animation, frames)?,
-                true,
-            ),
-            ConfigRef::Lossy(cfg) => (
-                encode_animation_lossy(cfg, &self, &animation, frames)?,
-                false,
-            ),
+        let encoded = match self.config {
+            ConfigRef::Lossless(cfg) => encode_animation_lossless(cfg, &self, &animation, frames)?,
+            ConfigRef::Lossy(cfg) => encode_animation_lossy(cfg, &self, &animation, frames)?,
         };
         crate::error::check_stop(self.stop).map_err(at_from)?;
         let output = crate::api::ingest::finish_animation_output(
-            codestream,
+            encoded,
             self.width,
             self.height,
-            self.layout,
-            lossless,
             self.metadata,
             self.brotli_metadata_quality,
         )?;
@@ -6368,6 +6367,7 @@ impl<'a> EncodeRequest<'a> {
     /// instead of the sRGB transfer function, and writes `have_gamma=true` in
     /// the JXL header. This matches cjxl's behavior for PNGs with gAMA chunks.
     ///
+    /// The value must be finite, greater than 1/255, and at most 1.
     /// Example: `0.45455` for standard gamma 2.2 encoding (gAMA=45455).
     pub fn with_source_gamma(mut self, gamma: f32) -> Self {
         self.source_gamma = Some(gamma);
@@ -6682,6 +6682,13 @@ impl<'a> EncodeRequest<'a> {
         }
         if let Some(ref ce) = self.color_encoding {
             crate::vardct::xyb::validate_color_encoding(ce).map_err(at_from)?;
+        }
+        if matches!(self.config, ConfigRef::Lossy(_)) {
+            validate_lossy_source_encoding(
+                self.layout,
+                self.source_gamma,
+                self.color_encoding.as_ref(),
+            )?;
         }
         validate_icc_presence(
             self.color_encoding.as_ref(),
@@ -9555,8 +9562,11 @@ impl LossyEncoder {
     }
 
     /// Specify that source pixels use a custom gamma transfer function.
+    /// The value must be finite, greater than 1/255, and at most 1.
+    /// Changing it invalidates input admission before the next row push.
     pub fn with_source_gamma(mut self, gamma: f32) -> Self {
         self.source_gamma = Some(gamma);
+        self.input_admitted = false;
         self
     }
 
@@ -9566,6 +9576,7 @@ impl LossyEncoder {
         ce: crate::headers::color_encoding::ColorEncoding,
     ) -> Self {
         self.color_encoding = Some(ce);
+        self.input_admitted = false;
         self
     }
 
@@ -9806,6 +9817,16 @@ impl LossyEncoder {
     }
 
     fn check_input_limits(&self) -> Result<()> {
+        validate_source_gamma(self.source_gamma)?;
+        if let Some(ce) = &self.color_encoding {
+            crate::vardct::xyb::validate_color_encoding(ce).map_err(at_from)?;
+        }
+        validate_lossy_source_encoding(
+            self.layout,
+            self.source_gamma,
+            self.color_encoding.as_ref(),
+        )?;
+        validate_icc_presence(self.color_encoding.as_ref(), self.icc_profile.as_deref())?;
         validate_icc_model(self.layout, self.icc_profile.as_deref())?;
         let mut request = self
             .cfg
@@ -9871,7 +9892,8 @@ mod canonicalize;
 mod validate;
 use validate::{
     validate_dims, validate_icc_model, validate_icc_presence, validate_intrinsic_size,
-    validate_metadata_sizes, validate_source_gamma, validate_tone_mapping_full,
+    validate_lossy_source_encoding, validate_metadata_sizes, validate_source_gamma,
+    validate_tone_mapping_full,
 };
 
 impl LossyConfig {
@@ -10082,8 +10104,11 @@ impl LosslessEncoder {
     }
 
     /// Specify that source pixels use a custom gamma transfer function.
+    /// The value must be finite, greater than 1/255, and at most 1.
+    /// Changing it invalidates input admission before the next row push.
     pub fn with_source_gamma(mut self, gamma: f32) -> Self {
         self.source_gamma = Some(gamma);
+        self.input_admitted = false;
         self
     }
 
@@ -10093,6 +10118,7 @@ impl LosslessEncoder {
         ce: crate::headers::color_encoding::ColorEncoding,
     ) -> Self {
         self.color_encoding = Some(ce);
+        self.input_admitted = false;
         self
     }
 
@@ -10452,6 +10478,11 @@ impl LosslessEncoder {
     }
 
     fn check_input_limits(&self) -> Result<()> {
+        validate_source_gamma(self.source_gamma)?;
+        if let Some(ce) = &self.color_encoding {
+            crate::vardct::xyb::validate_color_encoding(ce).map_err(at_from)?;
+        }
+        validate_icc_presence(self.color_encoding.as_ref(), self.icc_profile.as_deref())?;
         validate_icc_model(self.layout, self.icc_profile.as_deref())?;
         let mut request = self
             .cfg

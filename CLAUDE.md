@@ -1769,6 +1769,20 @@ misclassify that CLI limitation as an invalid stream or strip the ICC to hide it
 ## Known Bugs (ACTIVE)
 
 
+### 2026-11-17: ICC output did not validate consumed source parameters
+
+A source gamma of zero is accepted with attached ICC output, and invalid
+source settings reach streaming row storage. NaN gamma is refused later by
+pixel preparation, without observed wrong output pixels. The candidate
+separates consumed-source checks from omitted wire fields; unused float or
+lossless gamma and explicit overrides preserve bytes, streaming identity
+and exact ICC under every offered policy. Fresh full/minimal/CLI, unchanged
+library/byte-lock, strict lint and selected-region controls pass; documented
+serialization/constant-guard error regions remain un-injected.
+[Controls and actual before identity](docs/COLOR_METADATA_CONTRACT.md#consumed-source-parameters-with-icc-output).
+
+
+
 ### RESOLVED 2026-11-17: diagnostic parser custom-coordinate selectors
 
 The independent envelope reader used 19 bits for every custom-xy selector and
@@ -1788,11 +1802,16 @@ source samples and1.1509478 against native linear-sRGB CMS output. Native
 setter success and final-encoding success differ for invalid inputs; raw CMS
 matrices support zero-coordinate primaries refused by its public setter.
 [Before evidence and controls](docs/COLOR_METADATA_CONTRACT.md#h4-before-evidence-and-native-controls).
-Numeric descriptor admission and valid zero-y source conversion are repaired
-in the selected numeric core. Whole-file and color-only writers refuse invalid
-fields before writing; native matrix tolerances and existing byte expectations
-remain unchanged. H4 remains open for streaming, gamma-input and animation
-buffer-promise follow-ups and final affected-entry region accounting.
+The direct-gamma before regression decodes white as 0.989475 while the
+independent native v0.12 lossy control has maximum error
+0.00011861324310302734. The candidate now uses ordinary power over the full
+explicit-gamma range. Separate streaming admission and animation buffer-width
+promise regressions also pass after repair. The earlier frame-contract ICC-admission assumption has a passing strengthened
+replay. Full library/unchanged locks, full/minimal callers, CLI and strict lint
+pass; isolated numeric core is on main at `4e1f7c1d`. The remaining gamma/
+streaming/animation follow-ups are verified, with explicit uncovered error
+regions in the owning record. Optional ICC source conversion remains a separate
+reopened H5 caller; CMYK/Black and H12-H14 remain open.
 
 ### RESOLVED 2026-11-17: explicit blend cropping and pre-transform color references
 

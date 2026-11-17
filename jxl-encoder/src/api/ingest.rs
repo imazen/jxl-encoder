@@ -548,6 +548,13 @@ pub(crate) fn hlg_to_linear_f(c: f32) -> f32 {
     }
 }
 
+/// Decode explicit gamma over its full legal input and exponent range.
+/// The normal-exponent FastPow2f approximation can wrap on underflow, and
+/// its log error is amplified by large inverse gamma, including near white.
+fn gamma_sample_to_linear(sample: f32, inv_gamma: f32) -> f32 {
+    sample.powf(inv_gamma)
+}
+
 /// Gamma u8 → linear f32 RGB. `linear = (encoded/255)^(1/gamma)`
 pub(crate) fn gamma_u8_to_linear_f32(
     data: &[u8],
@@ -558,7 +565,7 @@ pub(crate) fn gamma_u8_to_linear_f32(
     // Build 256-entry LUT for u8 values (avoids per-pixel powf)
     let inv_gamma = 1.0 / gamma;
     let lut: [f32; 256] =
-        core::array::from_fn(|i| jxl_simd::fast_powf(i as f32 / 255.0, inv_gamma));
+        core::array::from_fn(|i| gamma_sample_to_linear(i as f32 / 255.0, inv_gamma));
     data.chunks(channels)
         .scan(0usize, |t, px| {
             *t += 1;
@@ -598,9 +605,9 @@ pub(crate) fn gamma_u16_to_linear_f32(
         })
         .flat_map(|px| {
             [
-                jxl_simd::fast_powf(px[0] as f32 / u16_max, inv_gamma),
-                jxl_simd::fast_powf(px[1] as f32 / u16_max, inv_gamma),
-                jxl_simd::fast_powf(px[2] as f32 / u16_max, inv_gamma),
+                gamma_sample_to_linear(px[0] as f32 / u16_max, inv_gamma),
+                gamma_sample_to_linear(px[1] as f32 / u16_max, inv_gamma),
+                gamma_sample_to_linear(px[2] as f32 / u16_max, inv_gamma),
             ]
         })
         .collect()
@@ -682,7 +689,7 @@ pub(crate) fn gamma_gray_u8_to_linear_f32_rgb(
 ) -> Vec<f32> {
     let inv_gamma = 1.0 / gamma;
     let lut: [f32; 256] =
-        core::array::from_fn(|i| jxl_simd::fast_powf(i as f32 / 255.0, inv_gamma));
+        core::array::from_fn(|i| gamma_sample_to_linear(i as f32 / 255.0, inv_gamma));
     data.chunks(stride)
         .scan(0usize, |t, px| {
             *t += 1;
@@ -718,7 +725,7 @@ pub(crate) fn gamma_gray_u16_to_linear_f32_rgb(
             Some(px)
         })
         .flat_map(|px| {
-            let v = jxl_simd::fast_powf(px[0] as f32 / u16_max, inv_gamma);
+            let v = gamma_sample_to_linear(px[0] as f32 / u16_max, inv_gamma);
             [v, v, v]
         })
         .collect()
@@ -1373,48 +1380,33 @@ pub(crate) fn wrap_metadata_container(
 /// will and asking it — never by restating the rule, which is how the field
 /// and the level it gates drifted apart in the first place.
 pub(crate) fn finish_animation_output(
-    codestream: Vec<u8>,
+    encoded: super::animate::EncodedAnimation,
     width: u32,
     height: u32,
-    layout: PixelLayout,
-    is_lossless: bool,
     metadata: Option<&ImageMetadata<'_>>,
     brotli_metadata_quality: Option<u32>,
 ) -> Result<Vec<u8>> {
-    use crate::headers::extra_channels::ExtraChannelInfo;
-    use crate::headers::file_header::{BitDepth, ImageMetadata as HeaderMetadata};
-
-    let bits = if layout.is_16bit() { 16 } else { 8 };
-    let mut probe = HeaderMetadata {
-        bit_depth: BitDepth {
-            float_sample: false,
-            bits_per_sample: bits,
-            exponent_bits: 0,
-        },
-        xyb_encoded: !is_lossless,
-        ..Default::default()
-    };
-    if layout.has_alpha() {
-        let mut alpha = ExtraChannelInfo::alpha();
-        alpha.bit_depth.bits_per_sample = bits;
-        probe.extra_channels.push(alpha);
-    }
-
+    use crate::headers::extra_channels::ExtraChannelType;
+    let num_ec = encoded.metadata.extra_channels.len() as u32;
+    let has_black = encoded
+        .metadata
+        .extra_channels
+        .iter()
+        .any(|ec| ec.ec_type == ExtraChannelType::Black);
     let icc_size = metadata
         .and_then(|m| m.icc_profile)
         .map_or(0u64, |icc| icc.len() as u64);
-    let num_ec = u32::from(layout.has_alpha());
     let level = compute_required_level(
         width,
         height,
         num_ec,
-        false,
+        has_black,
         icc_size,
-        probe.modular_16bit_buffer_sufficient(),
+        encoded.metadata.modular_16bit_buffer_sufficient(),
     )?;
 
     Ok(wrap_metadata_container(
-        codestream,
+        encoded.codestream,
         metadata.and_then(|m| m.icc_profile),
         metadata,
         brotli_metadata_quality,
@@ -1524,6 +1516,134 @@ mod tests {
         for v in 0..=10u8 {
             let want = (v as f32 * (1.0 / 255.0)) * (1.0 / 12.92);
             assert_eq!(srgb_u8_to_linear_libjxl(v), want, "u8={v}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod gamma_endpoint_tests {
+    use super::*;
+
+    #[test]
+    fn gamma_input_real_checkpoint_honors_optional_stop() {
+        use core::sync::atomic::{AtomicUsize, Ordering};
+        struct Checkpoint {
+            cancel: bool,
+            calls: AtomicUsize,
+        }
+        impl enough::Stop for Checkpoint {
+            fn check(&self) -> core::result::Result<(), enough::StopReason> {
+                self.calls.fetch_add(1, Ordering::Relaxed);
+                if self.cancel {
+                    Err(enough::StopReason::Cancelled)
+                } else {
+                    Ok(())
+                }
+            }
+        }
+        let count = 0x4_0000 + 17;
+        for route in 0..4 {
+            let channels = if route < 2 { 3 } else { 1 };
+            let samples = vec![128_u8; count * channels];
+            let wide: Vec<u8> = vec![32768_u16; count * channels]
+                .into_iter()
+                .flat_map(u16::to_ne_bytes)
+                .collect();
+            for state in 0..3 {
+                let checkpoint = Checkpoint {
+                    cancel: state == 2,
+                    calls: AtomicUsize::new(0),
+                };
+                let stop = (state != 0).then_some(&checkpoint as &dyn enough::Stop);
+                let output = match route {
+                    0 => gamma_u8_to_linear_f32(&samples, channels, 0.5, stop),
+                    1 => gamma_u16_to_linear_f32(&wide, channels, 0.5, 65535.0, stop),
+                    2 => gamma_gray_u8_to_linear_f32_rgb(&samples, channels, 0.5, stop),
+                    _ => gamma_gray_u16_to_linear_f32_rgb(&wide, channels, 0.5, 65535.0, stop),
+                };
+                assert_eq!(
+                    checkpoint.calls.load(Ordering::Relaxed),
+                    usize::from(state != 0)
+                );
+                assert_eq!(
+                    output.len(),
+                    if state == 2 {
+                        (0x4_0000 - 1) * 3
+                    } else {
+                        count * 3
+                    }
+                );
+                assert!(output.iter().all(|v| v.is_finite()));
+            }
+        }
+    }
+
+    #[test]
+    fn gamma_input_samples_match_the_power_law() {
+        for gamma in [f32::from_bits(0x38fff518), 0.005, 0.1, 0.45455, 1.0] {
+            for max in [255_u16, 1023, 65535] {
+                let samples: Vec<u16> = if max == 255 {
+                    (0..=max).collect()
+                } else {
+                    vec![0, 1, 2, max / 4, max / 2, max - 35, max - 2, max - 1, max]
+                };
+                let gray8: Vec<u8> = samples.iter().map(|&v| v as u8).collect();
+                let gray16: Vec<u8> = samples.iter().flat_map(|v| v.to_ne_bytes()).collect();
+                let actual = if max == 255 {
+                    gamma_gray_u8_to_linear_f32_rgb(&gray8, 1, gamma, None)
+                } else {
+                    gamma_gray_u16_to_linear_f32_rgb(&gray16, 1, gamma, f32::from(max), None)
+                };
+                for (&sample, pixel) in samples.iter().zip(actual.as_chunks::<3>().0) {
+                    let expected =
+                        (f64::from(sample) / f64::from(max)).powf(1.0 / f64::from(gamma)) as f32;
+                    for &value in pixel {
+                        assert!(
+                            value.is_finite()
+                                && (0.0..=1.0).contains(&value)
+                                && (value - expected).abs() < 0.0001,
+                            "gamma={gamma} sample={sample}/{max}: actual={value} expected={expected}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn gamma_input_endpoints_are_exact() {
+        for gamma in [f32::from_bits(0x38fff518), 1.0 / 255.0, 0.45455, 1.0] {
+            let expected = [0.0_f32, 0.0, 0.0, 1.0, 1.0, 1.0];
+            assert_eq!(
+                gamma_u8_to_linear_f32(&[0, 0, 0, 255, 255, 255], 3, gamma, None),
+                expected,
+                "RGB8 gamma={gamma}"
+            );
+            assert_eq!(
+                gamma_gray_u8_to_linear_f32_rgb(&[0, 255], 1, gamma, None),
+                expected,
+                "Gray8 gamma={gamma}"
+            );
+            for max in [1023_u16, 65535] {
+                let rgb: Vec<u8> = [0_u16, 0, 0, max, max, max]
+                    .into_iter()
+                    .flat_map(u16::to_ne_bytes)
+                    .collect();
+                let gray: Vec<u8> = [0_u16, max]
+                    .into_iter()
+                    .flat_map(u16::to_ne_bytes)
+                    .collect();
+                assert_eq!(
+                    gamma_u16_to_linear_f32(&rgb, 3, gamma, f32::from(max), None),
+                    expected,
+                    "RGB16 gamma={gamma} max={max}"
+                );
+                assert_eq!(
+                    gamma_gray_u16_to_linear_f32_rgb(&gray, 1, gamma, f32::from(max), None),
+                    expected,
+                    "Gray16 gamma={gamma} max={max}"
+                );
+            }
         }
     }
 }

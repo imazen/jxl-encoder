@@ -157,7 +157,7 @@ fn render_case(
         let native = std::process::Command::new(oracle)
             .arg(out.join("output.jxl"))
             .arg(out.join("native"))
-            .arg("--source-fields")
+            .arg("--source-fields-float")
             .output()
             .unwrap();
         std::fs::write(
@@ -172,30 +172,7 @@ fn render_case(
         );
         (0..2)
             .map(|frame| {
-                let data = std::fs::read(out.join(format!("native-{frame}.pam"))).unwrap();
-                let end = data.windows(7).position(|w| w == b"ENDHDR\n").unwrap() + 7;
-                let header = std::str::from_utf8(&data[..end]).unwrap();
-                assert!(header.starts_with("P7\n"));
-                for expected in [
-                    format!("WIDTH {width}\n"),
-                    format!("HEIGHT {height}\n"),
-                    "DEPTH 4\n".into(),
-                    "MAXVAL 65535\n".into(),
-                ] {
-                    assert!(header.contains(&expected));
-                }
-                assert_eq!(data.len() - end, width * height * 8);
-                data[end..]
-                    .as_chunks::<8>()
-                    .0
-                    .iter()
-                    .flat_map(|pixel| {
-                        (0..3).map(move |c| {
-                            f32::from(u16::from_be_bytes([pixel[c * 2], pixel[c * 2 + 1]]))
-                                / 65535.0
-                        })
-                    })
-                    .collect()
+                pfm::read_pfm_samples(&out.join(format!("native-{frame}.pfm")), (width, height))
             })
             .collect()
     } else {
@@ -876,5 +853,11 @@ fn source_white_neutral_layout_inventory_keeps_brightness() {
     }
 }
 
+#[path = "source_color_contract/admission.rs"]
+mod admission;
 #[path = "source_color_contract/numeric.rs"]
 mod numeric;
+
+#[path = "source_color_contract/icc_source.rs"]
+mod icc_source;
+

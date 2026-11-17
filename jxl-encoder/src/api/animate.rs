@@ -8,6 +8,41 @@
 use super::validate::validate_dims;
 use super::*;
 
+/// Carry the actual common header to final level selection.
+pub(super) struct EncodedAnimation {
+    pub(super) codestream: Vec<u8>,
+    pub(super) metadata: crate::headers::file_header::ImageMetadata,
+}
+
+/// Prefix the finalized header without allocating a second frame payload.
+fn finish_animation_codestream(
+    header: crate::headers::file_header::FileHeader,
+    icc: Option<&[u8]>,
+    frames: crate::bit_writer::BitWriter,
+) -> Result<EncodedAnimation> {
+    let mut prefix = crate::bit_writer::BitWriter::new();
+    header.write_with_icc(icc, &mut prefix).map_err(at_from)?;
+    let prefix = prefix.finish_with_padding();
+    let mut codestream = frames.finish_with_padding();
+    let frame_len = codestream.len();
+    let total = frame_len.checked_add(prefix.len()).ok_or_else(|| {
+        at!(EncodeError::InvalidInput {
+            message: "animation codestream size overflow".into(),
+        })
+    })?;
+    codestream
+        .try_reserve_exact(prefix.len())
+        .map_err(crate::error::Error::from)
+        .map_err(at_from)?;
+    codestream.resize(total, 0);
+    codestream.copy_within(0..frame_len, prefix.len());
+    codestream[..prefix.len()].copy_from_slice(&prefix);
+    Ok(EncodedAnimation {
+        codestream,
+        metadata: header.metadata,
+    })
+}
+
 const REFERENCE_AFTER_COLOR_TRANSFORM: u8 = 1;
 const RESERVE_COLOR_SLOT_THREE: u8 = 2;
 
@@ -138,7 +173,7 @@ pub(crate) fn encode_animation_lossless(
     request: &EncodeRequest<'_>,
     animation: &AnimationParams,
     frames: &[AnimationFrame<'_>],
-) -> Result<Vec<u8>> {
+) -> Result<EncodedAnimation> {
     let (width, height, layout, limits, stop) = (
         request.width,
         request.height,
@@ -265,12 +300,8 @@ pub(crate) fn encode_animation_lossless(
         have_timecodes,
     });
 
-    // Write file header
+    // Serialize the common header after the frame payloads are finalized.
     let mut writer = BitWriter::new();
-    file_header
-        .write_with_icc(request.metadata.and_then(|m| m.icc_profile), &mut writer)
-        .map_err(at_from)?;
-    writer.zero_pad_to_byte();
 
     // Frame color interpretation must match the file header.
     let color_encoding = file_header.metadata.color_encoding.clone();
@@ -566,7 +597,11 @@ pub(crate) fn encode_animation_lossless(
         }
     }
 
-    Ok(writer.finish_with_padding())
+    finish_animation_codestream(
+        file_header,
+        request.metadata.and_then(|m| m.icc_profile),
+        writer,
+    )
 }
 
 /// Build a full-frame signed-delta [`ModularImage`] for the lossless
@@ -685,7 +720,7 @@ pub(crate) fn encode_animation_lossy(
     request: &EncodeRequest<'_>,
     animation: &AnimationParams,
     frames: &[AnimationFrame<'_>],
-) -> Result<Vec<u8>> {
+) -> Result<EncodedAnimation> {
     let (width, height, layout, limits, stop) = (
         request.width,
         request.height,
@@ -957,11 +992,8 @@ pub(crate) fn encode_animation_lossy(
         have_timecodes,
     });
 
+    // The final DC widths are known only after encoding every frame.
     let mut writer = BitWriter::with_capacity(w * h * 4);
-    file_header
-        .write_with_icc(enc.icc_profile.as_deref(), &mut writer)
-        .map_err(at_from)?;
-    writer.zero_pad_to_byte();
 
     // Encode each frame with crop detection
     let bpp = layout.bytes_per_pixel();
@@ -1198,7 +1230,10 @@ pub(crate) fn encode_animation_lossy(
         }
     }
 
-    Ok(writer.finish_with_padding())
+    file_header.metadata.force_modular_32bit = enc
+        .force_modular_32bit
+        .load(core::sync::atomic::Ordering::Relaxed);
+    finish_animation_codestream(file_header, enc.icc_profile.as_deref(), writer)
 }
 
 // ── Animation frame crop detection ──────────────────────────────────────────

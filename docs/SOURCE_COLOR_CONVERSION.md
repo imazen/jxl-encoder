@@ -191,3 +191,25 @@ preparedc551b87b0fdf9f03fa4ee9901e80d7b305c6f1094ed74f1ef6ee94bb7d8ff9f5
 and rate-domaina486ed9f7ff871ebb3c87686c0b81e3539772dd9b19d56914617f650f06f7257.
 Their identity records bind exact sources, profile hashes, test PIDs and exit0;
 these identities do not stand in for the sample checks described above.
+
+## Optional ICC caller reopened
+
+The first explicit-source-plus-ICC subsampling control fails independently
+of the H4 validator. For 32x17 RGB8 [128,64,32] declared P3/DCI linear, the
+Full444 native linear-sRGB maximum error is 0.00005299598 both with and without
+an attached Display P3 ICC. Each of Sub420/Sub422/Sub440 has error 0.003397435
+without ICC, but 0.28845716 with ICC. Observed ICC samples are
+[0.2533576, 0.043191344, 0.0072798524], versus Full444
+[0.54182804, 0.24107337, 0.108781226]. Both decoders fully render all controls.
+The expected linear-sRGB vector uses the independently retained unmodified
+v0.12 CMS basis, with the unchanged selected 0.005 bound for the optional path.
+
+The failed test executable is
+`1a0567d6f5f4c040e1275e02aec964c5f472aee1a8b809f4158352212b73cb93`;
+streams, source and observed table are retained in `color-optional-icc-before`.
+The current optional writer directly codes the nonlinear samples and replaces
+their description with ICC; it does not perform the required source-to-output
+conversion. The source/ICC conversion-or-refusal contract is pending owner
+clarification. The pinned zenpixels converter already offers a CMS backend;
+no sibling or CMS dependency has been modified. H5 remains open for this
+caller, and its failing regression has not been included in the H4 fix.

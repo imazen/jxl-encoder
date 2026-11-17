@@ -310,7 +310,11 @@ fn explicit_icc_flag_requires_payload_at_every_color_request_entry() {
             .encoder(8, 8, PixelLayout::Rgb8)
             .unwrap()
             .with_color_encoding(ce.clone());
-        stream.push_rows(&pixels, 8).unwrap();
+        assert!(
+            stream.push_rows(&pixels, 8).is_err(),
+            "{name} lossless streaming admitted want_icc without profile"
+        );
+        assert_eq!(stream.rows_pushed(), 0);
         assert!(
             stream.finish().is_err(),
             "{name} lossless streaming accepted want_icc without profile"
@@ -319,7 +323,11 @@ fn explicit_icc_flag_requires_payload_at_every_color_request_entry() {
             .encoder(8, 8, PixelLayout::Rgb8)
             .unwrap()
             .with_color_encoding(ce);
-        stream.push_rows(&pixels, 8).unwrap();
+        assert!(
+            stream.push_rows(&pixels, 8).is_err(),
+            "{name} lossy streaming admitted want_icc without profile"
+        );
+        assert_eq!(stream.rows_pushed(), 0);
         assert!(
             stream.finish().is_err(),
             "{name} lossy streaming accepted want_icc without profile"

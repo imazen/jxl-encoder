@@ -2,8 +2,12 @@
 
 ## [Unreleased]
 
-- Validate parametric color numbers before encoding and preserve valid
-  zero-y primaries through fallible source-color matrix conversion.
+- Validate parametric color numbers before encoding, preserve valid zero-y
+  primaries, and decode explicit gamma input over its full exponent range.
+  Recheck changed streaming color/gamma settings before accepting rows.
+
+- Finalize animation modular-buffer width after encoding all frames and
+  choose its codestream level from the actual common header metadata.
 
 - Treat explicit animation blends as full-canvas inputs and store hidden
   color-blend references after the color transform, preserving the existing

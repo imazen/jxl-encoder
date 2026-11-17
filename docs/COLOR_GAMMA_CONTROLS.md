@@ -30,9 +30,12 @@ fallback also retains 0.45561767 instead of 0.4557296 for gamma 0.005 at
 input 254/255. These failures remain in the before and intermediate logs;
 no numeric expectation was relaxed to hide them.
 
-The input repair and broader caller/feature/region verification remain in
-progress. These controls do not qualify all gamma values, image content,
-platforms, output profiles or lossy quality behavior.
+The candidate uses ordinary power in RGB/gray u8/u16 ingest. The selected
+full-feature and minimal source-color suites, direct power-law/endpoints,
+actual optional-stop checkpoints and CLI preserved-output controls pass.
+The final broad baseline/lint continuation passes. These controls
+do not qualify every gamma, image, platform, output profile or lossy quality
+behavior.
 
 The independent envelope parser also had a custom-coordinate reader error:
 all four U32 selectors used 19 bits without their offsets, and signed values
@@ -43,3 +46,13 @@ all existing envelope parser regressions pass unchanged. This diagnostic
 repair changes no encoder bytes. Reproduce with `just custom-xy-native
 <v0.12-source> <v0.12-build> <new-executable>` and
 `just bitstream-parser-check`.
+
+The initial combined final-check command completed its selected gamma, header,
+full source, minimal source and CLI stages, then hit the 16 GiB cgroup cap
+while compiling the broad coverage baseline. Its rc143 is an interrupted
+verification run, not a failed pixel assertion or a completed baseline.
+The system journal records the cgroup OOM result and 16 GiB memory peak;
+the wrapper's interrupted time output supplies no process-RSS measurement.
+The baseline continuation removes the selected-test wrapper environment before
+invoking the broader coverage command. The recipe now scopes that environment
+to its selected stages; the fresh baseline compiles in that separate scope.

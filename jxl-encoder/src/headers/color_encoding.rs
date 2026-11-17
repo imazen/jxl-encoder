@@ -1995,6 +1995,58 @@ mod tests {
 mod parametric_admission_tests {
     use super::*;
     #[test]
+    fn color_admission_primary_coordinates_fail_before_writing() {
+        for coordinate in 0..6 {
+            for value in [f64::NAN, f64::INFINITY, 4.0, 2.097152, -2.097153] {
+                let mut primaries = CustomPrimaries {
+                    red: CIExy::new(0.64, 0.33),
+                    green: CIExy::new(0.30, 0.60),
+                    blue: CIExy::new(0.15, 0.06),
+                };
+                match coordinate {
+                    0 => primaries.red.x = value,
+                    1 => primaries.red.y = value,
+                    2 => primaries.green.x = value,
+                    3 => primaries.green.y = value,
+                    4 => primaries.blue.x = value,
+                    _ => primaries.blue.y = value,
+                }
+                let mut writer = BitWriter::new();
+                writer.write(3, 5).unwrap();
+                assert!(
+                    ColorEncoding::with_custom_primaries(primaries)
+                        .write(&mut writer)
+                        .is_err()
+                );
+                assert_eq!(writer.bits_written(), 3);
+                assert_eq!(writer.finish_with_padding(), [5]);
+            }
+        }
+    }
+
+    #[test]
+    fn color_admission_gray_ignores_unserialized_primary_coordinates() {
+        let mut expected = BitWriter::new();
+        ColorEncoding::gray().write(&mut expected).unwrap();
+        let expected = expected.finish_with_padding();
+        for coordinates in [
+            None,
+            Some(CustomPrimaries {
+                red: CIExy::new(f64::NAN, f64::INFINITY),
+                green: CIExy::new(0.0, 0.0),
+                blue: CIExy::new(0.0, 0.0),
+            }),
+        ] {
+            let mut gray = ColorEncoding::gray();
+            gray.primaries = Primaries::Custom;
+            gray.custom_primaries = coordinates;
+            let mut actual = BitWriter::new();
+            gray.write(&mut actual).unwrap();
+            assert_eq!(actual.finish_with_padding(), expected);
+        }
+    }
+
+    #[test]
     fn color_admission_gamma_wire_rounding_matches_native_fields() {
         for (bits, field) in [
             (0x38fff518, 1221_u32),

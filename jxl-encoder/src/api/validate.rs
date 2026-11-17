@@ -5,6 +5,33 @@
 
 use super::*;
 
+/// Validate source operations independently of fields omitted by ICC output.
+pub(crate) fn validate_lossy_source_encoding(
+    layout: PixelLayout,
+    source_gamma: Option<f32>,
+    color: Option<&crate::headers::color_encoding::ColorEncoding>,
+) -> Result<()> {
+    let Some(color) = color else {
+        return Ok(());
+    };
+    // Floating layouts already contain linear samples. Explicit source gamma
+    // takes precedence, and CMYK ingest uses its separate conversion route.
+    if !layout.is_f32()
+        && !layout.is_f16()
+        && !matches!(layout, PixelLayout::Cmyk8 | PixelLayout::Cmyk16)
+        && source_gamma.is_none()
+        && let Some(gamma) = color.gamma
+        && (!gamma.is_finite() || gamma <= 0.0)
+    {
+        return Err(at!(EncodeError::InvalidInput {
+            message: "invalid color encoding: consumed source gamma must be finite and positive"
+                .into(),
+        }));
+    }
+    crate::vardct::xyb::primaries_to_srgb_matrix(color).map_err(at_from)?;
+    Ok(())
+}
+
 /// JXL spec maximum dimension (2^30) per axis.
 ///
 /// Both width and height must be `<= MAX_JXL_DIM`. This is enforced on every

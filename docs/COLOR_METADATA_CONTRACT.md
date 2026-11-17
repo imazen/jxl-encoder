@@ -360,6 +360,99 @@ The raw-small and wire-singular primary controls have finite bounded raw CMS
 matrices, isolating determinant admission and coordinate quantization from
 an unrelated derived-matrix overflow.
 
+## H4 candidate behavior and caller inventory
+
+The candidate validates the quantized wire coordinates, direct gamma field,
+raw primary determinant, normalized gray white and Bradford/adapted RGB
+s15Fixed16 ranges. The primary determinant uses an exact integer numerator
+on the 1e-6 coordinate lattice; numerator magnitude 100 is the inclusive
+1e-10 boundary. Gamma quantization uses the writer's f32 multiplication and
+rounding, including the two adjacent source values that encode as 1221.
+Non-finite coordinates are refused before integer conversion. ICC-present
+headers omit these fields and retain raw ICC acceptance.
+
+Zero-y primaries use unnormalized XYZ columns and barycentric weights.
+Non-D65 conversion shares the f64 arithmetic; ordinary D65 matrix paths remain
+unchanged. Source conversion still consumes the explicit source description
+when an ICC payload selects the output profile. Toggling the ICC selector
+with an attached Display P3 profile preserves encoded bytes and recovers the
+profile exactly in the selected nonneutral P3/D65 and P3/DCI controls.
+
+| Caller | Admission and current evidence |
+| --- | --- |
+| Packed/strided request, append, Write | Shared validation precedes output and tight-memory refusal; all offered policies |
+| Animation request and wrappers | Shared request validation; selected XYZ float frames rendered in the original source profile by both decoders |
+| Lossy/lossless streaming | Color and ICC presence checked before first allocation, after changing the description, and at finish; setters invalidate earlier admission |
+| Direct VarDCT with alpha/extras | Early inner guard before pixel work; extras views are small borrowed descriptors |
+| Precomputed/prequantized entries | Independent entry guards; precomputation propagates a fallible matrix result before its XYB allocation |
+| Rate-control zero/positive iterations | Early entry guard; existing color-domain controls pass |
+| Header writers | Shared color validation before its fields; whole-file prevalidation fails before the guard and passes afterward |
+| Legacy configurations / planar integers | No parametric-color override on these convenience methods; request routes supply overrides |
+| JPEG | Raw/parsed JPEG imports an ICC instead of caller numeric descriptors; optional RGB8 subsampling traverses request admission |
+
+`color-admission-xyz-source-fields` passes selected XYZ D65/D50 samples at
+32x17 and 259x17 through packed, strided, seven-row streaming and two-frame
+animation under all seventeen offered policy configurations. The native still
+leg explicitly requests linear sRGB and uses the unmodified CMS vectors;
+the native animation helper explicitly requests the original source fields.
+These two output spaces have different expected samples. The first animation
+fixture incorrectly compared original-profile output with linear sRGB; its
+failed verdict remains retained separately.
+
+The selected direct/prepared/prequantized/rate invalid-entry matrix passes in
+`color-admission-engine-typed-errors` (rc0/19 seconds, peak RSS 1.08 GiB,
+minimum available 20,565 MiB). The preceding build-only error is not a runtime
+verdict. Subsequent numeric-only library/lock/lint verification is recorded
+below and is on main at `4e1f7c1d`. The separate gamma, streaming and animation
+changes remain under final verification. H4 is still open.
+
+The first positive direct-gamma endpoint run exposes a separate source-input
+error: strict d0.01 RGB8 white at minimum legal gamma decodes to native linear
+RGB `[0.98947495, 0.9894753, 0.9894751]`. Lossless white is exactly 1.0. The
+unmodified public v0.12 encoder's corresponding lossy white has maximum error
+0.00011861324310302734; both native lossless controls are exact. Its four
+streams, hashes and observations remain in `color-admission-native-white-render`;
+reproduce with `just color-admission-native-white-check <oracle-log> <pinned-djxl>
+<new-output>`. The failed endpoint run is retained; its existing 0.002 bound
+has not changed. The candidate uses ordinary power in the four integer
+ingest routes; source endpoint/interior and real checkpoint controls pass.
+
+## Animation DC-width finding from the gamma controls
+
+The first broad gamma-animation test fails in the primary decoder under Lean:
+white is observed as -0.99955183. Pinned native source-profile output is
+0.9999999403953552 for both displayed frames. This is an encoder header
+promise error, not an attributed decoder defect. Changing only the gamma
+field to one still produces primary linear RGB near -0.02544849. Changing
+only the modular-buffer-width bit instead recovers both primary white frames
+at 0.9999999403953552. Every other bit is preserved in each diagnostic.
+The original SHA256 is
+`4d0e10de464060e715f5d819513c4dfa6469a350068b292b305ed1c34ab3f9ba`.
+
+The animation frame writer omitted the existing finalized-DC overflow scan,
+and the common header was written before encoding frames. Final level
+selection separately guessed metadata from the input layout. The candidate
+accumulates the existing overflow flag across frames, prefixes the final
+header after frame coding, and selects the level from that same header.
+It reserves extra prefix capacity fallibly and moves the existing frame
+payload in place; it does not allocate another frame-payload buffer.
+The raw ICC stream is written once in the common header.
+
+`color-admission-width-first-fix.log` passes the original source-white, new
+XYZ/gamma animation, streaming source-gamma and CLI matrices (rc0/99 seconds,
+peak RSS 1.13 GiB, minimum available 20,449 MiB). The CLI before control
+independently truncates an existing output on invalid PNG gamma; the repaired
+streaming check rejects before file creation. The first new streaming test
+compile error is retained, and its corrected before test fails after accepting
+one row instead of zero. No established gamma-range threshold changed.
+Final level/header controls and delayed/hidden overflow cases pass, as do
+the seven source-gamma/width fault replays. The later full frame-contract run
+retains an old first-push acceptance assumption for missing ICC; its corrected
+replay requires earlier refusal and zero rows while retaining finish refusal.
+The full library and unchanged lock/drift continuation passes. A subsequent
+source-ICC caller fix requires fresh selected caller/feature/lint accounting;
+H4 is not closed.
+
 ## H4 numeric admission core
 
 Parametric validation now checks finite and representable wire coordinates,
@@ -397,3 +490,97 @@ No numeric threshold, existing ignore or byte expectation is loosened.
 H4 remains open for the separately reproduced gamma input, streaming admission,
 animation DC-width/level and final coverage follow-ups. Those fixes are not
 claimed by this numeric core. [Gamma evidence](COLOR_GAMMA_CONTROLS.md).
+
+## Consumed source parameters with ICC output
+
+ICC output omits numeric header fields, but lossy input preparation still uses
+selected source gamma and primaries. The before probe accepts source gamma
+zero in still, writer and animation routes; the writer replaces its existing
+output. NaN gamma returns a later non-finite-pixel error, without an observed
+wrong output-pixel claim. Streaming accepts a first row for zero/NaN gamma,
+zero-y white and singular source primaries before later validation.
+The actual failed test is `color-icc-consumed-source-before`, executable
+`238a715f82bab1dd08aae0159a4dac4747edec8916edc970032b5d9868ec3310`.
+
+The candidate validates the consumed gamma operand as finite and positive
+and checks the fallible source matrix before first rows and public still or
+animation input processing. It preserves omitted numeric wire fields and raw
+profile bytes. Floating source samples do not consume gamma; an explicit
+source-gamma override retains precedence, and lossless samples do not run the
+lossy preparation. Positive controls require byte identity across unused or
+overridden NaN gamma, exact streaming bytes, exact original Display P3 ICC
+and full finite rendering through primary Rust and native v0.12. They pass
+under every offered policy in `color-icc-consumed-source-positive-controls`
+(rc0/22 seconds, peak RSS 1.05 GiB, minimum available 20,432 MiB).
+The initial unused-helper attempt remains a failed replay; corrected caller
+wiring passes separately. No profile-content admission requirement is added.
+
+The fresh `color-final-checks` selected gamma/header, full-feature source,
+minimal source and CLI stages pass. Its encompassing command later hits the
+compile-time cgroup cap; the separate canonical broad continuation passes
+library, unchanged normal/strict/divergence checks, strict focused/workspace
+lint, no-default build and format (`color-final-broad-continuation.log`,
+rc0/397 seconds, build/test peak RSS 1.68 GiB, minimum available 19,788 MiB).
+Five consumed-source faults are detected and restored; direct/prepared/
+prequantized/rate None-descriptor controls also render within the existing
+0.002 linear-sRGB bound. The encompassing source-fault continuation passes
+(rc0/115 seconds, peak RSS 1.07 GiB, minimum available 20,199 MiB).
+Its initial harness-only result-wrapper type error remains a failed build.
+The last boundary/header/missing-source controls pass; that command then
+fails the separately reproduced optional H5 ICC caller, not these controls.
+Strict lint/format on the latest test extensions passes separately
+(rc0/50 seconds, peak RSS 1.06 GiB, minimum available 19,737 MiB).
+
+## H4 final selected regions and limits
+
+Missing coverage is explicit. CMYK animation still omits Black (H10), and the
+optional subsampled explicit-source-plus-ICC caller has the separate H5 failure
+in [the source-color record](SOURCE_COLOR_CONVERSION.md#optional-icc-caller-reopened).
+Neither is credited by a region counter. The remaining H12-H14 dimension,
+clock and cumulative-area checks are separate from this animation precision fix.
+
+The retained `color-complete-region-record/regions.json` checks exact source,
+executable and profile hashes and excludes archives with differing function
+bodies. Only passing tests enter the union. Its uncovered mapped regions are:
+
+- Descriptor validation: 6 regions in normalized-white and primary-matrix
+  error alternatives. Finite quantized white coordinates and the nonzero exact
+  wire determinant exclude these failures on admitted descriptors. The real
+  zero-Bradford-cone lattice case (0.14969, 0.80257) does exercise adaptation
+  rejection before output; no decoder observation is inferred from its formula.
+- Shared color writer: 35 regions in fallible serialization, coordinate-error
+  returns and missing-custom-payload fallbacks after prevalidation. The invalid
+  coordinate/payload cases fail in prevalidation instead; allocation/write
+  failure was not injected. Trace-enabled and ordinary builds are included;
+  ordinary trace arguments intentionally sit under a compile-time-false stub.
+- Math: one singular/non-finite inverse return, one fixed-Bradford inverse
+  failure, and five duplicate/constant-target failure regions in source-to-sRGB.
+  The inverses receive fixed nonsingular target/Bradford matrices. Invalid
+  source matrices are tested at their actual earlier rejection sites.
+- Source matrix: the D65 match arm inside a non-D65-only branch is unreachable.
+- Animation: 7 header-serialization, size-overflow and reserve-failure regions
+  in prefix finalization were not injected. The level finisher's over-Level-10
+  error is unexercised; it is not a pixel or header-precision pass claim.
+
+| Exact scope | Observed mapped code regions |
+| --- | --- |
+| Parametric validator / xy conversion | 160/166; 13/13 |
+| Shared color writer / whole-header validation window | 188/223; 3/3 |
+| white / determinant / inverse | 11/11; 17/17; 54/55 |
+| vector product / matrix product / raw columns | 7/7; 21/21; 9/9 |
+| RGB-to-XYZ / adaptation / source-to-sRGB | 54/54; 30/31; 37/42 |
+| D65 custom matrix / source matrix / validator delegate | 156/156; 66/67; 4/4 |
+| Source-white wrapper / consumed-source validation | 5/5; 23/23 |
+| Lossy / lossless streaming admission | 38/38; 32/32 |
+| Two color setters and two source-gamma setters | 5/5 each |
+| Direct / rate / prepared / prequantized validation windows | 6/6 each |
+| Gamma scalar / RGB8 / RGB16 / gray8 / gray16 | 5/5; 31/31; 34/34; 33/33; 32/32 |
+| Animation level / prefix finalization | 31/32; 42/49 |
+| Final metadata transfer / DC scan / per-frame scan call | 2/2; 17/17; 3/3 |
+
+These are named source-region observations, not proof of every predicate
+outcome, every pixel configuration or whole-encoder coverage. The actual
+caller/layout/policy inventory above supplies the route evidence. Private
+gamma checkpoint controls use the real 262144-sample poll with absent,
+continuing and cancelling Stop objects; no cancellation-latency bound follows.
+No established byte expectation, numeric tolerance or ignore was weakened.
