@@ -2156,7 +2156,12 @@ impl VarDctEncoder {
         let min_peak = if self.distance < 1.0 { 2 } else { 1 };
         // RFC#45 pick #5 chunk 3 per-patch cost gate — mirrors
         // `vardct/encoder.rs::encode_inner` (see comment there).
-        let mut patches_data = if self.enable_patches {
+        // A dictionary occupies slot three before the main frame is decoded.
+        // Preserve a caller's color source instead of overwriting it with a
+        // pre-transform dictionary (Part 1 F.2). Still-image and nonconflicting
+        // animation patch candidates retain their existing selection.
+        let mut patches_data = if self.enable_patches && !frame_options.may_reference_color_slot(3)
+        {
             super::patches::find_and_build_with_per_patch_gate(
                 [&xyb_x, &xyb_y, &xyb_b],
                 width,
@@ -4543,16 +4548,16 @@ impl VarDctEncoder {
                 // `is_last = false` (the spec disallows ReferenceOnly
                 // as the last frame — public-API validation rejects
                 // that combination), default the save slot to `1` when
-                // the caller didn't pick one, and set
-                // `save_before_ct = true` to match libjxl's
-                // patches-frame defaults (patches.rs:1941).
+                // the caller didn't pick one, and select
+                // post-transform storage when a later color blend consumes
+                // this layer. Patch dictionaries keep pre-transform storage.
                 if opts.reference_only {
                     fh.frame_type = crate::headers::frame_header::FrameType::ReferenceOnly;
                     fh.is_last = false;
                     if opts.save_as_reference.is_none() && fh.save_as_reference == 0 {
                         fh.save_as_reference = 1;
                     }
-                    fh.save_before_ct = true;
+                    fh.save_before_ct = !opts.reference_only_after_ct;
                 }
             }
 

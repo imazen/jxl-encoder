@@ -176,6 +176,8 @@ pub struct FrameEncoderOptions {
     /// `BlendingInfo::source`. Rejected by the public API on the last
     /// frame of an animation.
     pub reference_only: bool,
+    /// Store an animation reference in the domain required by color blending.
+    pub(crate) reference_only_after_ct: bool,
     /// Optional frame name. `None` writes no name.
     pub name: Option<String>,
     /// Optional SMPTE timecode (requires `have_timecodes=true`). `None` writes `0`.
@@ -245,6 +247,7 @@ impl Default for FrameEncoderOptions {
             save_as_reference: None,
             ec_blend_mode_override: None,
             reference_only: false,
+            reference_only_after_ct: false,
             name: None,
             timecode: None,
             modular_knobs: super::palette::ModularKnobs::default(),
@@ -430,13 +433,9 @@ impl FrameEncoder {
             if self.options.save_as_reference.is_none() && fh.save_as_reference == 0 {
                 fh.save_as_reference = 1;
             }
-            // ReferenceOnly frames always write `save_before_ct`
-            // (frame_header.rs:428). Default to `true` so the decoder
-            // stores the pre-color-transform data — what libjxl uses
-            // for `kReferenceOnly + xyb_encoded=true` animation
-            // backgrounds (matches the patches path at
-            // patches.rs:1941).
-            fh.save_before_ct = true;
+            // Patch dictionaries retain their pre-transform default; animation
+            // layers consumed by color blending require post-transform storage.
+            fh.save_before_ct = !self.options.reference_only_after_ct;
         }
     }
 

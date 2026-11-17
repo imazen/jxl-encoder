@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+- Treat explicit animation blends as full-canvas inputs and store hidden
+  color-blend references after the color transform, preserving the existing
+  patch-dictionary storage domain. Reserve live color reference slot three
+  through intervening frames before selecting an internal patch dictionary.
+
 - Honor non-D65 source whites before XYB and compare rate-control references
   and reconstructions in linear sRGB, retaining the existing D65 matrix paths.
 

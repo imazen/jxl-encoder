@@ -69,11 +69,72 @@ pub struct FrameOptions {
     /// must end with a displayable frame). The animation entry points
     /// reject this combination with [`crate::EncodeError::InvalidInput`].
     pub reference_only: bool,
+    /// Save an animation reference after the color transform when it feeds a blend.
+    pub(crate) reference_only_after_ct: bool,
+    /// Keep a live caller color source across this frame's internal dictionary.
+    pub(crate) preserve_color_reference_three: bool,
     /// Optional frame name (libjxl `FrameHeader::name`). `None` writes no name.
     pub name: Option<String>,
     /// Optional SMPTE timecode for this frame. Only written when
     /// `have_timecodes` is true. `None` writes timecode `0`.
     pub timecode: Option<u32>,
+}
+
+impl FrameOptions {
+    /// Conservatively reserve a color source slot before emitting any internal
+    /// dictionary. A crop may read the surrounding canvas even in Replace mode.
+    pub(crate) fn may_reference_color_slot(&self, slot: u32) -> bool {
+        (slot == 3 && self.preserve_color_reference_three)
+            || (!self.reference_only
+                && self
+                    .blend_source
+                    .unwrap_or(if self.crop.is_some() { 1 } else { 0 })
+                    == slot
+                && (self.blend_mode.unwrap_or(BlendMode::Replace) != BlendMode::Replace
+                    || self.crop.is_some()))
+    }
+}
+
+#[cfg(test)]
+mod color_reference_slot_tests {
+    use super::*;
+    #[test]
+    fn color_slot_reservation_accounts_for_modes_crops_and_reference_only() {
+        let source = FrameOptions {
+            blend_source: Some(3),
+            blend_mode: Some(BlendMode::Add),
+            ..Default::default()
+        };
+        assert!(source.may_reference_color_slot(3));
+        assert!(!source.may_reference_color_slot(2));
+        let mut frame = source.clone();
+        frame.reference_only = true;
+        assert!(!frame.may_reference_color_slot(3));
+        let mut frame = source.clone();
+        frame.blend_mode = Some(BlendMode::Replace);
+        assert!(!frame.may_reference_color_slot(3));
+        frame.crop = Some(FrameCrop {
+            x0: 0,
+            y0: 0,
+            width: 8,
+            height: 8,
+        });
+        assert!(frame.may_reference_color_slot(3));
+        frame.blend_mode = None;
+        assert!(frame.may_reference_color_slot(3));
+        frame.blend_source = None;
+        assert!(!frame.may_reference_color_slot(3));
+        assert!(frame.may_reference_color_slot(1));
+        frame.crop = None;
+        frame.blend_mode = Some(BlendMode::Add);
+        assert!(!frame.may_reference_color_slot(3));
+        assert!(frame.may_reference_color_slot(0));
+        frame.reference_only = true;
+        frame.preserve_color_reference_three = true;
+        assert!(frame.may_reference_color_slot(3));
+        assert!(!frame.may_reference_color_slot(0));
+        assert!(!frame.may_reference_color_slot(2));
+    }
 }
 
 /// Frame type.

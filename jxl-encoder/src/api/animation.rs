@@ -76,8 +76,9 @@ pub struct AnimationFrame<'a> {
     /// Save this frame to a reference slot (0–3) so later frames can
     /// composite against it. `None` keeps the encoder default — non-last
     /// animated frames save to slot 1 so successor frames with crops can
-    /// blend over the persistent canvas. `Some(0)` explicitly disables
-    /// saving (typical for the last frame).
+    /// blend over the persistent canvas. `Some(0)` disables saving for regular
+    /// duration-bearing frames; ReferenceOnly and zero-duration frames can save
+    /// to slot zero.
     pub save_as_reference: Option<u32>,
     /// Encode this frame as a `ReferenceOnly` frame (libjxl
     /// `FrameType::kReferenceOnly`). The codestream stores the frame and
@@ -124,6 +125,8 @@ impl<'a> AnimationFrame<'a> {
     }
 
     /// Override the per-frame blend mode. See [`BlendMode`].
+    /// Explicit modes use the whole canvas pixel buffer; automatic replacement
+    /// cropping applies only when no blend mode is selected.
     pub fn with_blend_mode(mut self, mode: BlendMode) -> Self {
         self.blend_mode = Some(mode);
         self
@@ -137,8 +140,8 @@ impl<'a> AnimationFrame<'a> {
     }
 
     /// Save this frame to reference slot (0–3) for later compositing.
-    /// Pass `0` to explicitly disable saving (overriding the encoder's
-    /// default of `1` for non-last animated frames).
+    /// For regular duration-bearing frames, `0` disables saving. ReferenceOnly
+    /// and zero-duration frames can save to slot zero. The non-last default is `1`.
     pub fn with_save_as_reference(mut self, slot: u32) -> Self {
         self.save_as_reference = Some(slot);
         self

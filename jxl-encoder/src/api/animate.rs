@@ -8,6 +8,50 @@
 use super::validate::validate_dims;
 use super::*;
 
+const REFERENCE_AFTER_COLOR_TRANSFORM: u8 = 1;
+const RESERVE_COLOR_SLOT_THREE: u8 = 2;
+
+/// Mark hidden layers that a later color blend reads before their slot is
+/// overwritten. Color blending requires post-transform references (Part 1 F.2).
+/// Reserve live color slot three across intervening internal patch dictionaries.
+/// Implicit replacement frames may become crops, so conservatively include
+/// their default source. Explicit blends retain their full-canvas inputs.
+fn animation_reference_plan(
+    frames: &[AnimationFrame<'_>],
+    budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
+    stop: Option<&dyn Stop>,
+) -> crate::error::Result<Vec<u8>> {
+    let mut needed = [false; 4];
+    crate::error::check_stop(stop)?;
+    let mut plan = crate::budget::try_alloc_zeroed_permanent::<u8>(budget, frames.len())?;
+    for (i, frame) in frames.iter().enumerate().rev() {
+        crate::error::check_stop(stop)?;
+        let slot = frame.save_as_reference.unwrap_or(1) as usize;
+        if frame.reference_only {
+            plan[i] = u8::from(needed[slot]);
+            needed[slot] = false;
+        } else {
+            // A regular duration-bearing frame with slot zero does not save.
+            if i + 1 < frames.len() && (slot != 0 || frame.duration == 0) {
+                needed[slot] = false;
+            }
+            if frame.blend_mode != Some(BlendMode::Replace) {
+                let source =
+                    frame
+                        .blend_source
+                        .unwrap_or(if frame.blend_mode.is_some() { 0 } else { 1 });
+                needed[source as usize] = true;
+            }
+        }
+        // A dictionary precedes this frame's own save. Reserve only references
+        // still live at its input, including this frame's blend source.
+        if needed[3] {
+            plan[i] |= RESERVE_COLOR_SLOT_THREE;
+        }
+    }
+    Ok(plan)
+}
+
 fn validate_animation_input(
     width: u32,
     height: u32,
@@ -141,6 +185,7 @@ pub(crate) fn encode_animation_lossless(
         cfg.sectioned_trees(),
     )?;
     let budget = preflight.budget;
+    let reference_plan = animation_reference_plan(frames, Some(&budget), stop).map_err(at_from)?;
 
     // Build file header with animation
     let mut sample_image = match layout {
@@ -268,7 +313,7 @@ pub(crate) fn encode_animation_lossless(
         //     modular signed-i32 channels round-trip both branches of
         //     the subtraction.
         let mut delta_from_identical = false;
-        let crop = if frame.reference_only {
+        let crop = if frame.reference_only || frame.blend_mode.is_some() {
             None
         } else if let Some(prev) = prev_pixels {
             match detect_frame_crop(prev, frame.pixels, w, h, bpp, false) {
@@ -394,6 +439,7 @@ pub(crate) fn encode_animation_lossless(
                 save_as_reference: frame.save_as_reference,
                 ec_blend_mode_override: ec_override,
                 reference_only: frame.reference_only,
+                reference_only_after_ct: reference_plan[i] & REFERENCE_AFTER_COLOR_TRANSFORM != 0,
                 name: frame.name.clone(),
                 timecode: frame.timecode,
                 modular_knobs: cfg.modular_knobs(),
@@ -674,6 +720,7 @@ pub(crate) fn encode_animation_lossy(
         limits,
     )?;
     let budget = preflight.budget;
+    let reference_plan = animation_reference_plan(frames, Some(&budget), stop).map_err(at_from)?;
 
     // Set up VarDCT encoder
     let mut profile = cfg.effective_profile_for_image((width as u64) * (height as u64));
@@ -960,7 +1007,7 @@ pub(crate) fn encode_animation_lossy(
         // reference frame, not the original pixels — that requires a
         // reconstruction shadow that chunk-2 does not yet wire.
         let mut delta_from_identical = false;
-        let crop = if frame.reference_only {
+        let crop = if frame.reference_only || frame.blend_mode.is_some() {
             None
         } else if let Some(prev) = prev_pixels {
             match detect_frame_crop(prev, frame.pixels, w, h, bpp, true) {
@@ -1089,6 +1136,8 @@ pub(crate) fn encode_animation_lossy(
                 None
             },
             reference_only: frame.reference_only,
+            reference_only_after_ct: reference_plan[i] & REFERENCE_AFTER_COLOR_TRANSFORM != 0,
+            preserve_color_reference_three: reference_plan[i] & RESERVE_COLOR_SLOT_THREE != 0,
             name: frame.name.clone(),
             timecode: frame.timecode,
         };
@@ -1310,5 +1359,163 @@ fn apply_animation_metadata(
     }
     if let Some(v) = request.linear_below {
         header.linear_below = v;
+    }
+}
+
+#[cfg(test)]
+mod reference_domain_tests {
+    use super::*;
+    fn plan(frames: &[AnimationFrame<'_>]) -> Vec<bool> {
+        animation_reference_plan(frames, None, None)
+            .unwrap()
+            .into_iter()
+            .map(|flags| flags & REFERENCE_AFTER_COLOR_TRANSFORM != 0)
+            .collect()
+    }
+    #[test]
+    fn animation_reference_plan_preserves_live_patch_slot_until_overwrite() {
+        let pixels = [];
+        let hidden = |slot| {
+            AnimationFrame::new(&pixels, 0)
+                .with_reference_only(true)
+                .with_save_as_reference(slot)
+        };
+        let replace = |slot| {
+            AnimationFrame::new(&pixels, 10)
+                .with_blend_mode(BlendMode::Replace)
+                .with_save_as_reference(slot)
+        };
+        let add = || {
+            AnimationFrame::new(&pixels, 10)
+                .with_blend_mode(BlendMode::Add)
+                .with_blend_source(3)
+        };
+        for middle in [replace(1), hidden(2)] {
+            let flags = animation_reference_plan(&[hidden(3), middle, add()], None, None).unwrap();
+            assert_eq!(
+                flags,
+                [
+                    REFERENCE_AFTER_COLOR_TRANSFORM,
+                    RESERVE_COLOR_SLOT_THREE,
+                    RESERVE_COLOR_SLOT_THREE
+                ]
+            );
+        }
+        assert_eq!(
+            animation_reference_plan(&[hidden(3), replace(3), add()], None, None).unwrap(),
+            [0, 0, RESERVE_COLOR_SLOT_THREE]
+        );
+    }
+    #[test]
+    fn animation_reference_plan_propagates_cancellation() {
+        use core::sync::atomic::{AtomicUsize, Ordering};
+        struct Cancel {
+            successful: usize,
+            calls: AtomicUsize,
+        }
+        impl Stop for Cancel {
+            fn check(&self) -> core::result::Result<(), enough::StopReason> {
+                if self.calls.fetch_add(1, Ordering::Relaxed) < self.successful {
+                    Ok(())
+                } else {
+                    Err(enough::StopReason::Cancelled)
+                }
+            }
+        }
+        let pixels = [];
+        let frames = [AnimationFrame::new(&pixels, 10)];
+        for successful in 0..=1 {
+            let stop = Cancel {
+                successful,
+                calls: AtomicUsize::new(0),
+            };
+            assert!(matches!(
+                animation_reference_plan(&frames, None, Some(&stop)),
+                Err(crate::error::Error::Cancelled)
+            ));
+        }
+    }
+    #[test]
+    fn animation_reference_plan_respects_budget() {
+        let pixels = [];
+        let frames = [
+            AnimationFrame::new(&pixels, 10),
+            AnimationFrame::new(&pixels, 10),
+        ];
+        let budget = crate::budget::MemoryBudget::with_alloc_policy(1, true);
+        assert!(animation_reference_plan(&frames, Some(&budget), None).is_err());
+        assert_eq!(budget.used(), 0);
+    }
+    #[test]
+    fn animation_reference_domain_respects_sources_and_overwrites() {
+        let pixels = [];
+        let hidden = |slot| {
+            AnimationFrame::new(&pixels, 0)
+                .with_reference_only(true)
+                .with_save_as_reference(slot)
+        };
+        let add = |slot| {
+            AnimationFrame::new(&pixels, 10)
+                .with_blend_mode(BlendMode::Add)
+                .with_blend_source(slot)
+        };
+        assert_eq!(plan(&[hidden(2), add(2)]), [true, false]);
+        assert_eq!(plan(&[hidden(2), hidden(2), add(2)]), [false, true, false]);
+        assert_eq!(
+            plan(&[
+                hidden(2),
+                AnimationFrame::new(&pixels, 10).with_save_as_reference(2),
+                add(2)
+            ]),
+            [false, false, false]
+        );
+        assert_eq!(
+            plan(&[
+                hidden(0),
+                AnimationFrame::new(&pixels, 10).with_blend_mode(BlendMode::Add)
+            ]),
+            [true, false]
+        );
+        assert_eq!(
+            plan(&[
+                hidden(1),
+                AnimationFrame::new(&pixels, 10).with_blend_mode(BlendMode::Add)
+            ]),
+            [false, false]
+        );
+        assert_eq!(
+            plan(&[hidden(1), AnimationFrame::new(&pixels, 10)]),
+            [true, false]
+        );
+        assert_eq!(
+            plan(&[
+                hidden(2),
+                AnimationFrame::new(&pixels, 10)
+                    .with_blend_mode(BlendMode::Replace)
+                    .with_blend_source(2)
+            ]),
+            [false, false]
+        );
+        assert_eq!(plan(&[hidden(2), hidden(3), add(2)]), [true, false, false]);
+        assert_eq!(
+            plan(&[
+                hidden(0),
+                AnimationFrame::new(&pixels, 0)
+                    .with_save_as_reference(0)
+                    .with_blend_mode(BlendMode::Replace),
+                add(0)
+            ]),
+            [false, false, false]
+        );
+        assert_eq!(
+            plan(&[
+                hidden(0),
+                AnimationFrame::new(&pixels, 10)
+                    .with_save_as_reference(0)
+                    .with_blend_mode(BlendMode::Replace),
+                add(0)
+            ]),
+            [true, false, false]
+        );
     }
 }

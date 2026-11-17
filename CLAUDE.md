@@ -1768,6 +1768,28 @@ misclassify that CLI limitation as an invalid stream or strip the ICC to hide it
 
 ## Known Bugs (ACTIVE)
 
+### RESOLVED 2026-11-17: explicit blend cropping and pre-transform color references
+
+Strict before controls leave most explicit Add pixels at 64 instead of 128 and
+native v0.12 rejects a pre-transform ReferenceOnly color source. Explicit modes
+now retain full-canvas buffers. A budgeted reverse slot plan selects hidden
+post-transform storage and reserves live color slot three across intervening
+patch dictionaries. Both the immediate dictionary collision and the intervening
+Replace-frame collision have actual failing streams in both decoders; all 17
+policy replays pass with the lifetime repair. Full/default/minimal, typed source-alpha and raw-ICC controls pass; nine fault
+replays detect their restored faults. Named regions are 47/47 for the plan, 16/16
+for slot reservation, 7/7 for each crop guard, 1/1 for each option assignment and
+4/4 for patch selection. Each selected writer block is 8/9: its defensive
+absent-option/zero-resolved-slot fallback is unreachable from public slot setup.
+These scopes do not establish full writer/encoder coverage. Exact records are in
+[the contract](docs/FRAME_HEADER_CONTRACT.md); earlier pre-dictionary coverage
+must not be reported as final lifetime coverage. No existing threshold, ignore
+or byte expectation changes. The current 0.8 Rust decoder handles a one-pixel
+Multiply cell that 0.4.3 returns as zero; the secondary decoder's one-pixel Add
+inspection also has a retained limitation. CMYK and alpha-setting forwarding
+remain separate gaps.
+
+
 ### 2026-11-17: non-D65 source conversion and CMYK animation observations
 
 H5 now has actual strict-mode before pixels. For linear P3/DCI source
