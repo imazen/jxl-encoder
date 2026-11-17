@@ -1,0 +1,9 @@
+# Observed unmodified v0.12.0 a7a9c78 Passes::GetDownsamplingBracket.
+# scripts/progressive_brackets_oracle.cc; upper bound is inclusive here.
+# mode (Single=0, QuantizedAcFullAc=1, DcVlfLfAc=2), pass, min, max
+0	0	0	2
+1	0	1	2
+1	1	0	0
+2	0	3	2
+2	1	2	2
+2	2	0	1

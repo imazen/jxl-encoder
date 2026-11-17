@@ -35,3 +35,9 @@ transposes. `squeeze_gray_global_v012.tsv` retains those dimensions/shifts
 and the ordered global-prefix boundary. High shifts in globally coded bands
 are legal; the remaining bands all retain positive group tiles. This control
 separates that case from E3's invalid remaining-band geometry.
+
+The `progressive_brackets` component calls the actual
+`Passes::GetDownsamplingBracket` for Single, QuantizedAcFullAc and DcVlfLfAc
+header configurations. `vardct/progressive_brackets_v012.tsv` retains the six
+observed pass ranges; its upper bound is inclusive, matching that C++ method.
+The native production alpha controls are separate from this component check.

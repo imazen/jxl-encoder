@@ -1527,9 +1527,12 @@ alpha-squeeze-rust1100-lint manifest:
 alpha-squeeze-existing-controls manifest:
     cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test it --no-report -- alpha_squeeze --test-threads=1
 
+progressive-brackets-oracle source build output:
+    python3 scripts/frame_header_oracle.py --component progressive_brackets {{quote(source)}} {{quote(build)}} {{quote(output)}}
 
 alpha-squeeze-scope-summary output *pairs:
     python3 scripts/alpha_squeeze_coverage_summary.py {{quote(output)}} {{pairs}}
 
 alpha-squeeze-unit-evidence manifest output coverage_env:
     bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" empty_group_alpha_section --source jxl-encoder/src/vardct/bitstream.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
