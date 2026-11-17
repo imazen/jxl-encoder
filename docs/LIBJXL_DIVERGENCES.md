@@ -2712,3 +2712,19 @@ count with progressive tokenization, preserving original count arithmetic,
 rounding, pass schedules, policy gates and public API. Selected real-image/policy/public/layout/animation/prepared-engine/CLI callers
 and the unchanged byte-lock/library baseline pass. Full caller/region and
 feature verification remain open in [the contract](PROGRESSIVE_AC_CONTRACT.md).
+
+
+### Issue 144: static entropy progressive admission (I144-V1-static, resolved)
+
+The static entropy producer writes one AC pass. Its representability predicate
+previously admitted explicit progressive modes; selected Zen effort-1/2 files
+therefore carried one pass despite a two/three-pass request. The predicate now
+requires exactly `self.progressive == ProgressiveMode::Single`, routing explicit
+progressive requests through the existing multi-pass writer. Native v0.12 has
+no matching static producer. No named policy, gate registry value or Single
+entropy choice changes. The production pass-count regression fails before
+repair and passes afterward through all selected offered policies and five
+public entries at both sizes and efforts 1/2. Final colors remain exact per
+decoder relative to Single; all 340 observed Single hashes and existing byte
+locks remain unchanged. Library and broad strict lint pass. Further V1 caller
+checks remain separate.

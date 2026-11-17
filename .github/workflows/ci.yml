@@ -383,6 +383,7 @@ jobs:
           --test squeeze_count_matrix --test squeeze_layouts --test squeeze_lf_count
           --test squeeze_group_geometry --test alpha_squeeze_contract
           --test alpha_squeeze_matrix --test alpha_squeeze_progressive
+          --test progressive_ac_contract --test progressive_dispatch
           -- --test-threads=1
       - name: Check progressive alpha wire controls
         run: >-
@@ -396,6 +397,13 @@ jobs:
           cargo test --locked -p jxl-encoder --release
           --features "__expert,__internals,__pre_quantized,parallel"
           --test alpha_squeeze_matrix precomputed_and -- --test-threads=1
+      - name: Test progressive AC prepared callers
+        env:
+          JXL_ENCODER_OUTPUT_DIR: ${{ runner.temp }}/issue144-contracts
+        run: >-
+          cargo test --locked -p jxl-encoder --release
+          --features "__expert,__internals,__pre_quantized,parallel"
+          --test progressive_ac_contract progressive_prepared -- --test-threads=1
       - name: Retain failed issue 144 streams and diagnostics
         if: failure()
         uses: actions/upload-artifact@v7

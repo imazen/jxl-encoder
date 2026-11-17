@@ -6563,6 +6563,7 @@ impl VarDctEncoder {
         let static_codes_cover = !single_pass_possible
             || static_codes_cover_values(&transform_out.quant_dc, &transform_out.quant_ac);
         let single_pass_representable = static_codes_cover
+            && self.progressive == crate::api::ProgressiveMode::Single
             && extras.is_empty()
             && patches_data.is_none()
             && splines_data.is_none()

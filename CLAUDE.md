@@ -1766,6 +1766,23 @@ misclassify that CLI limitation as an invalid stream or strip the ICC to hide it
 
 ## Known Bugs (ACTIVE)
 
+### RESOLVED 2026-11-17: static entropy discarded explicit progressive schedules
+
+The low-effort dispatch regression renders every selected stream, then checks
+its actual frame pass count. The original Zen static producer emits one pass
+for both two/three-pass requests above the small-image cutoff; strict and
+small-image controls retain the requested counts. The retained before object
+is SHA256 `abbbda5cced07ff432062df51b5541fd552353a4c7c4f3c5943c73b80878e876`,
+actual PID 2032323, test exit 101. Static coding now requires
+`ProgressiveMode::Single`. Both progressive modes advertise their requested
+pass counts across the offered policies and five selected public entries;
+each decoder's final pixels equal its own Single control. All 340 observed
+Single controls retain exact before SHA256s. The library baseline, unchanged
+normal/strict/drift locks, focused and workspace all-target strict lint pass
+(`progressive-dispatch-baseline-lint.log`, rc0, 510 seconds; peak RSS 1.70 GiB,
+minimum available 19,755 MiB). The wider V1 caller audit remains separate.
+
+
 ### 2026-11-17: progressive AC flat-prefix nonzero count (issue 144 V1)
 
 Retained sparse production tokens lose native DCT16x16 position 2 value +2

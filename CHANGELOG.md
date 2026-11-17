@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- Route explicit progressive requests through the multi-pass writer when
+  low-effort static entropy can represent only a single pass.
+
 - Count progressive AC nonzeros outside the normalized rectangular LLF region,
   preserving final coefficients for large transforms across progressive passes.
 

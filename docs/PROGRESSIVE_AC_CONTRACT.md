@@ -106,7 +106,8 @@ attempts remain distinct from the corrected passing runs.
 
 `progressive-ac-callers-baseline.log` passes the library baseline, unchanged
 normal/strict/divergence locks and focused strict Rust 1.100 lint against the
-pinned sibling graph. The expanded animation/engine/CLI tests pass strict Rust 1.100 library/test
+pinned sibling graph. The expanded animation/engine/CLI tests pass strict Rust
+1.100 library/test
 lint in `progressive-ac-feature-lint.log` (rc0, 96 seconds; peak RSS
 0.89 GiB, minimum available 20,865 MiB). Its minimal std/convenience/expert
 control runs the real-image, policy/public-entry, typed-layout, animation and
@@ -139,7 +140,26 @@ The header observation also finds a separate dispatch defect: selected Zen
 e1/e2 RGB8 files advertise one pass for both requested progressive modes,
 while strict controls advertise the requested two/three passes. Their final
 pixels match, so the pixel comparisons alone do not assert that the requested
-pass schedule reached the file. The pass-count regression and dispatch repair
-remain required. CMYK with a valid source ICC, already-downsampled output,
+pass schedule reached the file. The separate pass-count regression fails
+before the dispatch repair, with
+actual PID 2032323 and retained object SHA256
+`abbbda5cced07ff432062df51b5541fd552353a4c7c4f3c5943c73b80878e876`.
+The predicate now requires `ProgressiveMode::Single` for static coding.
+Afterward all selected policies, both modes, efforts 1/2, 64-square/259x133
+and five public entries carry the requested counts and preserve each decoder's
+own Single final bits. All 340 measured Single hashes remain unchanged
+(`dispatch-single-identity.json`). Library/unchanged locks and focused/workspace
+strict lint pass in `progressive-dispatch-baseline-lint.log` (rc0, 510 seconds;
+peak RSS 1.70 GiB, minimum available 19,755 MiB).
+
+CMYK8/16 with the caller-selected 5,340-byte `ps_cmyk.icc` profile pass all
+seventeen selected policies, both sizes and all three modes. Both decoders'
+final color and Black bits equal their own Single output. Profile SHA256 is
+`020236a6458406743848a12c6be280e54bcd0fd8e2d4bea9c4899410cef98cb2`;
+retained binary SHA256 is
+`f3239f0bc893b76f5307d17f298027c6624a5141d1a7a7844c4d1df49c8b0c18`.
+`progressive-ac-cmyk-first.log` passes (24 seconds, peak RSS 1.01 GiB,
+minimum available 20,732 MiB). Physical CMYK interpretation remains H10.
+Already-downsampled output,
 winning patches and truly sectioned multi-DC-group buffering remain additional
 caller checks. V1 remains open while these paths are resolved.
