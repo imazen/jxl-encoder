@@ -23,6 +23,47 @@ Status values: `triage` (not yet known whether it is the decoder), `confirmed`
 
 ## Upstream jxl-rs (crates.io `jxl`)
 
+### Tall grayscale global squeeze bands, 2026-11-17
+
+Both pinned jxl-rs versions (0.4.3 and 0.8.0) panic at the image row bound
+on a 2x16449 Gray8 full squeeze script; the transpose and gray-alpha/16-bit/
+binary16/binary32 route checks expose the same 0.8.0 boundary. The retained
+Gray8 stream SHA256 is `485acff10fba4235372d48d9b84697f562834288df78452319e574aadd873027`.
+Pinned djxl recovers every source code; the separate synthetic Gray8 control
+also recovers every code in jxl-oxide. This is a decoder limitation rather
+than a reason to declare all deeply squeezed global bands invalid.
+
+Unmodified v0.12 DefaultSqueezeParameters/FwdSqueeze supplies the ordered
+native metadata for one/two channels and both axes. Global bands reach shift
+12, but every remaining band has shift at most 7 at group dimension 128,
+meeting Part 1 G.4.2/H.6.2.1. The Rust transform scheduler can switch an
+intermediate inverse from global to HF grids when its size exceeds the group:
+a shift-7 output then reads shift-8 global inputs through a zero-sized HF
+view. The retained backtrace passes through modular buffer/transform scheduling.
+The native metadata vectors pin the distinction between globally coded and
+remaining bands. The interim oxide fallback separately exposes the binary16
+pixel discrepancy recorded below; its failing matrix remains retained.
+
+Owner-authorized repair `0ad1a3e639315a26965021ee45fbcd1eb6017d84` is on the
+native decoder's main branch. It retains global intermediates until an actual
+coded residual introduces an LF/HF grid. Exact tall/transposed source checks,
+original-source fault replay, all-feature/scalar/parallel release workspace
+suites and strict Clippy pass. Selected changed expressions cover 4/4 mapped
+LLVM regions with no mapping diagnostics. The encoder's refreshed matrix now
+requires this repaired native decoder and exact djxl samples whenever the
+external jxl 0.8 row-bound failure occurs; other primary errors remain failures.
+External failures remain explicit `DECODER` diagnostics. The refreshed still
+matrix completes with exact samples in every selected cell: eighteen layouts,
+four supported input routes, both orientations and three producer styles.
+The external library succeeds on the RGB paths and reports its known row-bound
+failure on grayscale; the repaired native decoder checks every such grayscale
+sample, including binary16. This does not claim external jxl 0.8 is repaired.
+The adopted source closure also includes `4d2eaf98`, a separately verified
+Rust 1.100 iterator-lint cleanup with unchanged arithmetic and expectations. No assertion, threshold or existing expectation
+is relaxed. Native CI and encoder closure verification have separate verdicts.
+No report outside imazen/lilith is posted; existing checkouts remain preserved.
+
+
 | # | Version | Finding | Evidence | Status |
 |---|---|---|---|---|
 | R1 | 0.7.0 to 0.8.0 | Lossless squeeze on images wider than 2048 px with a partial last group row decodes with samples off by one or more near the corner of the last full group (e.g. 83 samples in x 2036..2047, y 252..256 of a 2049x257 image). | Minimal repro made by cjxl v0.12 itself: flat grey 2049x257 with a 5x5 noise corner patch, `-d 0 -e 3 --responsive=1`, 1,259 bytes; djxl v0.12 and libjxl main exact, jxl-rs main `d7a831f` wrong (scalar, SSE4.2 and AVX alike). Bisected to `c066ee2` "Use border buffers for HSqueeze and VSqueeze" (its parent `2d0b720` does not build); `ae13a2d` is good. Found by the sweep (seed 1 cells 12, 49). | fixed on upstream main 2026-10-29 (their #1058); released jxl 0.8.0 predates that merge |
@@ -79,3 +120,15 @@ encoded regression with `InvalidIccStream`; djxl renders it. Encoder selection
 now uses opaque coding for those raw bytes. The independent preamble bound,
 exact recovered bytes and complete rendering supply separate checks. Source:
 `scripts/icc_policy_oracle.cc`. No upstream report is posted.
+
+### Tall grayscale binary16 alternate decoder pixels, 2026-11-17
+
+The imazen jxl-oxide pin also differs on the GrayLinearF16/GrayAlphaLinearF16
+2x16449 source and its transpose. At the first retained GrayF16 mismatch,
+sample 337 is `0x38000000` in its f32 render instead of source zero. Pinned
+djxl recovers every expected finite bit on that same stream, SHA256
+`73752b1c4257ff8004e78aaee1ea71ede051fb8308500695a42c26514d1cfcba`.
+The current source/stream/PFM artifacts and failing layout verdict are retained;
+no tolerance is introduced. Numerical attribution within jxl-oxide remains
+open. The frozen native decoder separately reproduces the Gray8 row-bound
+panic described above. Existing sibling checkouts remain unchanged.

@@ -1766,6 +1766,25 @@ misclassify that CLI limitation as an invalid stream or strip the ICC to hide it
 
 ## Known Bugs (ACTIVE)
 
+### RESOLVED dependency: global squeeze intermediates — 2026-11-17
+
+The owner-authorized isolated decoder repair preserves global intermediates
+until a coded residual introduces a grid. Its tall/transposed Gray8 regressions
+recover every source code; original-source fault replay reproduces both row
+panics. Native full-feature/scalar/parallel workspace controls pass. The pin
+includes the separate Rust 1.100 strict-lint cleanup, with unchanged arithmetic.
+The adopted decoder revision is `4d2eaf98534c846ada3447b6bc4eed6ce618d654`.
+
+Encoder main `95b0bd75`, isolated from the pending E2/E3 production changes,
+passes the full library and unchanged normal/strict/divergence locks with this
+pin. The wrapper reports rc0, 450 seconds, peak RSS 1.68 GiB, minimum available
+20,267 MiB. The source closure's minimal lock change adds pastey 0.2.3 and the
+native decoder's existing archmage/magetypes edges. Current candidate layout
+checks additionally recover exact grayscale binary16 samples through the
+repaired native decoder and pinned djxl. External jxl 0.8 retains its explicit
+row-bound diagnostic. CI and remaining E2/E3 gates have separate verdicts.
+[Localization and limits](docs/DECODER_FINDINGS.md#tall-grayscale-global-squeeze-bands-2026-11-17).
+
 ### RESOLVED 2026-11-17: binary32 squeeze widened through an unbudgeted RCT
 
 The simple/learned single-group and learned multi-group squeeze writers now

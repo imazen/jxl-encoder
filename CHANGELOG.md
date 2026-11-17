@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- Pin the native decoder repair for valid deeply squeezed global grayscale
+  bands; preserve existing encoder byte expectations and scientific gates.
+
 - Apply the existing RCT bit budget in every lossless squeeze writer, preserving binary32 sample bits across request, legacy and streaming routes.
 
 - Retain an observed cancellation for each still/animation request and

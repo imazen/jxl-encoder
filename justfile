@@ -1276,3 +1276,7 @@ squeeze-rct-boundary-controls manifest revision output:
 # Public CMS admission versus internal raw ICC storage, pinned v0.12 objects.
 icc-raw-policy-oracle source build output:
     python3 scripts/frame_header_oracle.py --component icc_policy {{quote(source)}} {{quote(build)}} {{quote(output)}}
+
+# Isolate the dependency pin from the pending squeeze production changes.
+decoder-pin-baseline manifest revision out:
+    python3 scripts/validate_squeeze_rct_isolated.py {{quote(manifest)}} {{quote(revision)}} {{quote(out)}} --start-at 2
