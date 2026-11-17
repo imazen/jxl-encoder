@@ -1798,15 +1798,23 @@ marker verifying disabled overflow checks. No expectation or ignore changes.
 [Admission contract, route scope and evidence](docs/SQUEEZE_RCT_ADMISSION.md).
 The separate channel-count and anisotropic-group defects remain open.
 
-### 2026-11-16: explicit squeeze channel count twenty overflows its field
+### 2026-11-17: squeeze count and anisotropic group repair (issue 144)
 
-The strict public RGB8 16x16 plus seventeen full-size depth-channel request,
-squeeze on with Huffman, panics before output: `bits 0x10 has more than 4 bits`.
-The unmodified v0.12 SqueezeParams writer accepts the selected boundaries
-one through nineteen and refuses twenty/twenty-one. Implicit default counts
-have a different contract. `~/tmp/jxl144/squeeze-count-before.log` retains the
-failing runtime and component controls. Release behavior and remaining
-producers are not yet verified; no production E2 repair is claimed.
+Before repair, explicit count twenty panics and tall/transposed squeeze streams
+fail rendering. The shared serializer now validates explicit fields before
+writing; larger lossless channel sets use matching implicit defaults. LF frames
+squeeze only their XYB prefix above nineteen channels, retaining zero extras.
+Multi-group admission simulates ordered band geometry, preserves valid full
+plans and retains an encodable prefix or the ordinary producer for invalid
+plans. The global prefix still ends at the first oversized band.
+
+Fresh full-library and unchanged byte-lock/drift gates pass. Actual samples
+cover boundary channel sets, layouts, shifted extras, LF reconstruction,
+request/legacy/streaming/animation/planar routes and one/two workers. The
+external Rust grayscale panic is tracked separately; the pinned native repair
+and djxl recover those samples. Allocation/error-return coverage and exact
+native-dependency platform verdict gaps remain explicit in the
+[contract and verification record](docs/SQUEEZE_CONTRACT.md).
 
 ### 2026-11-16: request cancellation lost a one-poll stop
 

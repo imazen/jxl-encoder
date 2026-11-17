@@ -2575,6 +2575,34 @@ no change to entropy or pixel arithmetic. The public checkpoint sweep first
 failed at strict global-tree checkpoint nine; the focused repaired sweep passes.
 Broad unchanged-byte and coverage checks remain required.
 
+
+### Issue 144: larger default squeeze channel sets (I144-E2, repaired)
+
+The four lossless default-squeeze producers use the implicit descriptor when
+an operation addresses more than 19 channels. In that case their generated
+schedule matches unmodified v0.12 DefaultSqueezeParameters. Existing explicitly
+representable schedules retain their previous generation and bytes. The shared
+explicit serializer refuses out-of-range channel/count/begin fields before
+writing any bits, matching the pinned field grammar (Part 1 H.6.2.1).
+
+The Rust channel representation does not admit zero-sized residual bands.
+Larger implicit schedules that would create one therefore retain the existing
+unsqueezed producer, rather than signaling a different implicit schedule. Tiny
+images retain the pre-existing no-squeeze choice. This fallback is an encoder
+capability condition, not a change to valid wire ranges. No strategy gate,
+registry permission, entropy constant or public signature is added.
+
+LF-frame lossy default schedules remain explicit. When total input channels
+exceed 19, their full-prefix steps address only the three XYB channels;
+lossless zero extra placeholders remain unsqueezed. Unmodified v0.12
+FwdSqueeze confirms identical ordered color bands and every color coefficient
+on the retained native controls. This changes descriptor/channel topology,
+not the color transform, and does not claim full byte parity with libjxl.
+The existing degenerate-axis quantizer shifts are retained. At 19 channels or
+fewer the existing schedule is unchanged. One-channel VarDCT extra squeeze
+retains the explicit writer.
+[Runtime controls and limits](SQUEEZE_CONTRACT.md).
+
 ### Issue 144: squeeze RCT bit budget (I144-E5, repaired)
 
 The two single-group squeeze writers and learned multi-group squeeze now
@@ -2586,3 +2614,21 @@ also excludes binary32 RCT, but our source-range check can still admit squeeze
 without RCT, so full responsive-stream byte parity is not claimed. No new gate,
 constant, public signature or registry permission is introduced.
 [Route evidence and limits](SQUEEZE_RCT_ADMISSION.md).
+
+
+### Issue 144: remaining squeeze group geometry (I144-E3, repaired)
+
+The multi-group lossless dispatcher checks the ordered transformed channel
+metadata before selecting squeeze. A non-global nonempty channel must have
+`group_extent >> max(hshift, vshift) != 0`, with `group_extent = 8 * group_dim`
+only when `min(hshift, vshift) >= 3`. The existing global prefix ends at the
+first oversized channel; later small bands do not move into that prefix.
+Valid complete schedules retain their original bytes. Invalid explicit
+schedules retain a valid prefix within v0.12's conservative shift-count cap;
+an over-19-channel implicit schedule that would need truncation uses the
+existing unsqueezed producer, since v0.12 derives the full implicit script.
+No strategy gate, numeric tuning constant or public API is introduced.
+The retained before streams fail both decoders; repaired streams recover exact
+source samples. Selected geometry-region and mutation controls retain their
+allocation-error gap. Part 1 G.4.2 and H.6.2 apply.
+[Caller coverage and limits](SQUEEZE_CONTRACT.md).

@@ -731,15 +731,23 @@ impl FrameEncoder {
         } else if self.options.lossy_palette && !image.is_grayscale && image.channels.len() >= 3 {
             // Multi-group lossy palette: palette meta in LfGlobal, index across groups
             self.encode_modular_multi_group_lossy_palette(image, writer, stop)?;
-        } else if self.options.use_squeeze
-            && !super::squeeze::default_squeeze_params(image).is_empty()
-        {
-            if self.options.use_tree_learning && self.options.use_ans {
-                // Multi-group with squeeze + tree learning: best compression
-                self.encode_modular_multi_group_squeeze_with_tree(image, writer, stop)?;
+        } else if self.options.use_squeeze {
+            let squeeze_params = super::squeeze::default_squeeze_params_for_groups(
+                image,
+                self.group_dim(),
+                self.budget.as_ref().is_some_and(|b| b.is_fallible()),
+            )?;
+            if squeeze_params.is_empty() {
+                self.encode_modular_multi_group(image_src, writer, stop)?;
+            } else if self.options.use_tree_learning && self.options.use_ans {
+                self.encode_modular_multi_group_squeeze_with_tree(
+                    image,
+                    writer,
+                    &squeeze_params,
+                    stop,
+                )?;
             } else {
-                // Multi-group with squeeze: gradient predictor, single context
-                self.encode_modular_multi_group_squeeze(image, writer, stop)?;
+                self.encode_modular_multi_group_squeeze(image, writer, &squeeze_params, stop)?;
             }
         } else {
             // Multi-group: separate TOC entries for global and each group
@@ -2010,6 +2018,7 @@ impl FrameEncoder {
         &self,
         image: &ModularImage,
         writer: &mut BitWriter,
+        squeeze_params: &[super::squeeze::SqueezeParams],
         stop: Option<&dyn enough::Stop>,
     ) -> Result<()> {
         // Coarse cancellation at the multi-group squeeze boundary.
@@ -2019,13 +2028,12 @@ impl FrameEncoder {
         }
         use super::encode::{
             predict_pixel_with_id, resolve_fixed_predictor_for_simple_path,
-            write_gradient_tree_tokens, write_predictor_tree_tokens, write_rct_transform,
-            write_squeeze_transform, write_tree_histogram_for_gradient,
+            write_default_squeeze_transform, write_gradient_tree_tokens,
+            write_predictor_tree_tokens, write_rct_transform, write_tree_histogram_for_gradient,
             write_tree_histogram_for_predictor,
         };
         use super::predictor::pack_signed;
         use super::rct::RctType;
-        use super::squeeze::default_squeeze_params;
         use crate::entropy_coding::encode::{build_entropy_code_ans, write_tokens_ans_stop};
         use crate::entropy_coding::hybrid_uint::HybridUintConfig;
         use crate::entropy_coding::token::Token as AnsToken;
@@ -2047,7 +2055,6 @@ impl FrameEncoder {
         let lf_group_dim = group_dim * 8;
 
         // Step 1: Apply RCT (YCoCg) before squeeze for RGB images, then squeeze
-        let squeeze_params = default_squeeze_params(image);
         let mut squeezed = image.clone();
         let has_rct = !squeezed.is_grayscale
             && squeezed.channels.len() >= 3
@@ -2055,7 +2062,7 @@ impl FrameEncoder {
         if has_rct {
             super::rct::forward_rct_stop(&mut squeezed.channels, 0, RctType::YCOCG, stop)?;
         }
-        super::squeeze::apply_squeeze_stop(&mut squeezed, &squeeze_params, stop)?;
+        super::squeeze::apply_squeeze_stop(&mut squeezed, squeeze_params, stop)?;
 
         #[cfg(test)]
         {
@@ -2266,10 +2273,10 @@ impl FrameEncoder {
             lf_global_writer.write(2, 2)?;
             lf_global_writer.write(4, 0)?;
             write_rct_transform(&mut lf_global_writer, 0, RctType::YCOCG)?;
-            write_squeeze_transform(&mut lf_global_writer, &squeeze_params)?;
+            write_default_squeeze_transform(&mut lf_global_writer, squeeze_params)?;
         } else {
             lf_global_writer.write(2, 1)?; // nb_transforms = 1
-            write_squeeze_transform(&mut lf_global_writer, &squeeze_params)?;
+            write_default_squeeze_transform(&mut lf_global_writer, squeeze_params)?;
         }
 
         // Encode global channel data (small channels that fit within GROUP_DIM)
@@ -2441,6 +2448,7 @@ impl FrameEncoder {
         &self,
         image: &ModularImage,
         writer: &mut BitWriter,
+        squeeze_params: &[super::squeeze::SqueezeParams],
         stop: Option<&dyn enough::Stop>,
     ) -> Result<()> {
         // Coarse cancellation at the multi-group squeeze+tree boundary.
@@ -2448,9 +2456,8 @@ impl FrameEncoder {
         if let Some(s) = stop {
             s.check().map_err(|_| crate::error::Error::Cancelled)?;
         }
-        use super::encode::{write_rct_transform, write_squeeze_transform, write_tree};
+        use super::encode::{write_default_squeeze_transform, write_rct_transform, write_tree};
         use super::rct::RctType;
-        use super::squeeze::default_squeeze_params;
         use super::tree::count_contexts;
         use super::tree_learn::{
             GatherDedupTable, TreeLearningParams, TreeSamples,
@@ -2467,7 +2474,6 @@ impl FrameEncoder {
         let lf_group_dim = group_dim * 8;
 
         // Step 1: Apply RCT (YCoCg) before squeeze for RGB images, then squeeze
-        let squeeze_params = default_squeeze_params(image);
         let mut squeezed = image.clone();
         let has_rct = !squeezed.is_grayscale
             && squeezed.channels.len() >= 3
@@ -2475,7 +2481,7 @@ impl FrameEncoder {
         if has_rct {
             super::rct::forward_rct_stop(&mut squeezed.channels, 0, RctType::YCOCG, stop)?;
         }
-        super::squeeze::apply_squeeze_stop(&mut squeezed, &squeeze_params, stop)?;
+        super::squeeze::apply_squeeze_stop(&mut squeezed, squeeze_params, stop)?;
 
         crate::trace::debug_eprintln!(
             "SQUEEZE_TREE_MULTI: {} steps, {} → {} channels, image {}x{}",
@@ -2819,10 +2825,10 @@ impl FrameEncoder {
                 lf_global_writer.write(2, 2)?;
                 lf_global_writer.write(4, 0)?;
                 write_rct_transform(&mut lf_global_writer, 0, RctType::YCOCG)?;
-                write_squeeze_transform(&mut lf_global_writer, &squeeze_params)?;
+                write_default_squeeze_transform(&mut lf_global_writer, squeeze_params)?;
             } else {
                 lf_global_writer.write(2, 1)?; // nb_transforms = 1
-                write_squeeze_transform(&mut lf_global_writer, &squeeze_params)?;
+                write_default_squeeze_transform(&mut lf_global_writer, squeeze_params)?;
             }
 
             // Write global channel tokens

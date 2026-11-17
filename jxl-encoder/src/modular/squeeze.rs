@@ -12,7 +12,7 @@ use super::channel::{Channel, ModularImage};
 use crate::error::Result;
 
 /// Parameters for a single squeeze step.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SqueezeParams {
     /// True = halve width (horizontal), false = halve height (vertical).
     pub horizontal: bool,
@@ -201,6 +201,53 @@ fn fwd_v_squeeze(channel: &Channel, stop: Option<&dyn enough::Stop>) -> Result<(
 /// 1. Optional 4:2:0 chroma squeeze for channels 1-2
 /// 2. Alternate horizontal/vertical squeezes until both dimensions ≤ 8
 pub fn default_squeeze_params(image: &ModularImage) -> Vec<SqueezeParams> {
+    if image.channels.len() <= MAX_EXPLICIT_SQUEEZE_CHANNELS as usize {
+        return build_default_squeeze_params(image, false);
+    }
+    // Larger channel sets use the implicit wire form. Apply exactly the
+    // decoder's default, and retain the existing no-squeeze fallback when
+    // that schedule would require a zero-sized residual channel.
+    if image.channels[0].width() <= MAX_FIRST_PREVIEW_SIZE
+        && image.channels[0].height() <= MAX_FIRST_PREVIEW_SIZE
+    {
+        return Vec::new();
+    }
+    let params = build_default_squeeze_params(image, true);
+    if default_dimensions_fit(image, &params) {
+        params
+    } else {
+        Vec::new()
+    }
+}
+
+pub(crate) const MAX_EXPLICIT_SQUEEZE_CHANNELS: u32 = 19;
+
+fn default_dimensions_fit(image: &ModularImage, params: &[SqueezeParams]) -> bool {
+    // Default schedules only revisit the original channels; residual bands
+    // are inserted after that prefix or appended, never selected again.
+    let mut dimensions: Vec<_> = image
+        .channels
+        .iter()
+        .map(|c| (c.width(), c.height()))
+        .collect();
+    for param in params {
+        let begin = param.begin_c as usize;
+        let end = begin + param.num_c as usize;
+        let Some(selected) = dimensions.get_mut(begin..end) else {
+            return false;
+        };
+        for (width, height) in selected {
+            let dimension = if param.horizontal { width } else { height };
+            if *dimension < 2 {
+                return false;
+            }
+            *dimension = dimension.div_ceil(2);
+        }
+    }
+    true
+}
+
+fn build_default_squeeze_params(image: &ModularImage, implicit: bool) -> Vec<SqueezeParams> {
     let nb_channels = image.channels.len();
     if nb_channels == 0 {
         return Vec::new();
@@ -211,7 +258,7 @@ pub fn default_squeeze_params(image: &ModularImage) -> Vec<SqueezeParams> {
     let mut h = image.channels[0].height();
 
     // Skip squeeze entirely if both dimensions are already small
-    if w <= MAX_FIRST_PREVIEW_SIZE && h <= MAX_FIRST_PREVIEW_SIZE {
+    if !implicit && w <= MAX_FIRST_PREVIEW_SIZE && h <= MAX_FIRST_PREVIEW_SIZE {
         return params;
     }
 
@@ -220,10 +267,9 @@ pub fn default_squeeze_params(image: &ModularImage) -> Vec<SqueezeParams> {
     if nb_channels > 2
         && image.channels[1].width() == w
         && image.channels[1].height() == h
-        && image.channels[2].width() == w
-        && image.channels[2].height() == h
+        && (implicit || (image.channels[2].width() == w && image.channels[2].height() == h))
     {
-        if w > 1 {
+        if implicit || w > 1 {
             params.push(SqueezeParams {
                 horizontal: true,
                 in_place: false,
@@ -231,7 +277,7 @@ pub fn default_squeeze_params(image: &ModularImage) -> Vec<SqueezeParams> {
                 num_c: 2,
             });
         }
-        if h > 1 {
+        if implicit || h > 1 {
             params.push(SqueezeParams {
                 horizontal: false,
                 in_place: false,
@@ -275,6 +321,134 @@ pub fn default_squeeze_params(image: &ModularImage) -> Vec<SqueezeParams> {
     }
 
     params
+}
+
+/// Derive an encodable multi-group schedule without changing valid full plans.
+///
+/// Remaining channels must have nonzero tiles in their assigned group grid.
+/// On an invalid full plan, retain v0.12's conservative explicit prefix, or
+/// decline squeeze when that prefix cannot use the explicit field grammar.
+pub(crate) fn default_squeeze_params_for_groups(
+    image: &ModularImage,
+    group_dim: usize,
+    fallible: bool,
+) -> Result<Vec<SqueezeParams>> {
+    let mut params = default_squeeze_params(image);
+    if params.is_empty() {
+        return Ok(params);
+    }
+    if !group_dim.is_power_of_two() {
+        return Err(crate::error::Error::InvalidInput(
+            "invalid squeeze group dimension".into(),
+        ));
+    }
+    let mut native_limit = params.len();
+    let (mut horizontal, mut vertical) = (0_u32, 0_u32);
+    for (index, step) in params.iter().enumerate() {
+        if step.horizontal {
+            horizontal += 1;
+        } else {
+            vertical += 1;
+        }
+        let boost = if horizontal.min(vertical) >= 3 { 3 } else { 0 };
+        if horizontal.max(vertical) > group_dim.ilog2() + boost {
+            native_limit = index.saturating_sub(1);
+            break;
+        }
+    }
+    // Every operation selects the original prefix or its two chroma channels.
+    // Public channel/dimension limits bound this metadata-only allocation.
+    let capacity = image.channels.len() + params.iter().map(|p| p.num_c as usize).sum::<usize>();
+    let mut channels = crate::budget::vec_with_capacity_fallible(fallible, capacity)?;
+    channels.extend(image.channels.iter().map(|channel| SqueezeGeometry {
+        width: channel.width(),
+        height: channel.height(),
+        hshift: channel.hshift,
+        vshift: channel.vshift,
+    }));
+    let mut keep = 0;
+    let mut full_valid = false;
+    for (index, step) in params.iter().enumerate() {
+        if !squeeze_geometry_step(&mut channels, *step) {
+            break;
+        }
+        let valid = squeeze_group_geometry_fits(&channels, group_dim);
+        if valid && index < native_limit {
+            keep = index + 1;
+        }
+        if index + 1 == params.len() {
+            full_valid = valid;
+        }
+    }
+    if full_valid {
+        return Ok(params);
+    }
+    if params
+        .iter()
+        .any(|p| p.num_c > MAX_EXPLICIT_SQUEEZE_CHANNELS)
+    {
+        // v0.12 derives the full implicit default. A truncated implicit plan
+        // would disagree with it; an explicit prefix cannot encode this count.
+        params.clear();
+    } else {
+        params.truncate(keep);
+    }
+    Ok(params)
+}
+
+#[derive(Clone, Copy)]
+struct SqueezeGeometry {
+    width: usize,
+    height: usize,
+    hshift: u32,
+    vshift: u32,
+}
+
+fn squeeze_geometry_step(channels: &mut Vec<SqueezeGeometry>, step: SqueezeParams) -> bool {
+    let begin = step.begin_c as usize;
+    let end = begin + step.num_c as usize;
+    let offset = if step.in_place { end } else { channels.len() };
+    for index in begin..end {
+        let mut average = channels[index];
+        let (size, shift) = if step.horizontal {
+            (&mut average.width, &mut average.hshift)
+        } else {
+            (&mut average.height, &mut average.vshift)
+        };
+        if *size < 2 || *shift >= 31 {
+            return false;
+        }
+        let residual_size = *size / 2;
+        *size = size.div_ceil(2);
+        *shift += 1;
+        let mut residual = average;
+        if step.horizontal {
+            residual.width = residual_size;
+        } else {
+            residual.height = residual_size;
+        }
+        channels[index] = average;
+        channels.insert(offset + index - begin, residual);
+    }
+    true
+}
+
+fn squeeze_group_geometry_fits(channels: &[SqueezeGeometry], group_dim: usize) -> bool {
+    let cutoff = channels
+        .iter()
+        .position(|c| c.width > group_dim || c.height > group_dim)
+        .unwrap_or(channels.len());
+    channels[cutoff..].iter().all(|c| {
+        if c.width == 0 || c.height == 0 {
+            return true;
+        }
+        let extent = if c.hshift.min(c.vshift) >= 3 {
+            8 * group_dim
+        } else {
+            group_dim
+        };
+        extent.checked_shr(c.hshift.max(c.vshift)).unwrap_or(0) != 0
+    })
 }
 
 /// libjxl's `DefaultSqueezeParameters` (squeeze.cc:387-445) as the lossy
@@ -322,7 +496,16 @@ pub(crate) fn lossy_default_squeeze_params(image: &ModularImage) -> (Vec<Squeeze
         horizontal: false,
         in_place: true,
         begin_c: 0,
-        num_c: nb_channels as u32,
+        // LF frames append lossless zero extra-channel placeholders. Above
+        // the explicit field limit, squeeze only the XYB prefix: channel
+        // transforms are independent, so its coefficients stay identical.
+        // Keep this explicit rather than using a default schedule: omitted
+        // degenerate chroma steps carry quantizer shifts in this producer.
+        num_c: if nb_channels > MAX_EXPLICIT_SQUEEZE_CHANNELS as usize {
+            3
+        } else {
+            nb_channels as u32
+        },
     };
     if w <= h && h > MAX_FIRST_PREVIEW_SIZE {
         params.push(sp);
@@ -739,6 +922,362 @@ mod tests {
                         original[y * 32 + x],
                         "ch{c} mismatch at ({x}, {y})"
                     );
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod default_squeeze_wire_tests {
+    use super::*;
+    use alloc::collections::BTreeMap;
+
+    fn image(width: usize, height: usize, channels: usize) -> ModularImage {
+        ModularImage {
+            channels: (0..channels)
+                .map(|_| Channel::new(width, height).unwrap())
+                .collect(),
+            bit_depth: 8,
+            is_grayscale: false,
+            has_alpha: false,
+        }
+    }
+
+    #[test]
+    fn implicit_defaults_match_unmodified_v012() {
+        let mut cases: BTreeMap<(usize, usize, usize), Vec<SqueezeParams>> = BTreeMap::new();
+        for line in include_str!("squeeze_defaults_v012.tsv").lines() {
+            let fields: Vec<usize> = line.split('\t').map(|v| v.parse().unwrap()).collect();
+            assert_eq!(fields.len(), 8);
+            let params = cases.entry((fields[0], fields[1], fields[2])).or_default();
+            assert_eq!(params.len(), fields[3], "reference index order");
+            assert!(fields[4] <= 1 && fields[5] <= 1);
+            params.push(SqueezeParams {
+                horizontal: fields[4] != 0,
+                in_place: fields[5] != 0,
+                begin_c: fields[6] as u32,
+                num_c: fields[7] as u32,
+            });
+        }
+        for ((width, height, channels), expected) in cases {
+            let source = image(width, height, channels);
+            assert_eq!(
+                build_default_squeeze_params(&source, true),
+                expected,
+                "unmodified reference {width}x{height}/{channels}"
+            );
+            if channels < 3 {
+                let (lossy, h, v) = lossy_default_squeeze_params(&source);
+                assert_eq!(lossy, expected);
+                assert_eq!((h, v), (0, 0));
+            }
+        }
+    }
+
+    #[test]
+    fn implicit_default_admission_retains_small_and_zero_residual_fallbacks() {
+        assert!(default_squeeze_params(&image(16, 16, 0)).is_empty());
+        assert!(!default_squeeze_params(&image(16, 16, 20)).is_empty());
+        assert!(default_squeeze_params(&image(8, 8, 20)).is_empty());
+        assert!(default_squeeze_params(&image(1, 17, 20)).is_empty());
+        assert!(default_squeeze_params(&image(17, 1, 20)).is_empty());
+        // A full-size alpha followed by a legal eighth-size depth makes the
+        // implicit chroma pre-squeeze exhaust that depth before the main step.
+        let mut source = image(16, 16, 20);
+        source.channels[2] = Channel::new(2, 2).unwrap();
+        source.channels[2].hshift = 3;
+        source.channels[2].vshift = 3;
+        assert!(default_squeeze_params(&source).is_empty());
+        let invalid = [SqueezeParams {
+            horizontal: true,
+            in_place: true,
+            begin_c: 20,
+            num_c: 1,
+        }];
+        assert!(!default_dimensions_fit(&source, &invalid));
+    }
+
+    #[test]
+    fn lf_explicit_schedules_keep_color_prefix_and_degenerate_quantizer_shifts() {
+        assert_eq!(
+            lossy_default_squeeze_params(&image(16, 16, 0)),
+            (Vec::new(), 0, 0)
+        );
+        for (width, height) in [(1, 1), (1, 17), (17, 1), (16, 16), (257, 257)] {
+            let (baseline, h, v) = lossy_default_squeeze_params(&image(width, height, 19));
+            for channels in [20, 21] {
+                let (actual, actual_h, actual_v) =
+                    lossy_default_squeeze_params(&image(width, height, channels));
+                let expected: Vec<_> = baseline
+                    .iter()
+                    .map(|step| SqueezeParams {
+                        num_c: if step.num_c == 19 { 3 } else { step.num_c },
+                        ..*step
+                    })
+                    .collect();
+                assert_eq!(actual, expected);
+                assert_eq!((actual_h, actual_v), (h, v));
+                assert!(
+                    actual
+                        .iter()
+                        .all(|step| step.num_c <= MAX_EXPLICIT_SQUEEZE_CHANNELS)
+                );
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod group_schedule_tests {
+    use super::*;
+
+    fn image(width: usize, height: usize, count: usize) -> ModularImage {
+        ModularImage {
+            channels: (0..count)
+                .map(|_| Channel::new(width, height).unwrap())
+                .collect(),
+            bit_depth: 8,
+            is_grayscale: false,
+            has_alpha: false,
+        }
+    }
+    fn geometry(image: &ModularImage) -> Vec<SqueezeGeometry> {
+        image
+            .channels
+            .iter()
+            .map(|c| SqueezeGeometry {
+                width: c.width(),
+                height: c.height(),
+                hshift: c.hshift,
+                vshift: c.vshift,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn valid_full_group_schedules_remain_unchanged() {
+        for count in [1, 2, 3, 19, 20, 21] {
+            let image = image(259, 17, count);
+            assert_eq!(
+                default_squeeze_params_for_groups(&image, 128, true).unwrap(),
+                default_squeeze_params(&image)
+            );
+        }
+        assert!(
+            default_squeeze_params_for_groups(&image(8, 8, 3), 256, true)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(default_squeeze_params_for_groups(&image(16, 16, 3), 0, true).is_err());
+    }
+
+    #[test]
+    fn tall_explicit_prefix_avoids_invalid_remaining_tiles() {
+        for (width, height) in [(8, 65665), (65665, 8)] {
+            let original = image(width, height, 3);
+            let full = default_squeeze_params(&original);
+            let mut unbounded = original.clone();
+            apply_squeeze(&mut unbounded, &full).unwrap();
+            assert_eq!(unbounded.channels.len(), 49);
+            assert!(!squeeze_group_geometry_fits(&geometry(&unbounded), 256));
+            let params = default_squeeze_params_for_groups(&original, 256, true).unwrap();
+            assert!(!params.is_empty());
+            assert!(params.len() < full.len());
+            let mut bounded = original;
+            apply_squeeze(&mut bounded, &params).unwrap();
+            assert!(squeeze_group_geometry_fits(&geometry(&bounded), 256));
+        }
+    }
+
+    #[test]
+    fn over_range_count_declines_a_truncated_implicit_schedule() {
+        assert!(
+            default_squeeze_params_for_groups(&image(8, 16449, 20), 128, true)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            default_squeeze_params_for_groups(&image(16449, 8, 20), 128, true)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn ordered_global_prefix_does_not_absorb_later_small_bands() {
+        let global = SqueezeGeometry {
+            width: 4,
+            height: 64,
+            hshift: 1,
+            vshift: 10,
+        };
+        let first_remaining = SqueezeGeometry {
+            width: 8,
+            height: 257,
+            hshift: 0,
+            vshift: 8,
+        };
+        let later_small = SqueezeGeometry {
+            width: 4,
+            height: 128,
+            hshift: 1,
+            vshift: 9,
+        };
+        assert!(!squeeze_group_geometry_fits(
+            &[global, first_remaining, later_small],
+            256
+        ));
+        assert!(!squeeze_group_geometry_fits(
+            &[global, first_remaining, later_small, first_remaining],
+            256
+        ));
+        assert!(squeeze_group_geometry_fits(
+            &[global, later_small, first_remaining],
+            256
+        ));
+        let lf = SqueezeGeometry {
+            width: 300,
+            height: 1,
+            hshift: 3,
+            vshift: 11,
+        };
+        assert!(squeeze_group_geometry_fits(&[lf], 256));
+        assert!(!squeeze_group_geometry_fits(
+            &[SqueezeGeometry { vshift: 12, ..lf }],
+            256
+        ));
+    }
+
+    #[test]
+    fn unsupported_zero_residual_and_shift_overflow_are_not_applied() {
+        let step = SqueezeParams {
+            horizontal: true,
+            in_place: true,
+            begin_c: 0,
+            num_c: 1,
+        };
+        assert!(!squeeze_geometry_step(
+            &mut vec![SqueezeGeometry {
+                width: 1,
+                height: 17,
+                hshift: 0,
+                vshift: 0
+            }],
+            step
+        ));
+        assert!(!squeeze_geometry_step(
+            &mut vec![SqueezeGeometry {
+                width: 16,
+                height: 17,
+                hshift: 31,
+                vshift: 0
+            }],
+            step
+        ));
+        assert!(squeeze_group_geometry_fits(
+            &[SqueezeGeometry {
+                width: 0,
+                height: 300,
+                hshift: 31,
+                vshift: 31
+            }],
+            256
+        ));
+        assert!(squeeze_group_geometry_fits(
+            &[SqueezeGeometry {
+                width: 300,
+                height: 0,
+                hshift: 31,
+                vshift: 31
+            }],
+            256,
+        ));
+        assert!(!squeeze_group_geometry_fits(
+            &[SqueezeGeometry {
+                width: 300,
+                height: 1,
+                hshift: u32::MAX,
+                vshift: 0
+            }],
+            256,
+        ));
+        assert!(squeeze_group_geometry_fits(&[], 256));
+    }
+    #[test]
+    fn inconsistent_internal_channel_geometry_declines_squeeze() {
+        // These internal shapes cannot be produced by valid uniform public
+        // dimension shifts; the metadata guard must still stop cleanly.
+        let mut mixed = image(259, 17, 3);
+        mixed.channels[1] = Channel::new(1, 1).unwrap();
+        assert!(
+            default_squeeze_params_for_groups(&mixed, 128, true)
+                .unwrap()
+                .is_empty()
+        );
+        let mut shifted = image(259, 17, 1);
+        shifted.channels[0].hshift = 31;
+        assert!(
+            default_squeeze_params_for_groups(&shifted, 128, true)
+                .unwrap()
+                .is_empty()
+        );
+    }
+}
+
+#[cfg(test)]
+mod gray_global_native_tests {
+    use super::*;
+    #[test]
+    fn global_high_shifts_match_native_bands_without_invalid_remaining_tiles() {
+        let rows: Vec<Vec<usize>> = include_str!("squeeze_gray_global_v012.tsv")
+            .lines()
+            .filter(|line| !line.starts_with('#'))
+            .map(|line| line.split('\t').map(|v| v.parse().unwrap()).collect())
+            .collect();
+        for (width, height) in [(2, 16449), (16449, 2)] {
+            for count in [1, 2] {
+                let mut image = ModularImage {
+                    channels: (0..count)
+                        .map(|_| Channel::new(width, height).unwrap())
+                        .collect(),
+                    bit_depth: 8,
+                    is_grayscale: true,
+                    has_alpha: count == 2,
+                };
+                let params = default_squeeze_params(&image);
+                assert_eq!(
+                    default_squeeze_params_for_groups(&image, 128, true).unwrap(),
+                    params
+                );
+                apply_squeeze(&mut image, &params).unwrap();
+                let expected: Vec<_> = rows
+                    .iter()
+                    .filter(|r| r[..3] == [width, height, count])
+                    .collect();
+                assert_eq!(image.channels.len(), expected.len());
+                let mut global = true;
+                for (index, (channel, row)) in image.channels.iter().zip(expected).enumerate() {
+                    global &= channel.width() <= 128 && channel.height() <= 128;
+                    assert_eq!(
+                        [
+                            index,
+                            channel.width(),
+                            channel.height(),
+                            channel.hshift as usize,
+                            channel.vshift as usize,
+                            usize::from(global)
+                        ],
+                        row[3..]
+                    );
+                    if !global {
+                        let extent = if channel.hshift.min(channel.vshift) >= 3 {
+                            1024_usize
+                        } else {
+                            128
+                        };
+                        assert_ne!(extent >> channel.hshift.max(channel.vshift), 0);
+                    }
                 }
             }
         }

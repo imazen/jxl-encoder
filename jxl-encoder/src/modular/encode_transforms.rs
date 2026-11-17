@@ -161,6 +161,17 @@ pub(crate) fn write_squeeze_transform(
     writer: &mut BitWriter,
     params: &[super::squeeze::SqueezeParams],
 ) -> Result<()> {
+    // Validate the complete explicit descriptor before touching the writer.
+    if params.len() > 296
+        || params.iter().any(|p| {
+            !(1..=super::squeeze::MAX_EXPLICIT_SQUEEZE_CHANNELS).contains(&p.num_c)
+                || p.begin_c > 9287
+        })
+    {
+        return Err(crate::error::Error::InvalidInput(
+            "explicit squeeze fields exceed their wire ranges".into(),
+        ));
+    }
     // TransformId: Val(2) = Squeeze = selector 2 = "10"
     writer.write(2, 2)?;
 
@@ -216,4 +227,127 @@ pub(crate) fn write_squeeze_transform(
     }
 
     Ok(())
+}
+
+/// Write a schedule produced by `default_squeeze_params` for this image.
+/// Over-range channel sets use the matching decoder-derived implicit form;
+/// the generator has already refused schedules with zero-sized residuals.
+pub(crate) fn write_default_squeeze_transform(
+    writer: &mut BitWriter,
+    params: &[super::squeeze::SqueezeParams],
+) -> Result<()> {
+    if params
+        .iter()
+        .any(|p| p.num_c > super::squeeze::MAX_EXPLICIT_SQUEEZE_CHANNELS)
+    {
+        write_squeeze_transform(writer, &[])
+    } else {
+        write_squeeze_transform(writer, params)
+    }
+}
+
+#[cfg(test)]
+mod squeeze_field_tests {
+    use super::*;
+    use crate::modular::{Channel, channel::ModularImage, squeeze::SqueezeParams};
+
+    fn parameter(channels: u32) -> SqueezeParams {
+        SqueezeParams {
+            horizontal: true,
+            in_place: true,
+            begin_c: 0,
+            num_c: channels,
+        }
+    }
+
+    #[test]
+    fn explicit_squeeze_fields_refuse_invalid_ranges_before_any_write() {
+        let mut cases = vec![
+            vec![parameter(0)],
+            vec![parameter(20)],
+            vec![parameter(21)],
+            vec![SqueezeParams {
+                begin_c: 9288,
+                ..parameter(1)
+            }],
+            vec![parameter(1); 297],
+        ];
+        cases.push(vec![parameter(1), parameter(20)]);
+        for params in cases {
+            let mut writer = BitWriter::new();
+            writer.write(3, 5).unwrap();
+            assert!(matches!(
+                write_squeeze_transform(&mut writer, &params),
+                Err(crate::error::Error::InvalidInput(_))
+            ));
+            assert_eq!(writer.bits_written(), 3);
+            writer.zero_pad_to_byte();
+            assert_eq!(
+                writer.finish(),
+                vec![5],
+                "failed descriptor preserved earlier bits"
+            );
+        }
+        for count in [1, 16, 17, 72, 73, 296] {
+            write_squeeze_transform(&mut BitWriter::new(), &vec![parameter(1); count]).unwrap();
+        }
+        for begin in [0, 7, 8, 71, 72, 1095, 1096, 9287] {
+            write_squeeze_transform(
+                &mut BitWriter::new(),
+                &[SqueezeParams {
+                    begin_c: begin,
+                    ..parameter(1)
+                }],
+            )
+            .unwrap();
+        }
+    }
+
+    #[cfg(not(debug_assertions))]
+    #[test]
+    fn without_debug_checks_still_refuses_unrepresentable_squeeze_fields() {
+        let mut writer = BitWriter::new();
+        assert!(matches!(
+            write_squeeze_transform(&mut writer, &[parameter(20)]),
+            Err(crate::error::Error::InvalidInput(_))
+        ));
+        assert_eq!(writer.bits_written(), 0);
+    }
+
+    #[test]
+    fn squeeze_descriptor_bytes_match_unmodified_v012() {
+        for line in include_str!("squeeze_wire_v012.tsv").lines() {
+            let fields: Vec<_> = line.split('\t').collect();
+            let count: u32 = fields[0].parse().unwrap();
+            let expected_bits: usize = fields[1].parse().unwrap();
+            let params = if count == 0 {
+                Vec::new()
+            } else {
+                vec![parameter(count)]
+            };
+            let expected: Vec<u8> = fields[2]
+                .as_bytes()
+                .chunks_exact(2)
+                .map(|v| u8::from_str_radix(core::str::from_utf8(v).unwrap(), 16).unwrap())
+                .collect();
+            let mut writer = BitWriter::new();
+            write_squeeze_transform(&mut writer, &params).unwrap();
+            assert_eq!(writer.bits_written(), expected_bits);
+            writer.zero_pad_to_byte();
+            assert_eq!(writer.finish(), expected);
+        }
+        let image = ModularImage {
+            channels: (0..20).map(|_| Channel::new(16, 16).unwrap()).collect(),
+            bit_depth: 8,
+            is_grayscale: false,
+            has_alpha: false,
+        };
+        let plan = crate::modular::squeeze::default_squeeze_params(&image);
+        assert!(plan.iter().any(|p| p.num_c == 20));
+        let mut writer = BitWriter::new();
+        write_default_squeeze_transform(&mut writer, &plan).unwrap();
+        assert_eq!(writer.bits_written(), 4);
+        writer.zero_pad_to_byte();
+        assert_eq!(writer.finish(), vec![2], "reference implicit descriptor");
+    }
 }

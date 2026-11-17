@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+- Validate explicit squeeze descriptor fields, use matching implicit defaults
+  for larger channel sets, and preserve positive remaining-group tile extents
+  on tall/transposed inputs. Keep LF color transforms separate from zero
+  extra-channel placeholders above the explicit count limit.
+
 - Pin the native decoder repair for valid deeply squeezed global grayscale
   bands; preserve existing encoder byte expectations and scientific gates.
 

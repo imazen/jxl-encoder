@@ -999,10 +999,10 @@ pub fn write_modular_stream_with_squeeze(
             writer.write(2, 2)?;
             writer.write(4, 0)?;
             write_rct_transform(writer, 0, RctType::YCOCG)?;
-            write_squeeze_transform(writer, &params)?;
+            write_default_squeeze_transform(writer, &params)?;
         } else {
             writer.write(2, 1)?; // num_transforms = 1
-            write_squeeze_transform(writer, &params)?;
+            write_default_squeeze_transform(writer, &params)?;
         }
 
         write_ans_modular_tokens(writer, &tokens, &code)?;
@@ -1019,10 +1019,10 @@ pub fn write_modular_stream_with_squeeze(
             writer.write(2, 2)?;
             writer.write(4, 0)?;
             write_rct_transform(writer, 0, RctType::YCOCG)?;
-            write_squeeze_transform(writer, &params)?;
+            write_default_squeeze_transform(writer, &params)?;
         } else {
             writer.write(2, 1)?; // num_transforms = 1
-            write_squeeze_transform(writer, &params)?;
+            write_default_squeeze_transform(writer, &params)?;
         }
 
         write_hybrid_residuals(writer, &encoded, &depths, &codes)?;
@@ -3359,10 +3359,10 @@ pub(crate) fn write_modular_stream_with_squeeze_and_tree_stop(
             writer.write(2, 2)?;
             writer.write(4, 0)?;
             write_rct_transform(writer, 0, RctType::YCOCG)?;
-            write_squeeze_transform(writer, &params)?;
+            write_default_squeeze_transform(writer, &params)?;
         } else {
             writer.write(2, 1)?; // num_transforms = 1
-            write_squeeze_transform(writer, &params)?;
+            write_default_squeeze_transform(writer, &params)?;
         }
         let _bit_after_header = writer.bits_written();
         crate::trace::debug_eprintln!(
