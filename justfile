@@ -1957,3 +1957,6 @@ explicit-blend-icc-final manifest artifacts coverage_env oracle llvm lint_home l
 
 color-admission-native source build output:
     python3 scripts/frame_header_oracle.py --component color_admission {{quote(source)}} {{quote(build)}} {{quote(output)}}
+
+color-admission-native-white-check log djxl output:
+    python3 scripts/check_native_color_white.py {{quote(log)}} {{quote(djxl)}} {{quote(output)}}
