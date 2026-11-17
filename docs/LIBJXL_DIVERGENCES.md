@@ -2681,3 +2681,21 @@ preserves the existing policy and corrects the prior preset-parity comment;
 the native component controls observe our actual header configurations.
 Final native progressive-alpha samples are separate controls, not proof of
 matching coefficient schedules or early previews.
+
+
+### Issue 144: alpha remaining-band grid admission (I144-E3-alpha, resolved)
+
+The alpha-only squeeze builder previously bypassed the shared group geometry
+adapter. At 131585x17/transposed its default creates a 257x5/5x257 grouped
+band with shifts 9/2 or 2/9, producing zero HF tile extent. Native v0.12
+production alpha is exact while our before streams fail djxl and return wrong
+Rust alpha. The repair uses `default_squeeze_params_for_groups` with the
+existing 256-pixel VarDCT group dimension and caller allocation policy. Full
+valid schedules remain unchanged; invalid schedules retain the existing safe
+explicit prefix. This extends E3 to the alpha caller without a new gate,
+constant or public API. Full/minimal caller/layout/policy/engine, actual-worker,
+native sample, unchanged-byte and strict lint controls pass; restoring the old
+plan is detected. Passing-only selected regions are 71/75 builder and 91/95
+admission. Un-injected errors and caller-inapplicable branches remain explicit
+in [the contract](ALPHA_SQUEEZE_CONTRACT.md); registry Rust's separate global-band
+panic is retained as a decoder gap.

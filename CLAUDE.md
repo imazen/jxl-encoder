@@ -1790,6 +1790,26 @@ The original failed check remains failed; remote diagnosis is pending.
 [Reference setup evidence](docs/CI_REFERENCE_TOOLS.md).
 
 
+### RESOLVED 2026-11-17: elongated squeezed-alpha group extent (issue 144 E3/V3 follow-up)
+
+At 131585x17 and its transpose, the alpha-only default creates a grouped
+257x5 band with shifts 9/2 (and transpose). Its 256-pixel HF grid has zero
+extent on one axis. Actual encoder streams fail djxl v0.12; registry Rust
+returns 1,184,265 wrong alpha samples, first 210 becoming zero. Native v0.12
+production controls recover every selected source alpha code. The retained
+before binary/profile/source and streams are in `alpha-squeeze-elongated-before`
+and `live-tests/alpha-squeeze-progressive/run-10` under the issue artifact root.
+At 131073x17/transposed the grid is valid and djxl recovers exact alpha;
+registry jxl 0.8 separately panics on global-band row bounds. The shared group
+admission adapter now bounds this alpha caller too. Full/minimal layout, policy,
+public/engine, source-code and actual two-worker controls pass, as do the library,
+unchanged normal/strict/drift locks and strict lint. The old-plan fault replay is
+detected and restored. Passing-only selected regions are 71/75 builder and
+91/95 admission; error returns and caller-inapplicable branches remain documented
+in [the contract](docs/ALPHA_SQUEEZE_CONTRACT.md). The registry decoder gap remains
+separate; no magnitude claim is made for untested layouts or modes.
+
+
 ### RESOLVED 2026-11-17: thin squeezed-alpha global prefix (issue 144 V3 follow-up)
 
 The extended 1025x17/17x1025 controls fail complete rendering even in Single

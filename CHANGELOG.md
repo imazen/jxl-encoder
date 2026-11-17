@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- Apply remaining-band group admission to the alpha-only squeeze builder,
+  preserving exact selected native alpha samples on elongated images.
+
 - Route squeezed alpha bands through their declared progressive pass brackets
   and keep global alpha coding to one ordered channel prefix, including thin
   images whose later bands fit globally again. Preserve existing precision

@@ -5,6 +5,8 @@ use jxl_encoder::{LossyConfig, PixelLayout, ProgressiveMode};
 use sha2::{Digest, Sha256};
 #[path = "support/decoded_extras.rs"]
 mod decoded_extras;
+#[path = "support/native_planes.rs"]
+mod native_planes;
 #[path = "support/pfm.rs"]
 mod pfm;
 
@@ -148,7 +150,24 @@ fn check_cases(cases: &[(usize, usize, bool, ProgressiveMode)]) {
                 assert_eq!(planes.len(), 1);
                 observations.push(("jxl-rs", planes[0].clone()));
             }
-            Err(_) => failures.push(format!("{label}: primary decoder failed")),
+            Err(error) => {
+                let message = error
+                    .downcast_ref::<String>()
+                    .map(String::as_str)
+                    .or_else(|| error.downcast_ref::<&str>().copied())
+                    .unwrap_or("unknown panic");
+                assert!(
+                    matches!((width, height), (131073, 17) | (17, 131073))
+                        && message.contains("row < self.num_rows"),
+                    "unclassified primary decoder failure {label}: {message}"
+                );
+                std::fs::write(out.join("decoder-gap.txt"), format!(
+                    "Registry jxl 0.8 global-band row-bound panic: {message}. Native repaired decoder and djxl require exact alpha.\n")).unwrap();
+                let (color, planes) = native_planes::decode(&bytes);
+                assert!(color.iter().all(|v| v.is_finite()));
+                assert_eq!(planes.len(), 1);
+                observations.push(("pinned-native-jxl-rs", planes[0].clone()));
+            }
         }
         if reference.status.success() {
             observations.push((
@@ -233,4 +252,24 @@ fn progressive_without_extras_keeps_single_pass_color_samples() {
             }
         }
     }
+}
+
+#[test]
+fn zz_elongated_alpha_groups_keep_source_samples() {
+    let mut cases = Vec::new();
+    for progressive in [
+        ProgressiveMode::Single,
+        ProgressiveMode::QuantizedAcFullAc,
+        ProgressiveMode::DcVlfLfAc,
+    ] {
+        for (width, height, rows) in [
+            (131073, 17, true),
+            (17, 131073, false),
+            (131585, 17, true),
+            (17, 131585, false),
+        ] {
+            cases.push((width, height, rows, progressive));
+        }
+    }
+    check_cases(&cases);
 }

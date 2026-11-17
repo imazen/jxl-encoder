@@ -4,10 +4,12 @@ Issue [144](https://github.com/imazen/jxl-encoder/issues/144), V3. This record
 covers the existing lossy alpha-squeeze writer, not general JPEG XL conformance.
 
 The original local-section repairs are recorded at `dc90b122`. The thin-image
-global-prefix follow-up and progressive routing are described below; their
-final verification is still in progress.
+global-prefix follow-up and progressive routing are on main in `aab13cd6`,
+with controls in `93b7fbd0`. Their verified scope is described below. The later
+elongated group-admission follow-up remains under final validation.
 
-The progressive pass placement defect (V2) remains separate. Animation currently
+Progressive pass placement (V2) has its own verified routing controls below.
+Animation currently
 does not forward `alpha_distance` or `alpha_squeeze` to its frame encoder; it
 therefore does not exercise this writer. The optional subsampled RGB8 writer
 also does not use it. Neither route is counted as tested squeeze production.
@@ -119,8 +121,7 @@ of actually used symbols, distance-extra-bit writes for the fixed RLE distance
 one (its extra-bit count is always zero), and the non-Raw arm in the no-run
 path. The histogram adapter's seven missing regions are fallible writer/error
 returns. These error returns were not fault-injected. The global empty-data
-header is directly checked; normal generated pipelines have a nonempty coarse
-global band. The materialization, empty-group return, one/many-leaf trees,
+header is directly checked. The materialization, empty-group return, one/many-leaf trees,
 lossless/lossy multipliers, LZ77/non-LZ77 and one/multiple context choices are
 observed in these scopes. Fractions do not imply coverage of the entire encoder.
 
@@ -129,15 +130,15 @@ artifact root above; reproduce its body comparison with
 `alpha-squeeze-scope-summary`. The original full-feature object and a separately
 retained minimal object remain available. The report script initially missed
 Rust v0 identifiers; correcting that matcher changed reporting only, not the
-profiles or production source. V2, animation configuration forwarding and their
-own subsequent affected-path checks remain open.
+profiles or production source. The later V2 routing controls are reported below; animation configuration
+forwarding remains open.
 
 ## Progressive routing and thin-image follow-up
 
 With DCT8 isolating V1's separate color-coefficient issue, the original
 1024-square/1025x1024 two-pass streams and the odd-edge three-pass stream fail
 full Rust and djxl rendering. Single-pass and single-group controls preserve
-every selected alpha code. The candidate routes HF bands by their actual
+every selected alpha code. The repair routes HF bands by their actual
 header bracket, retaining original channel order before empty-crop compaction.
 Raw unsqueezed extras retain their existing last-pass predicate and writer.
 
@@ -161,7 +162,7 @@ The additional thin controls independently exposed a global-partition defect
 even in Single mode. Native FwdSqueeze produces a 257x4 band followed by 256x9,
 and the transposed pair, at 1025x17/17x1025. Global coding ends at the first
 oversized band. The original partition instead selected indices 0..6 plus 8;
-the ordered global prefix is only 0..6. The candidate closes the prefix
+the ordered global prefix is only 0..6. The repair closes the prefix
 permanently at the first oversized channel. The committed metadata fixture's
 dimensions/shifts are measured from native FwdSqueeze; its prefix marker is
 wrapper-derived from the global-prefix contract, not native decoder output.
@@ -220,3 +221,77 @@ The extraction/union command completes without mapping diagnostics
 minimum available 21,431 MiB). The tools compare function bodies exactly
 and normalize only offsets before declarations. Coverage does not qualify
 V1, animation forwarding, early-preview color quality or every option product.
+
+
+## Elongated alpha group admission
+
+The later 131585x17/transposed control independently reproduces E3 through the
+alpha-only caller. Default forward metadata contains a remaining 257x5/5x257
+band at shifts 9/2 or 2/9. A 256-pixel HF grid has zero extent on one axis.
+Actual old encoder output fails djxl; registry Rust returns 1,184,265 wrong
+alpha codes, first 210 becoming zero. The pinned v0.12 production controls
+recover every selected source code. Native default forward metadata and native
+production admission are separate observations: `enc_modular.cc` truncates
+schedules that exceed the group shift cap.
+
+`build_alpha_squeeze_pipeline` now calls the existing
+`default_squeeze_params_for_groups` with the VarDCT group dimension and caller
+allocation policy. Valid full plans retain their existing steps; invalid ones
+use the already established safe explicit prefix. No new strategy, quantizer,
+rounding policy, public API or threshold is introduced.
+
+At 131073x17/transposed, the original group plan is valid and djxl is exact.
+Registry jxl 0.8 instead panics on global-band row bounds. The test still invokes
+it and permits only that exact panic on those two shapes, records the decoder
+gap, then requires the pinned repaired native decoder and djxl to recover every
+alpha sample. Other decoder errors and wrong samples fail. This is a decoder
+coverage gap, not a repaired registry decoder or an encoder-invalid control.
+
+Before source/object/profile and streams are retained in
+`alpha-squeeze-elongated-before`, `alpha-squeeze-elongated-native-before`, and
+`live-tests/alpha-squeeze-progressive/run-10`/`run-11`. The repaired twelve
+source controls span four shapes and all three progressive modes, retained in
+`alpha-squeeze-elongated-three-modes`. The broader full-feature matrix covers
+the twelve alpha layouts, offered policies, request/stride/writer/legacy/stream,
+engine entries and associated-alpha samples at the elongated dimensions.
+
+The first full matrix remains a failed run: its new wide fixture selected the
+same Reference/RGBA8/request cell twice and correctly hit the output-preservation
+guard in each mode. All other cells completed. Its actual exit code 101 and
+object/profile checksums remain in the coverage artifact; no passing verdict
+is inferred from it. The corrected fixture removes that redundant selection,
+checks uniqueness before encoding and passes in
+`alpha-squeeze-elongated-corrected-matrix`. The enclosing corrected validation
+passes the full library, unchanged normal/strict/drift locks, selected minimal
+controls, no-default build and strict Rust 1.100 workspace/focused lint
+(`alpha-squeeze-elongated-corrected-validation.log`, rc0, 1310 s; run-heavy peak
+1.66 GiB, minimum available 20,192 MiB). Existing expectations and ignores stay
+unchanged.
+
+The added actual two-worker controls pass in both orientations and all modes.
+Restoring the original unrestricted alpha plan is detected by the elongated
+regression, with the repaired source restored afterward. The wide minimal-feature
+matrix and final strict lint also pass (`alpha-squeeze-geometry-final-controls.log`,
+rc0, 578 s; peak 1.06 GiB, minimum available 20,089 MiB). Remote CI remains a
+separate verdict.
+
+The final passing-only function-body union adds the existing 8x8 passthrough
+and 400x267 normal-plan units to the full/minimal wide, actual-worker and
+source-control objects/profiles. It observes 71/75 alpha-builder regions and
+91/95 group-admission regions. The builder's four missing regions propagate
+allocation, channel-shape, group-admission and forward-transform errors; they
+were not injected. Group admission's missing regions are invalid group-dimension
+refusal (this caller supplies constant 256), allocation refusal (not injected),
+the defensive geometry-step failure (not generated by the one-alpha default),
+and implicit-large-channel refusal (this caller has one channel, not more than
+nineteen). Existing non-alpha E3 coverage remains separately documented.
+Both valid-full-plan and truncated-plan outcomes, the empty plan, shift-zero
+quantization and the LF boost are observed. These are selected function scopes,
+not complete encoder coverage.
+
+The passing-only report is
+`alpha-squeeze-elongated-corrected-matrix-coverage/admission-passing-final-scope.json`.
+All six input archives record exit zero; exact function bodies and original
+object/profile checksums are compared. The separate failed-run coverage export
+retains its nonzero verdict explicitly. Coverage extraction has no mapping
+diagnostics. Animation alpha-setting forwarding remains an open task.

@@ -270,18 +270,19 @@ impl AlphaSqueezePipeline {
 ///    resolution (`dim_shift == 0` and `dim_shift > 0` both supported —
 ///    `dim_shift > 0` callers feed in the already-subsampled buffer).
 /// 2. Build a 1-channel [`crate::modular::channel::ModularImage`] and
-///    invoke [`crate::modular::squeeze::default_squeeze_params`] +
-///    [`crate::modular::squeeze::apply_squeeze`]. Default squeeze
-///    halves alternating axes until both ≤ 8 px; produces N
-///    sub-channels (1 lowest-frequency average + N-1 HF residuals).
+///    invoke [`crate::modular::squeeze::default_squeeze_params_for_groups`] +
+///    [`crate::modular::squeeze::apply_squeeze`]. The default plan halves
+///    alternating axes until both ≤ 8 px; group admission can retain an
+///    earlier explicit prefix so every remaining band has a positive tile.
+///    This produces one average plus the selected residual sub-channels.
 /// 3. For each sub-channel compute its integer quantizer via the
 ///    shift-aware quantizer formula
 ///    ([`super::encoder::VarDctEncoder::compute_extra_pixel_quantizer_shifted`])
 ///    using `shift = (hshift + vshift) - 1` clamped to `[0, 15]`
 ///    (libjxl `enc_modular.cc:1006-1008`).
 /// 4. In-place `QuantizeChannel` (libjxl `enc_modular.cc:141`):
-///    `snap-to-multiple-of-q` round-toward-zero, lossless leaves
-///    (`q == 1`) untouched.
+///    snap to the nearest multiple of q (half steps away from zero),
+///    leaving lossless leaves (`q == 1`) untouched.
 ///
 /// Returns the [`AlphaSqueezePipeline`] for the bitstream writer to
 /// consume. On caller-shape inputs that can't be squeezed (e.g. a
@@ -297,7 +298,7 @@ pub(crate) fn build_alpha_squeeze_pipeline(
     budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
 ) -> Result<AlphaSqueezePipeline> {
     use crate::modular::channel::ModularImage;
-    use crate::modular::squeeze::{apply_squeeze, default_squeeze_params};
+    use crate::modular::squeeze::{apply_squeeze, default_squeeze_params_for_groups};
 
     // Materialize alpha as a single i32 Channel at this channel's
     // resolution (`image_width >> dim_shift` × `image_height >> dim_shift`).
@@ -328,7 +329,14 @@ pub(crate) fn build_alpha_squeeze_pipeline(
         has_alpha: false,
     };
 
-    let params = default_squeeze_params(&mi);
+    // Alpha uses the same remaining-band grid admission as lossless modular.
+    // Deep anisotropic schedules can put an HF band beyond the 256px grid's
+    // shift range even though the original alpha plane is full resolution.
+    let params = default_squeeze_params_for_groups(
+        &mi,
+        super::common::GROUP_DIM,
+        budget.is_some_and(|b| b.is_fallible()),
+    )?;
     if !params.is_empty() {
         apply_squeeze(&mut mi, &params)?;
     }

@@ -836,3 +836,101 @@ fn progressive_alpha_reduced_integer_precision_keeps_native_codes() {
     }
     run(cells);
 }
+
+#[test]
+fn elongated_alpha_paths_and_layouts_keep_native_bands() {
+    let mut cells = Vec::new();
+    let shapes = [(131585, 17), (17, 131585)];
+    for (i, layout) in [
+        PixelLayout::Rgba8,
+        PixelLayout::Bgra8,
+        PixelLayout::GrayAlpha8,
+        PixelLayout::Rgba16,
+        PixelLayout::GrayAlpha16,
+        PixelLayout::RgbaLinearF16,
+        PixelLayout::GrayAlphaLinearF16,
+        PixelLayout::RgbaLinearF32,
+        PixelLayout::GrayAlphaLinearF32,
+        PixelLayout::RgbaPqF32,
+        PixelLayout::RgbaHlgF32,
+        PixelLayout::RgbaBt709F32,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let (width, height) = shapes[i % 2];
+        cells.push(Cell {
+            layout,
+            ..strict(width, height)
+        });
+    }
+    for (i, (policy, strategy, mode)) in encoder_policies::policies().into_iter().enumerate() {
+        let (width, height) = shapes[i % 2];
+        cells.push(Cell {
+            policy,
+            strategy,
+            mode,
+            ..strict(width, height)
+        });
+    }
+    for (i, entry) in ["request", "strided", "writer", "legacy", "stream"]
+        .into_iter()
+        .enumerate()
+    {
+        for mode in [EncoderMode::Reference, EncoderMode::Experimental] {
+            // The first layout cell already selects this exact request input.
+            if entry == "request" && mode == EncoderMode::Reference {
+                continue;
+            }
+            let (width, height) = shapes[i % 2];
+            cells.push(Cell {
+                entry,
+                mode,
+                ..strict(width, height)
+            });
+        }
+    }
+    for (i, layout) in [PixelLayout::Rgba8, PixelLayout::Rgba16]
+        .into_iter()
+        .enumerate()
+    {
+        let (width, height) = shapes[i % 2];
+        cells.push(Cell {
+            layout,
+            associated: true,
+            ..strict(width, height)
+        });
+    }
+    #[cfg(all(feature = "__pre_quantized", feature = "__internals"))]
+    for (i, entry) in ["precomputed", "prequantized"].into_iter().enumerate() {
+        for mode in [EncoderMode::Reference, EncoderMode::Experimental] {
+            let (width, height) = shapes[i % 2];
+            cells.push(Cell {
+                policy: "engine-default".into(),
+                entry,
+                mode,
+                ..strict(width, height)
+            });
+        }
+    }
+    let mut identities = std::collections::BTreeSet::new();
+    assert!(
+        cells.iter().all(|cell| identities.insert(cell.label())),
+        "elongated fixture identities must be unique before encoding"
+    );
+    run(cells);
+}
+
+#[cfg(feature = "parallel")]
+#[test]
+fn elongated_alpha_two_worker_bands_keep_native_samples() {
+    run([(131585, 17), (17, 131585)]
+        .into_iter()
+        .map(|(width, height)| Cell {
+            policy: "wide-workers".into(),
+            mode: EncoderMode::Experimental,
+            threads: 2,
+            ..strict(width, height)
+        })
+        .collect());
+}
