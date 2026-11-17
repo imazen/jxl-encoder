@@ -1183,6 +1183,12 @@ ans-cancellation-validation manifest:
     cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --test it --no-report -- divergence_table_drift
     cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,parallel-tree-learning --lib --no-report -- cancellation_144
 
+squeeze-contract-check manifest:
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test squeeze_contract --no-report -- --nocapture --test-threads=1
+
+squeeze-params-oracle source build output:
+    python3 scripts/frame_header_oracle.py --component squeeze_params {{quote(source)}} {{quote(build)}} {{quote(output)}}
+
 ans-cancellation-lint manifest coverage_env:
     bash -c 'set -e; source "$1"; cargo clippy --locked --manifest-path "$2" -p jxl-encoder --features __expert --lib -- -D warnings; cargo clippy --locked --manifest-path "$2" -p jxl-encoder --features __expert,parallel,parallel-tree-learning --lib -- -D warnings' _ {{quote(coverage_env)}} {{quote(manifest)}}
 
@@ -1231,23 +1237,107 @@ request-cancellation-unit manifest:
 coverage-code-window report function suffix first last:
     python3 scripts/coverage_function_regions.py {{quote(report)}} {{quote(function)}} --file-suffix {{quote(suffix)}} --start-line {{first}} --end-line {{last}}
 
+squeeze-tall-contract-check manifest:
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test squeeze_contract --no-report -- squeeze_bands --nocapture
+
+squeeze-f32-contract-check manifest:
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test squeeze_contract --no-report -- f32_squeeze_admission --nocapture
+
 extra-edge-cli-selected-check manifest coverage_env:
     cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder-cli --test shifted_alpha --no-report
     bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; cargo clippy --locked --manifest-path "$2" -p jxl-encoder-cli --bin cjxl-rs --test shifted_alpha -- -D warnings' _ {{quote(coverage_env)}} {{quote(manifest)}}
 
+squeeze-default-vectors oracle output:
+    set -C; {{quote(oracle)}} --defaults > {{quote(output)}}
+
+squeeze-transform-counts oracle output:
+    set -C; {{quote(oracle)}} --transform-counts > {{quote(output)}}
+
+squeeze-begin-fields oracle output:
+    set -C; {{quote(oracle)}} --begin-fields > {{quote(output)}}
+
+squeeze-count-contract-check manifest:
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test squeeze_contract --no-report -- twenty_channel --nocapture
+
+squeeze-wire-vectors oracle output:
+    set -C; {{quote(oracle)}} --wire > {{quote(output)}}
+
+squeeze-descriptor-unit manifest:
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --lib --no-report -- default_squeeze_wire_tests
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --lib --no-report -- squeeze_field_tests
+
+squeeze-count-matrix manifest:
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test squeeze_count_matrix --no-report -- every_policy --nocapture --test-threads=1
+
+squeeze-no-debug-control manifest:
+    python3 scripts/test_encoder_without_checks.py {{quote(manifest)}}
+
+squeeze-no-debug-f32-control manifest:
+    python3 scripts/test_encoder_without_checks.py {{quote(manifest)}} --include-f32
+
+squeeze-count-feature-controls manifest:
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,parallel-tree-learning --test squeeze_count_matrix --no-report -- larger_squeeze_defaults --nocapture --test-threads=1
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test squeeze_count_matrix --no-report -- unsafe_implicit_dimensions --nocapture --test-threads=1
+
+squeeze-layout-controls manifest:
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test squeeze_layouts --no-report -- --nocapture --test-threads=1
+
+squeeze-lf-count-controls manifest:
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test squeeze_lf_count --no-report -- --nocapture --test-threads=1
+
+lf-squeeze-color-oracle source build output:
+    python3 scripts/frame_header_oracle.py --component lf_squeeze_color {{quote(source)}} {{quote(build)}} {{quote(output)}}
+
+squeeze-cmyk-count-controls manifest icc out:
+    cargo llvm-cov run --profile test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --example shifted_extra_cmyk --no-report -- {{quote(icc)}} {{quote(out)}} 17 --squeeze
+
+squeeze-descriptor-mutations manifest out:
+    python3 scripts/test_squeeze_mutation.py {{quote(manifest)}} {{quote(out)}}
+
+# Current-source E2 checks; E3/E5 regressions retain their separate failing verdicts.
+squeeze-descriptor-validation manifest:
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --lib --no-report -- default_squeeze_wire_tests --test-threads=1
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --lib --no-report -- squeeze_field_tests --test-threads=1
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test squeeze_count_matrix --test squeeze_layouts --test squeeze_lf_count --no-report -- --test-threads=1
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test squeeze_contract --no-report -- twenty_channel --test-threads=1
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --lib --no-report -- --test-threads=1
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --test it --no-report -- hash_lock --test-threads=1
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --test it --no-report -- strategy_libjxl_byte_lock --test-threads=1
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --test it --no-report -- divergence_table_drift --test-threads=1
+
+squeeze-descriptor-minimal manifest:
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert --test squeeze_count_matrix --test squeeze_layouts --test squeeze_lf_count --no-report -- --test-threads=1
+
+squeeze-descriptor-lint manifest:
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,parallel-tree-learning --lib --test squeeze_contract --test squeeze_count_matrix --test squeeze_layouts --test squeeze_lf_count --test squeeze_reference --example shifted_extra_cmyk -- -D warnings
+
 squeeze-native-reference-controls manifest:
     cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test squeeze_reference --no-report -- --nocapture --test-threads=1
+
+squeeze-descriptor-additional manifest:
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test squeeze_reference --no-report -- --nocapture --test-threads=1
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test squeeze_count_matrix --no-report -- maximum_admitted --nocapture --test-threads=1
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test squeeze_lf_count --no-report -- --nocapture --test-threads=1
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --lib --no-report -- default_squeeze_wire_tests --test-threads=1
+
+
+squeeze-descriptor-final-gates manifest coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; just squeeze-descriptor-lint "$2"' _ {{quote(coverage_env)}} {{quote(manifest)}}
+    just squeeze-descriptor-minimal {{quote(manifest)}}
+    just squeeze-count-feature-controls {{quote(manifest)}}
+
+coverage-from-archive llvm_directory archive output:
+    python3 scripts/coverage_from_archive.py {{quote(llvm_directory)}} {{quote(archive)}} {{quote(output)}}
 
 squeeze-f32-route-controls manifest:
     cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test squeeze_f32_routes --no-report -- --nocapture --test-threads=1
 
-squeeze-rct-guard-regions report:
-    python3 scripts/coverage_function_regions.py {{quote(report)}} 33write_modular_stream_with_squeeze --file-suffix modular/encode.rs --start-line 943 --end-line 946
-    python3 scripts/coverage_function_regions.py {{quote(report)}} write_modular_stream_with_squeeze_and_tree_stop --file-suffix modular/encode.rs --start-line 3221 --end-line 3224
-    python3 scripts/coverage_function_regions.py {{quote(report)}} encode_modular_multi_group_squeeze_with_tree --file-suffix modular/frame.rs --start-line 2472 --end-line 2475
+squeeze-generator-edge-controls manifest:
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --lib --no-report -- default_squeeze_wire_tests --test-threads=1
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test squeeze_count_matrix --no-report -- lower_count_one_axis --nocapture --test-threads=1
 
-coverage-from-archive llvm_directory archive output:
-    python3 scripts/coverage_from_archive.py {{quote(llvm_directory)}} {{quote(archive)}} {{quote(output)}}
+squeeze-group-geometry-controls manifest:
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test squeeze_group_geometry --no-report -- --nocapture --test-threads=1
 
 squeeze-rct-isolated manifest revision output:
     python3 scripts/validate_squeeze_rct_isolated.py {{quote(manifest)}} {{quote(revision)}} {{quote(output)}}
@@ -1258,6 +1348,9 @@ squeeze-rct-isolated-resume manifest revision output start:
 squeeze-rct-unchecked manifest revision output:
     python3 scripts/validate_squeeze_rct_isolated.py {{quote(manifest)}} {{quote(revision)}} {{quote(output)}} --unchecked --end-before 1
 
+issue144-production-contracts manifest profile="test":
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --profile {{quote(profile)}} --features __expert,__internals,jpeg-reencoding,parallel,parallel-tree-learning --test frame_header_contract --test color_profile_contract --test icc_tag_contract --test request_cancellation --test shifted_extra_edges --test squeeze_reference --test squeeze_f32_routes -- --test-threads=1
+
 squeeze-rct-isolated-contracts manifest revision output:
     python3 scripts/validate_squeeze_rct_isolated.py {{quote(manifest)}} {{quote(revision)}} {{quote(output)}} --contracts
 
@@ -1267,16 +1360,132 @@ squeeze-rct-isolated-lint manifest revision output:
 squeeze-rct-planar-controls manifest revision output:
     python3 scripts/validate_squeeze_rct_isolated.py {{quote(manifest)}} {{quote(revision)}} {{quote(output)}} --planar-only
 
-issue144-production-contracts manifest profile="test":
-    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --profile {{quote(profile)}} --features __expert,__internals,jpeg-reencoding,parallel,parallel-tree-learning --test frame_header_contract --test color_profile_contract --test icc_tag_contract --test request_cancellation --test shifted_extra_edges --test squeeze_reference --test squeeze_f32_routes -- --test-threads=1
+squeeze-rct-guard-regions report:
+    python3 scripts/coverage_function_regions.py {{quote(report)}} 33write_modular_stream_with_squeeze --file-suffix modular/encode.rs --start-line 943 --end-line 946
+    python3 scripts/coverage_function_regions.py {{quote(report)}} write_modular_stream_with_squeeze_and_tree_stop --file-suffix modular/encode.rs --start-line 3221 --end-line 3224
+    python3 scripts/coverage_function_regions.py {{quote(report)}} encode_modular_multi_group_squeeze_with_tree --file-suffix modular/frame.rs --start-line 2472 --end-line 2475
 
 squeeze-rct-boundary-controls manifest revision output:
     python3 scripts/validate_squeeze_rct_isolated.py {{quote(manifest)}} {{quote(revision)}} {{quote(output)}} --end-before 1
+
+squeeze-group-unit-controls manifest:
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --lib --no-report -- group_schedule_tests --test-threads=1
+
+squeeze-group-regressions manifest:
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test squeeze_contract --test squeeze_group_geometry --no-report -- --nocapture --test-threads=1
+
+squeeze-group-policy-controls manifest:
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test squeeze_group_geometry --no-report -- every_policy --nocapture --test-threads=1
+
+squeeze-group-entry-controls manifest:
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test squeeze_group_geometry --no-report -- supported_layouts --nocapture --test-threads=1
+
+squeeze-group-size-controls manifest:
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test squeeze_group_geometry --no-report -- all_group_sizes --nocapture --test-threads=1
+
+squeeze-gray-band-diagnostic manifest:
+    RUST_BACKTRACE=1 cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test squeeze_group_geometry --no-report -- grayscale_global_band_diagnostic --nocapture --test-threads=1
+
+squeeze-gray-independent-controls manifest:
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test squeeze_group_geometry --no-report -- grayscale_global_bands_in_independent_decoders --nocapture --test-threads=1
+
+squeeze-gray-native-oracle source build output:
+    python3 scripts/frame_header_oracle.py --component squeeze_gray_geometry {{quote(source)}} {{quote(build)}} {{quote(output)}}
+
+squeeze-gray-native-controls manifest:
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --lib --no-report -- gray_global_native_tests --test-threads=1
+    just squeeze-gray-independent-controls {{quote(manifest)}}
+
+squeeze-gray-native-decoder manifest:
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test squeeze_group_geometry --no-report -- native_decoder_grayscale_global_bands_diagnostic --nocapture --test-threads=1
 
 # Public CMS admission versus internal raw ICC storage, pinned v0.12 objects.
 icc-raw-policy-oracle source build output:
     python3 scripts/frame_header_oracle.py --component icc_policy {{quote(source)}} {{quote(build)}} {{quote(output)}}
 
+squeeze-native-decoder-controls manifest:
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test squeeze_group_geometry --no-report -- native_decoder_grayscale --nocapture --test-threads=1
+
+squeeze-group-animation-controls manifest:
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test squeeze_group_geometry --no-report -- integer_animation_routes --nocapture --test-threads=1
+
+squeeze-repaired-layout-animation-controls manifest:
+    just squeeze-group-entry-controls {{quote(manifest)}}
+    just squeeze-group-animation-controls {{quote(manifest)}}
+
+squeeze-group-mutations manifest out:
+    python3 scripts/test_squeeze_mutation.py {{quote(manifest)}} {{quote(out)}} --case group-admission --case group-implicit-fallback --case group-prefix-cutoff
+
 # Isolate the dependency pin from the pending squeeze production changes.
 decoder-pin-baseline manifest revision out:
     python3 scripts/validate_squeeze_rct_isolated.py {{quote(manifest)}} {{quote(revision)}} {{quote(out)}} --start-at 2
+
+squeeze-group-planar-controls manifest:
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test squeeze_group_geometry --no-report -- planar_integer_entries --nocapture --test-threads=1
+
+squeeze-group-final-callers manifest:
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder
+    just squeeze-group-animation-controls {{quote(manifest)}}
+    just squeeze-group-planar-controls {{quote(manifest)}}
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test squeeze_layouts --no-report -- grayscale_with_a_shifted_first_extra --nocapture --test-threads=1
+
+# Supply only completed profiles and their exact executable/source versions.
+preserve-test-evidence source_root output args:
+    python3 scripts/preserve_test_evidence.py {{quote(source_root)}} {{quote(output)}} {{args}}
+
+squeeze-group-parallel-controls manifest:
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,parallel-tree-learning --test squeeze_group_geometry --no-report -- tall_group_routes_observe --nocapture --test-threads=1
+
+squeeze-group-unit-evidence manifest output coverage_env:
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" group_schedule_tests' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+squeeze-group-parallel-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" tall_group_routes_observe --test-target squeeze_group_geometry --features __expert,parallel,parallel-tree-learning' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+squeeze-group-final-lint manifest:
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,parallel-tree-learning --lib --test squeeze_contract --test squeeze_count_matrix --test squeeze_group_geometry --test squeeze_layouts --test squeeze_lf_count --test squeeze_reference --example shifted_extra_cmyk -- -D warnings
+
+squeeze-group-final-mechanics manifest parallel_output mutation_output unit_evidence unit_coverage coverage_env llvm_directory:
+    just coverage-from-archive {{quote(llvm_directory)}} {{quote(unit_evidence)}} {{quote(unit_coverage)}}
+    just squeeze-group-parallel-evidence {{quote(manifest)}} {{quote(parallel_output)}} {{quote(coverage_env)}}
+    just squeeze-group-mutations {{quote(manifest)}} {{quote(mutation_output)}}
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; just squeeze-group-final-lint "$2"' _ {{quote(coverage_env)}} {{quote(manifest)}}
+
+squeeze-group-mechanics-resume manifest output mutation_output coverage_env:
+    just squeeze-group-parallel-evidence {{quote(manifest)}} {{quote(output)}} {{quote(coverage_env)}}
+    just squeeze-group-mutations {{quote(manifest)}} {{quote(mutation_output)}}
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; just squeeze-group-final-lint "$2"' _ {{quote(coverage_env)}} {{quote(manifest)}}
+
+squeeze-group-one-axis-controls manifest:
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test squeeze_group_geometry --no-report -- one_pixel_axes --nocapture --test-threads=1
+
+squeeze-group-cutoff-mutation manifest out:
+    python3 scripts/test_squeeze_mutation.py {{quote(manifest)}} {{quote(out)}} --case group-prefix-cutoff
+
+squeeze-group-cutoff-verification manifest unit_out mutation_out coverage_env:
+    just squeeze-group-unit-evidence {{quote(manifest)}} {{quote(unit_out)}} {{quote(coverage_env)}}
+    just squeeze-group-one-axis-controls {{quote(manifest)}}
+    just squeeze-group-cutoff-mutation {{quote(manifest)}} {{quote(mutation_out)}}
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; just squeeze-group-final-lint "$2"' _ {{quote(coverage_env)}} {{quote(manifest)}}
+
+squeeze-group-region-report report:
+    python3 scripts/coverage_function_regions.py {{quote(report)}} default_squeeze_params_for_groups squeeze_geometry_step squeeze_group_geometry_fits --file-suffix modular/squeeze.rs
+
+squeeze-patch-caller-controls manifest:
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test squeeze_group_geometry --no-report -- winning_patch_hosts --nocapture --test-threads=1
+
+squeeze-final-feature-check manifest:
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder
+    just squeeze-patch-caller-controls {{quote(manifest)}}
+    python3 scripts/test_encoder_without_checks.py {{quote(manifest)}} --include-f32
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert --test squeeze_contract --test squeeze_lf_count --no-report -- --test-threads=1
+    cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features
+
+squeeze-rust1100-lint manifest:
+    cargo +1.100.0 clippy --locked --manifest-path {{quote(manifest)}} --workspace --all-targets -- -D warnings
+    cargo +1.100.0 clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,parallel,parallel-tree-learning --lib --test squeeze_contract --test squeeze_count_matrix --test squeeze_group_geometry --test squeeze_layouts --test squeeze_lf_count --test squeeze_reference --example shifted_extra_cmyk -- -D warnings
+
+
+squeeze-current-caller-evidence manifest no_rct_output axis_output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" every_policy_reaches_no_rct --test-target squeeze_layouts; python3 scripts/run_selected_test_evidence.py "$2" "$4" lower_count_one_axis --test-target squeeze_count_matrix' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(no_rct_output)}} {{quote(axis_output)}}
