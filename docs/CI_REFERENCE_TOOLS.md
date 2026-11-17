@@ -21,3 +21,15 @@ an error then exiting 23. All pass locally. The fixtures test orchestration;
 they are not reference binaries or encoder conformance controls. Action YAML
 and extracted shell syntax also validate. A subsequent remote job still needs
 an actual platform verdict.
+
+
+Expert job 133923235773 in run 44049340538 completes the issue-144 production
+contracts, then fails the new wire-check command with `just: command not found`
+(exit 127). The workflow now calls the Python checker directly; the exact
+folded YAML command passes locally against the retained nine-cell native/encoder
+controls and complete section accounting. No field expectation changes.
+The local replay is `~/tmp/jxl144/ci-alpha-header-replay/`. A subsequent remote
+job remains required. Windows ARM job 133923235733 separately completes
+reference setup and starts its Rust build; that is not an encoder-test pass
+or an attribution of the original setup exception. Resolve job state with
+`gh api repos/imazen/jxl-encoder/actions/jobs/<job-id>`.

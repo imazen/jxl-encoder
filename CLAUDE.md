@@ -1766,6 +1766,17 @@ misclassify that CLI limitation as an invalid stream or strip the ICC to hide it
 
 ## Known Bugs (ACTIVE)
 
+### 2026-11-17: expert wire-control command required an absent tool
+
+Expert job 133923235773 in run 44049340538 passes the issue-144 production
+contracts, then the new wire-control step exits 127 because `just` is absent.
+The workflow now invokes its Python checker directly. The exact folded YAML
+command passes locally against the retained nine-cell controls and complete
+section accounting, preserving every field expectation. A new remote verdict
+is required. The separate Windows ARM setup step passes in job 133923235733;
+the earlier setup exception's cause remains unestablished.
+
+
 ### 2026-11-17: Windows ARM reference setup lacks a test verdict
 
 [Run 44044868568](https://github.com/imazen/jxl-encoder/actions/runs/44044868568)

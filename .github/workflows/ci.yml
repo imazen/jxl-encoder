@@ -386,7 +386,7 @@ jobs:
           -- --test-threads=1
       - name: Check progressive alpha wire controls
         run: >-
-          just progressive-alpha-header-controls
+          python3 scripts/check_progressive_alpha_headers.py
           "${{ runner.temp }}/issue144-contracts/alpha-squeeze-progressive/run-0"
           "${{ runner.temp }}/issue144-contracts/progressive-alpha-headers.json"
       - name: Test precomputed squeezed alpha callers
