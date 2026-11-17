@@ -1836,3 +1836,13 @@ source-color-regions-final llvm artifacts:
 source-color-last-regions manifest artifacts coverage_env llvm:
     just source-color-native-vectors-evidence {{quote(manifest)}} {{quote(artifacts + "/source-color-native-d65-controls")}} {{quote(coverage_env)}}
     python3 scripts/source_color_coverage.py {{quote(llvm)}} {{quote(artifacts + "/source-color-region-report-complete")}} --source-white {{quote(artifacts + "/source-color-native-d65-controls")}} {{quote(artifacts + "/source-color-public-final")}} {{quote(artifacts + "/source-color-engine-zero")}} {{quote(artifacts + "/source-color-neutral")}} {{quote(artifacts + "/source-color-rate-domain-final")}} --source-metric {{quote(artifacts + "/source-color-engine-zero")}} {{quote(artifacts + "/source-color-metric-final")}} {{quote(artifacts + "/source-color-budget-final")}} {{quote(artifacts + "/source-color-rate-domain-final")}} --rate-color {{quote(artifacts + "/source-color-rate-domain-final")}} {{quote(artifacts + "/source-color-engine-zero")}}
+
+animation-blend-native source build output:
+    python3 scripts/frame_header_oracle.py --component animation_blend {{quote(source)}} {{quote(build)}} {{quote(output)}}
+
+animation-blend-native-check log djxl output:
+    python3 scripts/check_animation_blend_native.py {{quote(log)}} {{quote(djxl)}} {{quote(output)}}
+
+original-float-oracle-check cjxl oracle output:
+    python3 scripts/check_original_float_oracle.py {{quote(cjxl)}} {{quote(oracle)}} {{quote(output)}}
+

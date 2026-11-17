@@ -20,7 +20,7 @@ from these header-grammar corrections.
 | `FrameEncoder::apply_animation_to_header` → plain/patch modular header | ReferenceOnly with layout alpha; animation crops | Lossless full pixels, exact alpha, combined/sectioned TOCs |
 | `VarDctEncoder` frame assembly | ReferenceOnly with layout alpha; covering crop | Lossy reconstruction control, exact alpha, combined/sectioned TOCs |
 | Legacy animation / metadata / limits methods | Delegate to animation request | Exercise wrappers and request entry |
-| Animation request | Rejects custom row stride, added extras, float animation | Verify refusals; packed integer layouts remain applicable |
+| Animation request | Rejects custom row stride and added extras; lossless floats unsupported, lossy floats accepted | Verify refusals; packed integer layouts remain applicable |
 | Still / streaming | No animation crop or ReferenceOnly option | Existing locks and auxiliary-frame regressions |
 | Patch reference frames | Before-transform ReferenceOnly; no blending bundle populated | Existing patch round trips and header controls |
 | LF frames | Non-normal header; no blending bundle populated | LF round trips and header controls |
@@ -118,3 +118,19 @@ fail again. Default and minimal std/expert production matrices and focused
 strict lint pass. Default library, unchanged normal/strict locks, divergence
 checks, existing animation and auxiliary-frame filters also pass against the
 pinned closure. Existing ignores and expected bytes are unchanged.
+
+## Native blend and original-profile float controls
+
+The v0.12 public encoder produces the specified sums for full-canvas Add and
+a hidden zero-duration regular layer. The latter is not a ReferenceOnly-
+producer claim. The checker reads actual PAM precision; its first16-bit
+assumption failed and remains retained. Native controls are under
+`animation-blend-native-codes` at the issue artifact root.
+
+The original-profile API oracle adds explicit `--source-fields-float`, keeping
+original parametric RGB/gray descriptions and emitting color/extra planes as
+PFM. Existing ICC and U16 source-field modes retain their behavior. Nonuniform
+2x3 native lossless gray/RGB controls verify every source code, endianness and
+row order. Selected nonopaque alpha and non-D65 source controls also render
+with this mode; input/source/object identities remain in the issue artifacts.
+This is oracle support, not a claim that the encoder blend repairs have landed.
