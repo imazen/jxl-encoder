@@ -21,6 +21,8 @@ struct Case {
   double wx=.3127, wy=.3290;
   double rx=.64,ry=.33,gx=.30,gy=.60,bx=.15,by=.06;
   double gamma=0;
+  bool lossless=true;
+  uint8_t sample=64;
 };
 jxl::Status GammaFields() {
   JxlMemoryManager memory;JXL_RETURN_IF_ERROR(jxl::MemoryManagerInit(&memory,nullptr));
@@ -62,6 +64,10 @@ int main() {
     {"gamma-min",false,.3127,.3290,.64,.33,.30,.60,.15,.06,.0001221},
     {"gamma-max",false,.3127,.3290,.64,.33,.30,.60,.15,.06,1},
     {"gamma-over-one",false,.3127,.3290,.64,.33,.30,.60,.15,.06,2},
+    {"gamma-min-white-lossless",false,.3127,.3290,.64,.33,.30,.60,.15,.06,.0001221,true,255},
+    {"gamma-min-white-lossy",false,.3127,.3290,.64,.33,.30,.60,.15,.06,.0001221,false,255},
+    {"gamma-max-white-lossless",false,.3127,.3290,.64,.33,.30,.60,.15,.06,1,true,255},
+    {"gamma-max-white-lossy",false,.3127,.3290,.64,.33,.30,.60,.15,.06,1,false,255},
   };
   jxl::Matrix3x3 target;
   if(!jxl::PrimariesToXYZD50(.64f,.33f,.30f,.60f,.15f,.06f,.3127f,.3290f,target) || !jxl::Inv3x3Matrix(target))return 3;
@@ -71,7 +77,7 @@ int main() {
     if(!e)return 3;
     JxlBasicInfo info; JxlEncoderInitBasicInfo(&info);
     info.xsize=16;info.ysize=17;info.bits_per_sample=8;
-    info.num_color_channels=c.gray?1:3;info.uses_original_profile=JXL_TRUE;
+    info.num_color_channels=c.gray?1:3;info.uses_original_profile=c.lossless?JXL_TRUE:JXL_FALSE;
     if(JxlEncoderSetBasicInfo(e,&info)!=JXL_ENC_SUCCESS)return 3;
     JxlColorEncoding color;JxlColorEncodingSetToSRGB(&color,c.gray);
     color.white_point=JXL_WHITE_POINT_CUSTOM;
@@ -89,10 +95,11 @@ int main() {
     std::vector<uint8_t> encoded;
     if(accepted) {
       auto* settings=JxlEncoderFrameSettingsCreate(e,nullptr);
-      if(!settings || JxlEncoderSetFrameLossless(settings,JXL_TRUE)!=JXL_ENC_SUCCESS ||
+      if(!settings || JxlEncoderSetFrameLossless(settings,c.lossless?JXL_TRUE:JXL_FALSE)!=JXL_ENC_SUCCESS ||
+         (!c.lossless && JxlEncoderSetFrameDistance(settings,.01f)!=JXL_ENC_SUCCESS) ||
          JxlEncoderFrameSettingsSetOption(settings,JXL_ENC_FRAME_SETTING_EFFORT,3)!=JXL_ENC_SUCCESS)return 4;
       const JxlPixelFormat format{c.gray?1u:3u,JXL_TYPE_UINT8,JXL_NATIVE_ENDIAN,0};
-      const std::vector<uint8_t> pixels(16*17*format.num_channels,64);
+      const std::vector<uint8_t> pixels(16*17*format.num_channels,c.sample);
       added=JxlEncoderAddImageFrame(settings,&format,pixels.data(),pixels.size())==JXL_ENC_SUCCESS;
       if(added) {
         JxlEncoderCloseInput(e); encoded.resize(4096);size_t used=0;
