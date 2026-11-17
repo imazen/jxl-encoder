@@ -4155,35 +4155,21 @@ impl LossyConfig {
         self.alpha_distance
     }
 
-    /// Opt-in to the **squeeze-on-extras** (responsive=1) lossy alpha
-    /// pipeline. Default `false`.
+    /// Encode a single alpha extra using squeeze bands and the v0.12
+    /// responsive=1 per-band quantizers. Default `false`.
     ///
-    /// libjxl's default cjxl path uses `--responsive=1` for lossy
-    /// alpha, which applies the Squeeze (Haar wavelet) transform on
-    /// the alpha plane and routes a per-band quantizer through the
-    /// shifted entries of `squeeze_luma_qtable[16]`
-    /// (`enc_modular.cc:1004-1027`). This delivers `-18%` to `-160%`
-    /// smaller bytes on non-opaque alpha than the `responsive=0`
-    /// no-squeeze path we ship today (audit: commit `a160deb7`,
-    /// three-image sweep at d ∈ {0.5, 1.0, 2.0, 5.0}).
+    /// This engages when [`Self::with_alpha_distance`] is positive and the
+    /// image has a nonconstant alpha channel. Single- and multi-group pixel
+    /// requests are supported. A lossless alpha distance, absent alpha or
+    /// constant alpha retains the ordinary extra-channel writer. An engaged
+    /// request with additional extras is rejected; shifted VarDCT extras also
+    /// remain unsupported.
     ///
-    /// **Chunk-1 framework (current ship)**: setting this to `true`
-    /// validates the per-band quantizer table + shift-aware quantizer
-    /// function are in place, but surfaces a clear
-    /// `Error::NotImplemented` from the encoder when the lossy alpha
-    /// path is actually engaged
-    /// (`alpha_distance > 0.0` AND an alpha extra is present). The
-    /// chunk-2 follow-on wires the Squeeze application on the alpha
-    /// extra and a per-band quantizer dispatch through the modular
-    /// channel-split tree, at which point this flag will deliver
-    /// real byte savings.
+    /// The streaming pixel API uses the same request pipeline. The current
+    /// animation builder does not forward alpha-distance or alpha-squeeze;
+    /// that separate caller gap is tracked in issue 144.
     ///
-    /// Default `false` keeps the existing pipeline byte-for-byte
-    /// identical (hash-locks 36/36 unchanged).
-    ///
-    /// See also: [`Self::with_alpha_distance`] (the distance knob
-    /// this opt-in modifies the **encoding** of, not its target
-    /// quality).
+    /// See [`Self::with_alpha_distance`] for the distance selection.
     pub fn with_alpha_squeeze(mut self, on: bool) -> Self {
         self.alpha_squeeze = on;
         self

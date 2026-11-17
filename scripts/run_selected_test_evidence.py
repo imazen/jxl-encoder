@@ -16,6 +16,8 @@ p.add_argument('output', type=Path)
 p.add_argument('filter')
 p.add_argument('--test-target')
 p.add_argument('--features', default='__expert')
+p.add_argument('--source', action='append', default=[], type=Path,
+               help='additional source file relative to the exported workspace')
 a = p.parse_args()
 a.output.mkdir(exist_ok=False)
 root = a.manifest.resolve().parent
@@ -46,6 +48,10 @@ root = a.manifest.resolve().parent
 sources = root / 'jxl-encoder/src/modular'
 source_rows = []
 source_paths = list(sources.glob('*.rs'))
+for relative in a.source:
+    if relative.is_absolute() or '..' in relative.parts or not (root / relative).is_file():
+        p.error('required relative source file missing: ' + str(relative))
+    source_paths.append(root / relative)
 if a.test_target:
     source_paths += [root / 'jxl-encoder/tests' / (a.test_target + '.rs')]
     source_paths += list((root / 'jxl-encoder/tests/support').glob('*.rs'))

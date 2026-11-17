@@ -2511,27 +2511,10 @@ pub struct VarDctEncoder {
     /// quantizer while non-alpha extras (depth, spot color, ...) stay
     /// lossless (`q = 1`) on the same frame.
     pub alpha_distance: Option<f32>,
-    /// Opt-in: engage the **squeeze-on-extras** (responsive=1) lossy
-    /// alpha pipeline rather than the default no-squeeze pixel
-    /// quantizer (`enc_modular.cc:973-1027`). Default `false`.
-    ///
-    /// libjxl's default is `responsive=1` for lossy alpha; cjxl
-    /// out-of-the-box gets `-18%` to `-160%` smaller bytes on
-    /// non-opaque alpha than our `responsive=0` path (audit:
-    /// `a160deb7`, three-image sweep at d ∈ {0.5, 1.0, 2.0, 5.0}).
-    ///
-    /// **Chunk-1 status (this flag)**: ungates a framework path that
-    /// validates the per-band quantizer table
-    /// ([`SQUEEZE_LUMA_QTABLE`]) and the [`Self::alpha_squeeze_engaged`]
-    /// predicate. The actual squeeze-application + per-band quantizer
-    /// routing through [`Self::compute_extra_pixel_quantizer_shifted`]
-    /// is queued for chunk 2 — until then the extras subbitstream
-    /// writer surfaces an explicit `Error::Unsupported` when this
-    /// flag is `true` AND a non-trivial lossy alpha case is
-    /// requested. The default `false` keeps the existing
-    /// no-squeeze path byte-for-byte identical (hash-locks 36/36).
-    ///
-    /// Set via [`crate::LossyConfig::with_alpha_squeeze`].
+    /// Opt in to the responsive=1 alpha squeeze pipeline. Default `false`.
+    /// Positive alpha distance and one nonconstant alpha extra select ordered
+    /// squeeze bands with shift-aware quantizers; other extras are refused.
+    /// See [`crate::LossyConfig::with_alpha_squeeze`].
     pub alpha_squeeze: bool,
     /// Policy for non-finite XYB values at the conversion→pipeline
     /// boundary. See [`crate::api::NonFiniteAction`].
@@ -3148,17 +3131,10 @@ impl VarDctEncoder {
     /// than raw pixels would. The HF residual sub-channels (shift > 0)
     /// then drop very quickly toward `q = 1` via the qtable.
     ///
-    /// **Chunk-1 status**: this function is wired into the
-    /// `with_alpha_squeeze` opt-in flag but **not yet routed into the
-    /// extras subbitstream** — see
-    /// [`Self::alpha_squeeze`] / chunk-2 plan in CHANGELOG. Today it
-    /// is unit-testable and ready for chunk-2 to consume.
-    ///
     /// Like [`Self::compute_extra_pixel_quantizer`] this returns `1`
     /// for non-alpha extras and for `alpha_distance` of `None` /
     /// `Some(0.0)` / `Some(d <= 0)` — preserves the lossless
     /// contract end-to-end.
-    #[allow(dead_code)] // chunk-1 framework — chunk 2 wires this in.
     pub(crate) fn compute_extra_pixel_quantizer_shifted(
         &self,
         extras_bits: u32,
@@ -3200,8 +3176,7 @@ impl VarDctEncoder {
     }
 
     /// Whether the squeeze-on-extras lossy alpha pipeline is engaged
-    /// for this encode (chunk-1 framework opt-in, not yet wired into
-    /// the bitstream).
+    /// for this encode.
     ///
     /// Returns `true` only when **both** of the following hold:
     /// - [`Self::alpha_squeeze`] was set via

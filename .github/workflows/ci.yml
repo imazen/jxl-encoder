@@ -381,8 +381,16 @@ jobs:
           --test request_cancellation --test shifted_extra_edges
           --test squeeze_reference --test squeeze_f32_routes --test squeeze_contract
           --test squeeze_count_matrix --test squeeze_layouts --test squeeze_lf_count
-          --test squeeze_group_geometry
+          --test squeeze_group_geometry --test alpha_squeeze_contract
+          --test alpha_squeeze_matrix
           -- --test-threads=1
+      - name: Test precomputed squeezed alpha callers
+        env:
+          JXL_ENCODER_OUTPUT_DIR: ${{ runner.temp }}/issue144-contracts
+        run: >-
+          cargo test --locked -p jxl-encoder --release
+          --features "__expert,__internals,__pre_quantized,parallel"
+          --test alpha_squeeze_matrix precomputed_and -- --test-threads=1
       - name: Retain failed issue 144 streams and diagnostics
         if: failure()
         uses: actions/upload-artifact@v7

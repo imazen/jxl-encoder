@@ -1482,5 +1482,54 @@ squeeze-final-feature-check manifest:
     cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert --test squeeze_contract --test squeeze_lf_count --no-report -- --test-threads=1
     cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features
 
+alpha-squeeze-edge-regression manifest:
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test alpha_squeeze_contract --no-report -- --nocapture --test-threads=1
+
+squeeze-rust1100-lint manifest:
+    cargo +1.100.0 clippy --locked --manifest-path {{quote(manifest)}} --workspace --all-targets -- -D warnings
+    cargo +1.100.0 clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,parallel,parallel-tree-learning --lib --test squeeze_contract --test squeeze_count_matrix --test squeeze_group_geometry --test squeeze_layouts --test squeeze_lf_count --test squeeze_reference --example shifted_extra_cmyk -- -D warnings
+
+
+squeeze-current-caller-evidence manifest no_rct_output axis_output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" every_policy_reaches_no_rct --test-target squeeze_layouts; python3 scripts/run_selected_test_evidence.py "$2" "$4" lower_count_one_axis --test-target squeeze_count_matrix' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(no_rct_output)}} {{quote(axis_output)}}
+
 squeeze-scope-coverage-summary output *pairs:
     python3 scripts/squeeze_coverage_summary.py {{quote(output)}} {{pairs}}
+
+alpha-squeeze-layout-controls manifest:
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test alpha_squeeze_matrix --no-report -- alpha_layouts --nocapture --test-threads=1
+
+alpha-squeeze-caller-controls manifest:
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test alpha_squeeze_matrix --no-report -- policies_and_public buffering_and_lf --nocapture --test-threads=1
+
+alpha-squeeze-extra-callers manifest:
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel --test alpha_squeeze_matrix --no-report -- precomputed_and alpha_shift_brackets alpha_band_writers --nocapture --test-threads=1
+
+
+alpha-squeeze-mutations manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/test_alpha_squeeze_mutation.py "$2" "$3"' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+alpha-squeeze-broad-baseline manifest:
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --lib --no-report -- --test-threads=1
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --test it --no-report -- hash_lock strategy_libjxl_byte_lock divergence_table_drift --test-threads=1
+
+alpha-squeeze-minimal-controls manifest:
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert --test alpha_squeeze_contract --test alpha_squeeze_matrix --no-report -- --test-threads=1
+    cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features
+
+alpha-squeeze-rust1100-lint manifest:
+    cargo +1.100.0 clippy --locked --manifest-path {{quote(manifest)}} --workspace --all-targets -- -D warnings
+    cargo +1.100.0 clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel --lib --test alpha_squeeze_contract --test alpha_squeeze_matrix -- -D warnings
+
+alpha-squeeze-existing-controls manifest:
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test it --no-report -- alpha_squeeze --test-threads=1
+
+
+alpha-squeeze-scope-summary output *pairs:
+    python3 scripts/alpha_squeeze_coverage_summary.py {{quote(output)}} {{pairs}}
+
+alpha-squeeze-unit-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" empty_group_alpha_section --source jxl-encoder/src/vardct/bitstream.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}

@@ -182,8 +182,8 @@ pub(crate) struct AlphaSqueezePipeline {
     /// Sub-channels in apply-order. The decoder's inverse squeeze
     /// reverses these to recover the original alpha plane.
     pub sub_channels: alloc::vec::Vec<AlphaSqueezeSubChannel>,
-    /// Squeeze descriptor list (each entry → one `SqueezeParam` in the
-    /// modular subbitstream GroupHeader `nb_transforms` block).
+    /// Parameter list carried by one Squeeze transform descriptor in the
+    /// modular subbitstream GroupHeader.
     pub squeeze_params: alloc::vec::Vec<SqueezeParams>,
 }
 
@@ -191,7 +191,7 @@ pub(crate) struct AlphaSqueezePipeline {
 /// pipeline. Mirrors libjxl's decoder-side shift bracket classification
 /// (`dec_modular.cc:331-373`):
 ///
-/// - **Global** (`min(w,h) ≤ group_dim`): both width and height of the
+/// - **Global** (`w ≤ group_dim AND h ≤ group_dim`): both width and height of the
 ///   sub-channel fit in the LfGlobal modular sub-bitstream.
 /// - **LfGroup** (`min(hshift, vshift) ≥ 3`): the sub-channel is large
 ///   *and* deep enough in the squeeze hierarchy that it belongs to the
