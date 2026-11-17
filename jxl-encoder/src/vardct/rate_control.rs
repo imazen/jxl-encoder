@@ -78,6 +78,15 @@ pub fn encode_with_rate_control(
     encoder.apply_epf_level_override(&mut params);
     let params = params;
 
+    let (metric_source, _metric_source_guard) = if config.max_iterations > 0 {
+        metric_reference(encoder, &precomputed.linear_rgb)?
+    } else {
+        (
+            super::encoder::LinearSource::Borrowed(&precomputed.linear_rgb),
+            crate::budget::BudgetGuard::inert(),
+        )
+    };
+
     // Initialize quant field
     let mut quant_field = quantize_quant_field(&precomputed.quant_field_float, params.inv_scale);
     let initial_qf = quant_field.clone();
@@ -99,7 +108,7 @@ pub fn encode_with_rate_control(
         }
 
         // Decode and measure quality
-        let decoded = match decode_jxl_to_linear(&encoded) {
+        let decoded = match decode_jxl_to_linear(&encoded, encoder.color_encoding.as_ref()) {
             Some(d) => d,
             None => {
                 // Decode failed - return encoded data anyway
@@ -128,7 +137,7 @@ pub fn encode_with_rate_control(
             None => super::butteraugli_loop::LIBJXL_BUTTERAUGLI_SDR_INTENSITY_TARGET,
         };
         let diffmap = compute_butteraugli_diffmap(
-            &precomputed.linear_rgb,
+            metric_source.slice(),
             &decoded,
             precomputed.width,
             precomputed.height,
@@ -253,24 +262,29 @@ fn adjust_quant_field(
     }
 }
 
-/// Decode JXL to linear sRGB f32, interleaved, 3 channels.
-///
-/// Decodes via zenjxl-decoder (in-org — freely tunable for the
-/// perceptual loop, unlike an external decoder): the F32 output path
-/// yields linear sRGB directly, no color-encoding request dance. Color
-/// channels only — alpha/extra channels are skipped, because the
-/// consumer contract (`compute_butteraugli_diffmap` against
-/// `precomputed.linear_rgb`) is 3-channel interleaved RGB; grayscale
-/// decodes are replicated to RGB. (The previous jxl-oxide
-/// `image_all_channels()` would have interleaved alpha into the buffer
-/// and broken the 3-channel diffmap stride on alpha inputs.)
-///
-/// Returns None on any decode failure (the caller keeps the encoded
-/// bytes from the last iteration, same as before).
-fn decode_jxl_to_linear(data: &[u8]) -> Option<Vec<f32>> {
+/// Borrow the original reference or retain a budgeted linear-sRGB conversion.
+fn metric_reference<'a>(
+    encoder: &VarDctEncoder,
+    linear_rgb: &'a [f32],
+) -> Result<(super::encoder::LinearSource<'a>, crate::budget::BudgetGuard)> {
+    let mut source = super::encoder::LinearSource::Borrowed(linear_rgb);
+    let guard = source
+        .prepare_metric_reference(encoder.color_encoding.as_ref(), encoder.budget.as_ref())?;
+    Ok((source, guard))
+}
+
+/// Decode color into interleaved linear sRGB, replicating grayscale to RGB.
+/// F32 selects storage only. Request linear transfer in the embedded primaries,
+/// then apply the shared source matrix for parametric profiles. ICC XYB output
+/// already uses the decoder's linear-sRGB fallback. Extra channels are omitted.
+/// Returns None on decode failure; the caller retains its existing fallback.
+fn decode_jxl_to_linear(
+    data: &[u8],
+    source_encoding: Option<&crate::ColorEncoding>,
+) -> Option<Vec<f32>> {
     use zenjxl_decoder::api::{
-        JxlDataFormat, JxlDecoder, JxlDecoderOptions, JxlOutputBuffer, JxlPixelFormat,
-        ProcessingResult, states,
+        JxlColorEncoding, JxlColorProfile, JxlDataFormat, JxlDecoder, JxlDecoderOptions,
+        JxlOutputBuffer, JxlPixelFormat, ProcessingResult, states,
     };
 
     let mut input: &[u8] = data;
@@ -284,6 +298,7 @@ fn decode_jxl_to_linear(data: &[u8]) -> Option<Vec<f32>> {
         return None;
     }
 
+    let source_is_parametric = matches!(dwi.embedded_color_profile(), JxlColorProfile::Simple(_));
     let cpf = dwi.current_pixel_format().clone();
     let fmt = JxlPixelFormat {
         color_type: cpf.color_type,
@@ -292,6 +307,14 @@ fn decode_jxl_to_linear(data: &[u8]) -> Option<Vec<f32>> {
     };
     dwi.set_pixel_format(fmt.clone());
     let n = fmt.color_type.samples_per_pixel();
+    // Keep the embedded primaries but explicitly request linear transfer.
+    // The pinned decoder has no CMS by default; requesting different primaries
+    // without one does not convert them. Apply our shared source matrix below.
+    let linear_profile = dwi
+        .embedded_color_profile()
+        .with_linear_tf()
+        .unwrap_or_else(|| JxlColorProfile::Simple(JxlColorEncoding::linear_srgb(n == 1)));
+    dwi.set_output_color_profile(linear_profile).ok()?;
 
     let mut pixels = vec![0f32; w * h * n];
     loop {
@@ -310,15 +333,29 @@ fn decode_jxl_to_linear(data: &[u8]) -> Option<Vec<f32>> {
         }
     }
 
-    if n == 1 {
+    let pixels = if n == 1 {
         // Grayscale: replicate to the 3-channel layout the diffmap expects.
         let mut rgb = Vec::with_capacity(w * h * 3);
         for &v in &pixels {
             rgb.extend_from_slice(&[v, v, v]);
         }
-        return Some(rgb);
+        rgb
+    } else {
+        pixels
+    };
+    let mut source = super::encoder::LinearSource::Owned(pixels);
+    // With an ICC XYB header the decoder's linear working space is already
+    // sRGB. Parametric headers instead retain their declared primaries.
+    let encoding = if source_is_parametric {
+        source_encoding
+    } else {
+        None
+    };
+    let _guard = source.prepare_metric_reference(encoding, None).ok()?;
+    match source {
+        super::encoder::LinearSource::Owned(pixels) => Some(pixels),
+        super::encoder::LinearSource::Borrowed(_) => unreachable!("owned decoder output"),
     }
-    Some(pixels)
 }
 
 #[cfg(test)]
@@ -332,5 +369,164 @@ mod tests {
         assert!((config.tolerance - 0.05).abs() < 0.001);
         assert_eq!(config.qf_min, 1);
         assert_eq!(config.qf_max, 255);
+    }
+}
+
+#[cfg(test)]
+mod color_domain_tests {
+    use super::*;
+    use crate::api::EncoderStrategy;
+    use crate::{ColorEncoding, LossyConfig};
+    mod pfm {
+        include!("../../tests/support/pfm.rs");
+    }
+
+    #[test]
+    fn rate_control_color_domain_matches_native_linear_srgb() {
+        let base = crate::test_helpers::output_dir("source-color-rate-domain");
+        std::fs::create_dir_all(&base).unwrap();
+        let root = (0..)
+            .find_map(|i| {
+                let p = base.join(format!("run-{i}"));
+                match std::fs::create_dir(&p) {
+                    Ok(()) => Some(p),
+                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => None,
+                    Err(e) => panic!("{e}"),
+                }
+            })
+            .unwrap();
+        let source = [0.5_f32, 0.2, 0.1];
+        let gray_source = [0.25_f32; 3];
+        let native_row = include_str!("color_matrices_v012.tsv")
+            .lines()
+            .find(|l| l.starts_with("p3-dci\t0.5\t"))
+            .unwrap();
+        let vector: Vec<f32> = native_row
+            .split('\t')
+            .skip(1)
+            .map(|v| v.parse().unwrap())
+            .collect();
+        let mut failures = Vec::new();
+        for (label, ce, expected) in [
+            ("srgb", ColorEncoding::srgb(), source.as_slice()),
+            (
+                "p3-dci",
+                ColorEncoding::from_cicp(11, 8, 0, true).unwrap(),
+                &vector[3..],
+            ),
+            ("gray", ColorEncoding::gray(), gray_source.as_slice()),
+            (
+                "p3-dci-icc",
+                ColorEncoding::from_cicp(11, 8, 0, true).unwrap(),
+                &vector[3..],
+            ),
+        ] {
+            let pixels = if label == "gray" {
+                gray_source.repeat(32 * 17)
+            } else {
+                source.repeat(32 * 17)
+            };
+            let out = root.join(label);
+            std::fs::create_dir(&out).unwrap();
+            std::fs::write(
+                out.join("input.f32"),
+                pixels
+                    .iter()
+                    .flat_map(|v| v.to_ne_bytes())
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap();
+            let mut encoder = VarDctEncoder::new(0.01);
+            encoder.profile = LossyConfig::new(0.01)
+                .with_effort(3)
+                .with_strategy(EncoderStrategy::Libjxl)
+                .resolved_profile();
+            encoder.effort = 3;
+            encoder.force_strategy = Some(0);
+            encoder.enable_gaborish = false;
+            encoder.epf_level_override = Some(0);
+            encoder.enable_patches = false;
+            encoder.is_grayscale = label == "gray";
+            if label == "p3-dci-icc" {
+                let line = include_str!("../headers/color_profiles_v012.tsv")
+                    .lines()
+                    .find(|l| l.starts_with("0\t"))
+                    .unwrap();
+                let hex = line.split_once('\t').unwrap().1;
+                encoder.icc_profile = Some(
+                    hex.as_bytes()
+                        .as_chunks::<2>()
+                        .0
+                        .iter()
+                        .map(|p| u8::from_str_radix(core::str::from_utf8(p).unwrap(), 16).unwrap())
+                        .collect(),
+                );
+            }
+            encoder.color_encoding = Some(ce);
+            encoder.source_bit_depth = Some((true, 32, 8));
+            let bytes = encoder.encode(32, 17, &pixels, None).unwrap().data;
+            std::fs::write(out.join("output.jxl"), &bytes).unwrap();
+            let decoded = decode_jxl_to_linear(&bytes, encoder.color_encoding.as_ref());
+            let native = std::process::Command::new(crate::test_helpers::djxl_path())
+                .arg(out.join("output.jxl"))
+                .arg(out.join("native.pfm"))
+                .args(["--num_threads=1", "--color_space=RGB_D65_SRG_Rel_Lin"])
+                .output()
+                .unwrap();
+            std::fs::write(out.join("native.log"), &native.stderr).unwrap();
+            assert!(native.status.success());
+            let observed = pfm::read_pfm_samples(&out.join("native.pfm"), (32, 17));
+            let observed = if observed.len() == 32 * 17 {
+                observed.into_iter().flat_map(|v| [v, v, v]).collect()
+            } else {
+                observed
+            };
+            let (reference, _guard) = metric_reference(&encoder, &pixels).unwrap();
+            std::fs::write(
+                out.join("reference-first.txt"),
+                format!("{:?}", &reference.slice()[..3]),
+            )
+            .unwrap();
+            for (kind, actual) in [
+                ("native", Some(observed.as_slice())),
+                ("decoder", decoded.as_deref()),
+                ("reference", Some(reference.slice())),
+            ] {
+                let Some(actual) = actual else {
+                    failures.push(format!("{label} {kind} missing"));
+                    continue;
+                };
+                assert_eq!(actual.len(), 32 * 17 * 3);
+                assert!(actual.iter().all(|v| v.is_finite()));
+                let error = actual
+                    .iter()
+                    .zip(expected.iter().cycle())
+                    .map(|(a, b)| (a - b).abs())
+                    .fold(0_f32, f32::max);
+                std::fs::write(
+                    out.join(format!("{kind}-first.txt")),
+                    format!("{:?} error{error}", &actual[..3]),
+                )
+                .unwrap();
+                if error > 0.002 {
+                    failures.push(format!(
+                        "{label} {kind} {:?} vs {expected:?}, error{error}",
+                        &actual[..3]
+                    ));
+                }
+            }
+        }
+        std::fs::write(root.join("failures.txt"), failures.join("\n")).unwrap();
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
+    #[test]
+    fn rate_control_color_reference_respects_budget() {
+        let original = [0.5_f32, 0.2, 0.1];
+        let mut encoder = VarDctEncoder::new(0.01);
+        encoder.color_encoding = Some(ColorEncoding::from_cicp(11, 8, 0, true).unwrap());
+        let budget = crate::budget::MemoryBudget::with_alloc_policy(1, true);
+        encoder.budget = Some(alloc::sync::Arc::clone(&budget));
+        assert!(metric_reference(&encoder, &original).is_err());
+        assert_eq!(budget.used(), 0);
     }
 }

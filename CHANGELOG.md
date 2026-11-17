@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- Honor non-D65 source whites before XYB and compare rate-control references
+  and reconstructions in linear sRGB, retaining the existing D65 matrix paths.
+
 - Preserve floating animation alpha at its selected native precision across
   frames, and use exact source visibility for small nonzero alpha.
 

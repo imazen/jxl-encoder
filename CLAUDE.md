@@ -1768,6 +1768,28 @@ misclassify that CLI limitation as an invalid stream or strip the ICC to hide it
 
 ## Known Bugs (ACTIVE)
 
+### 2026-11-17: non-D65 source conversion and CMYK animation observations
+
+H5 now has actual strict-mode before pixels. For linear P3/DCI source
+[0.5,0.2,0.1], primary Rust returns [0.5173168,0.20012106,0.09971436];
+pinned djxl requested linear sRGB differs from the unmodified native matrix
+control by 0.020037472 maximum. P3/D65 controls pass. The adaptation repair passes selected public/animation/prepared/metric paths,
+minimal features and unchanged library/lock/drift checks. Caller tracing also
+finds rate control comparing nonlinear/source-primary output with a linear
+reference; explicit linear transfer plus shared gamut conversion passes native
+sRGB/P3/grayscale/ICC controls. Final focused regions, five fault replays and strict workspace/focused lint
+pass; unexecuted error/admission branches remain explicit. [Exact scopes and failures](docs/SOURCE_COLOR_CONVERSION.md).
+H4 invalid-descriptor admission and nonneutral HDR qualification remain separate.
+
+A separate caller-selected CMYK ICC probe renders its still controls but
+animation emits zero extra channels. The primary renders without the required
+Black plane; pinned djxl fails the selected animations in all offered policies,
+both CMYK precisions and all three pass modes. The independent envelope parser
+observes num_extra_channels=0 with want_icc=1. H10 repair remains pending. The
+profile bytes and actual source/object/streams are retained under
+`cmyk-animation-before`; no physical CMYK fidelity is qualified by these probes.
+
+
 ### RESOLVED 2026-11-17: animation alpha precision and exact visibility
 
 Animation now codes floating alpha using one common representation selected

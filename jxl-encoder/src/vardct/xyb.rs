@@ -124,7 +124,8 @@ pub(crate) fn compute_primaries_to_srgb(
 
 /// Compute the primaries-to-sRGB matrix for a given color encoding, if needed.
 ///
-/// Returns `None` for sRGB (no transform needed). For `Primaries::Custom`
+/// Returns `None` for sRGB/D65 (no transform needed). Non-D65 sources
+/// include Bradford adaptation to the XYB transform's D65 reference white. For `Primaries::Custom`
 /// without a `custom_primaries` field, returns `None` to skip the matrix
 /// application — this is a defensive fallback only; validation happens
 /// upstream via [`validate_color_encoding`] which surfaces the
@@ -132,6 +133,32 @@ pub(crate) fn compute_primaries_to_srgb(
 pub(crate) fn primaries_to_srgb_matrix(
     ce: &crate::headers::color_encoding::ColorEncoding,
 ) -> Option<[[f32; 3]; 3]> {
+    use crate::headers::color_encoding::WhitePoint;
+    if ce.white_point != WhitePoint::D65 {
+        let white = match ce.white_point {
+            WhitePoint::D65 => unreachable!(),
+            WhitePoint::Dci => (0.314, 0.351),
+            WhitePoint::E => (1.0 / 3.0, 1.0 / 3.0),
+            WhitePoint::Custom => {
+                let wp = ce.custom_white_point.as_ref()?;
+                (wp.x, wp.y)
+            }
+        };
+        let chrom = match ce.primaries {
+            Primaries::Srgb => ((0.64, 0.33), (0.30, 0.60), (0.15, 0.06)),
+            Primaries::P3 => ((0.68, 0.32), (0.265, 0.69), (0.15, 0.06)),
+            Primaries::Bt2100 => ((0.708, 0.292), (0.170, 0.797), (0.131, 0.046)),
+            Primaries::Custom => {
+                let cp = ce.custom_primaries.as_ref()?;
+                (
+                    (cp.red.x, cp.red.y),
+                    (cp.green.x, cp.green.y),
+                    (cp.blue.x, cp.blue.y),
+                )
+            }
+        };
+        return Some(super::source_white::to_srgb(chrom, white));
+    }
     match ce.primaries {
         Primaries::P3 => Some(P3_TO_SRGB),
         Primaries::Bt2100 => Some(BT2020_TO_SRGB),
