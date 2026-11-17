@@ -1805,6 +1805,24 @@ only diagnostics; native/Rust rendering and encoder bytes are unchanged.
 `animation-parser-before.log` retains both failures; `animation-parser-after.log`
 passes the full parser suite. No encoder policy or strategy registry changes.
 
+### RESOLVED 2026-11-17: automatic animation crop reads a different saved slot
+
+A 64×32 white frame saved in slot two left the next white frame reading slot
+one: primary Rust and pinned djxl returned one white pixel. Both writers now
+retain a source-byte crop base only while it represents a replacement canvas
+saved in slot one; overwrite/composition/unsaved cases invalidate it, and an
+explicit different source uses a full replacement. No strategy gate changed.
+
+Selected default/minimal policy, writer, layout and entry controls fully render;
+source/history faults trigger independently. The existing H1/H11 run passes
+all other checks but fails an earlier lane-authored partial-crop expectation
+for nondefault sources (592 s, peak RSS 1.05 GiB). The corrected continuation
+preserves pixel/storage/dictionary checks and adds a real known-slot-one crop
+with a winning dictionary; it passes, as do focused strict lint and formatting
+(155 s, peak RSS 1.04 GiB). Earlier library and unchanged lock/drift baselines
+pass. [Actual evidence, selected regions and limits](docs/ANIMATION_STATE_CONTRACT.md).
+
+
 ### RESOLVED 2026-11-17: already-downsampled display level and extent validation
 
 The actual 32769×1/factor-eight header advertises 262152×8, but its wrapper

@@ -46,6 +46,22 @@ fn finish_animation_codestream(
 const REFERENCE_AFTER_COLOR_TRANSFORM: u8 = 1;
 const RESERVE_COLOR_SLOT_THREE: u8 = 2;
 
+/// Keep a source-byte canvas only while slot one stores that canvas.
+/// Automatic crops use slot one; a composed frame is not its addend bytes.
+fn advance_crop_reference<'a>(
+    previous: Option<&'a [u8]>,
+    frame: &AnimationFrame<'a>,
+) -> Option<&'a [u8]> {
+    let slot = frame.save_as_reference.unwrap_or(1);
+    if frame.reference_only {
+        if slot == 1 { None } else { previous }
+    } else if slot == 1 && matches!(frame.blend_mode, None | Some(BlendMode::Replace)) {
+        Some(frame.pixels)
+    } else {
+        None
+    }
+}
+
 /// Mark hidden layers that a later color blend reads before their slot is
 /// overwritten. Color blending requires post-transform references (Part 1 F.2).
 /// Reserve live color slot three across intervening internal patch dictionaries.
@@ -336,7 +352,7 @@ pub(crate) fn encode_animation_lossless(
         // `delta_from_identical`: chunk-1 POC of
         // `with_auto_delta_frames` (A1 audit "Animation" — Skip /
         // delta frame encoding). When the caller opts in AND this
-        // frame is byte-identical to the previous displayed frame,
+        // frame is byte-identical to the previous known reference canvas,
         // the existing same-pixel `Replace`-over-1×1 emit is replaced
         // with a zero-pixel `Add`-over-1×1 emit. Add of zero leaves
         // the canvas unchanged (the decoder lifts the 1×1 crop to
@@ -361,7 +377,10 @@ pub(crate) fn encode_animation_lossless(
         //     modular signed-i32 channels round-trip both branches of
         //     the subtraction.
         let mut delta_from_identical = false;
-        let crop = if frame.reference_only || frame.blend_mode.is_some() {
+        let crop = if frame.reference_only
+            || frame.blend_mode.is_some()
+            || frame.blend_source.is_some_and(|source| source != 1)
+        {
             None
         } else if let Some(prev) = prev_pixels {
             match detect_frame_crop(prev, frame.pixels, w, h, bpp, false) {
@@ -538,7 +557,7 @@ pub(crate) fn encode_animation_lossless(
         // canvas, not a delta against it) and for frame 0 (no
         // previous canvas).
         //
-        // Delta image is built by subtracting the previous *displayed*
+        // Delta image is built by subtracting the previous known reference
         // canvas from the current frame in interleaved-pixel space.
         // Signed deltas live in the modular signed-i32 channel; the
         // decoder's `Add` blend mode adds the float-lifted delta back
@@ -605,13 +624,7 @@ pub(crate) fn encode_animation_lossless(
                 .map_err(at_from)?;
         }
 
-        // ReferenceOnly frames are not the displayed canvas — keep
-        // `prev_pixels` pinned to the previous displayed frame so the
-        // next regular frame's crop-detection diffs against what the
-        // viewer actually sees.
-        if !frame.reference_only {
-            prev_pixels = Some(frame.pixels);
-        }
+        prev_pixels = advance_crop_reference(prev_pixels, frame);
     }
 
     finish_animation_codestream(
@@ -1030,16 +1043,16 @@ pub(crate) fn encode_animation_lossy(
         // Reference-only frames are written full-size into a save slot
         // — they ARE the canvas that subsequent regular frames composite
         // against, so cropping them would discard the area outside the
-        // diff bounding box. Skip crop detection entirely; the diff
-        // base for the NEXT regular frame stays pinned to the last
-        // *displayed* frame (we don't update `prev_pixels` after a
-        // reference-only frame, below).
+        // diff bounding box. Skip crop detection entirely. The source-byte
+        // diff base survives only while the known replacement canvas is
+        // stored in slot one; an overwrite invalidates it below. A normal
+        // zero-duration frame can update that working canvas too.
         // `delta_from_identical`: chunk-1 POC of
         // `with_auto_delta_frames` for the lossy animation path.
         // Mirrors the lossless path's identical-frame short-circuit
         // (see `encode_animation_lossless` for the rationale): when
         // the caller opts in AND frame N is byte-identical to the
-        // previous displayed frame, the existing same-pixel
+        // previous known reference canvas, the existing same-pixel
         // `Replace`-over-8×8 emit is replaced by a zero-pixel
         // `Add`-over-8×8 emit. All-zero VarDCT coefficients
         // dequantize to all-zero, IDCT to all-zero, and Add 0 to the
@@ -1056,7 +1069,10 @@ pub(crate) fn encode_animation_lossy(
         // reference frame, not the original pixels — that requires a
         // reconstruction shadow that chunk-2 does not yet wire.
         let mut delta_from_identical = false;
-        let crop = if frame.reference_only || frame.blend_mode.is_some() {
+        let crop = if frame.reference_only
+            || frame.blend_mode.is_some()
+            || frame.blend_source.is_some_and(|source| source != 1)
+        {
             None
         } else if let Some(prev) = prev_pixels {
             match detect_frame_crop(prev, frame.pixels, w, h, bpp, true) {
@@ -1238,13 +1254,7 @@ pub(crate) fn encode_animation_lossy(
         )
         .map_err(at_from)?;
 
-        // ReferenceOnly frames are not the displayed canvas — keep
-        // `prev_pixels` pinned to the previous displayed frame so the
-        // next regular frame's crop-detection diffs against what the
-        // viewer actually sees.
-        if !frame.reference_only {
-            prev_pixels = Some(frame.pixels);
-        }
+        prev_pixels = advance_crop_reference(prev_pixels, frame);
     }
 
     file_header.metadata.force_modular_32bit = enc

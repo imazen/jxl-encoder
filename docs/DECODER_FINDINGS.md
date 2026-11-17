@@ -102,6 +102,24 @@ and required precision remain open; they retain FAIL verdicts.
 
 ## jxl-oxide
 
+### Per-extra blend source field, 2026-11-17
+
+Pinned fork `08395e61` rejects an 8×8 RGB-plus-16-bit-alpha animation with
+NonZeroPadding when the main blend is Add and the alpha blend is full-canvas
+Replace. `jxl-frame/src/header.rs:158` uses the main blend mode when deciding
+whether to read the extra channel's source field. Part 1 F.7 requires the
+mode of that BlendingInfo instance. Both current primary jxl-rs 0.8.0 and
+pinned native v0.12 fully render the retained stream; the independent complete
+envelope/TOC walk accounts for every byte. Native output preserves white,
+white, then black, with full alpha. Stream SHA256 `d6e1ca264d5dc6b628c24be5f13a54261359089084c1e83275439552359c85c2`.
+
+Artifacts: `animation-composed-primary`, `animation-composed-native-reject`
+and `animation-composed-envelope.log` (the historical native directory name
+is not its verdict: native rendering passes). The crop/reference regression
+uses the independent parser for its structural checks. No dependency edit or
+external report; confirmed, not reported.
+
+
 The pinned fork 08395e61 reports IncompleteFrame on the retained 1x1 RGB8
 full-canvas Add stream
 `e2407eb29f58211f350a43699920cbce049040c5460244a49f5fcfc42b214a55`.

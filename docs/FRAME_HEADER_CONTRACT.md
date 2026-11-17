@@ -325,3 +325,11 @@ scopes, every ICC/patch combination, CMYK and animation alpha-setting forwarding
 remain distinct limits or queued work. Current raw-ICC runtime checks additionally
 require exact profile bytes and original-profile pixel semantics; they do not
 supply a general physical ICC/HDR color qualification.
+
+
+The subsequent [automatic-crop reference repair](ANIMATION_STATE_CONTRACT.md)
+invalidates cached source bytes after unknown/composed/overwritten canvases.
+An explicit nondefault source now uses a full replacement. The patch-policy
+fixture checks that fallback separately from a known-slot-one partial crop
+with a winning dictionary; storage-domain and dictionary-selection assertions
+remain active. Its original failed structural expectation is retained.

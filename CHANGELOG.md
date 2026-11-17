@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+- Keep automatic animation crops tied to a known replacement canvas in slot
+  one; invalidate that cache after overwrites, composed or unsaved frames,
+  and emit full replacements when an explicit source selects another slot.
+
 - Reject descending/equal nonzero animation clocks before encoding while
   preserving unset, hidden-normal and ReferenceOnly history semantics.
 

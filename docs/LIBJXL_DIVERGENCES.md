@@ -2804,3 +2804,10 @@ Remaining layout inventory is tracked separately in the progressive contract.
 | Site | Encoder | libjxl v0.12 / format | Status |
 |---|---|---|---|
 | Shared animation input validation | Nonzero clocks exceed previous positive-duration clocks; zero preserves history, zero-duration normal frames do not advance it, ReferenceOnly fields do not participate | Part 1 F.2 order rule; native public encoder/decoder accept and render the retained descending/equal controls | RESOLVED H12 with the normative guard. Isolated exact-source, default/minimal, both writer admission faults and 13/13 new order regions pass. No registry gate/value/metadata changes. [Contract](ANIMATION_CLOCK_CONTRACT.md). |
+
+
+## Issue 144 automatic animation crop reference validity
+
+| Site | Current choice | Reference / format | Status |
+|---|---|---|---|
+| Both animation writers, `advance_crop_reference` | Retain source bytes iff normal frame saves in slot one and blend is unset/Replace. ReferenceOnly slot-one writes clear the cache; other ReferenceOnly writes preserve it. Crop only if mode is unset and source is unset/one. | Part 1 F.2/F.7: cropped composition reads its signaled saved canvas. Actual before streams read a different canvas and return wrong pixels in primary Rust and native v0.12. | Shared correctness repair without new registry values or gate metadata. Selected default/minimal matrices, actual partial-crop positive controls and independent source/history faults pass; limits in [ANIMATION_STATE_CONTRACT.md](ANIMATION_STATE_CONTRACT.md). |

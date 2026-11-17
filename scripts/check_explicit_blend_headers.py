@@ -39,12 +39,18 @@ for row in json.loads(a.manifest.read_text()):
             break
     assert parser.br.pos==len(data)*8,'Every byte must belong to the parsed frame sequence'
     assert len(frames)==row.get('frames',3 if row['reference'] else 2),(row,len(frames))
-    last=frames[-1]['fields'];assert bool(last.get('frame.custom_size_or_origin',False))==row.get('partial',False),(row,last)
+    last=frames[-1]['fields']
+    if 'partial_area' in row:
+        assert last.get('frame.origin.x0',0)==last.get('frame.origin.y0',0)==0,(row,last)
+        partial=(last.get('frame.size.xsize',width)<width or last.get('frame.size.ysize',height)<height)
+        assert partial==row['partial_area'],(row,last)
+    else:
+        assert bool(last.get('frame.custom_size_or_origin',False))==row.get('partial',False),(row,last)
     if row['reference']:
         hidden=frames[row.get('hidden_index',1)]['fields']
         assert hidden['frame.frame_type']=='kReferenceOnly',(row,hidden)
         assert hidden['frame.save_as_reference']==row.get('slot',2)
-        assert bool(hidden['frame.save_before_color_transform'])==(row['blend']=='Replace' and not row.get('partial',False)),(row,hidden)
+        assert bool(hidden['frame.save_before_color_transform'])==row.get('source_before_ct', row['blend']=='Replace' and not row.get('partial',False)),(row,hidden)
     if row.get('dictionary',False):
         dictionary=frames[row.get('dictionary_index',2)]['fields']
         assert dictionary['frame.frame_type']=='kReferenceOnly'

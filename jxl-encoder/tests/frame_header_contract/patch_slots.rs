@@ -145,11 +145,18 @@ fn run_patch_policies(intervening: bool) {
             }
             let zero = vec![0_u8; target.len()];
             let mut baseline: Option<[Vec<f32>; 2]> = None;
-            for (label, patches, slot, winner) in [
+            // Unknown nondefault-source canvases require full replacements.
+            // Retain a real partial-crop/dictionary winner with a known slot one.
+            let mut cases = vec![
                 ("control", true, 2, true),
                 ("baseline", false, 3, false),
                 ("protected", true, 3, false),
-            ] {
+            ];
+            if partial {
+                cases.push(("known-one", true, 1, true));
+            }
+            for (label, patches, slot, winner) in cases {
+                let known_one = label == "known-one";
                 let out = root.join(format!("{policy}-partial{partial}-{label}"));
                 std::fs::create_dir(&out).unwrap();
                 let last = AnimationFrame::new(&target, 20).with_blend_source(slot);
@@ -158,7 +165,15 @@ fn run_patch_policies(intervening: bool) {
                 } else {
                     last.with_blend_mode(BlendMode::Add)
                 };
-                let frames = if intervening {
+                let frames = if known_one {
+                    [
+                        AnimationFrame::new(&zero, 0)
+                            .with_reference_only(true)
+                            .with_save_as_reference(2),
+                        AnimationFrame::new(&zero, 10).with_blend_mode(BlendMode::Replace),
+                        last,
+                    ]
+                } else if intervening {
                     [
                         AnimationFrame::new(&zero, 0)
                             .with_reference_only(true)
@@ -195,7 +210,7 @@ fn run_patch_policies(intervening: bool) {
                 let path = out.join("output.jxl");
                 std::fs::write(&path, &bytes).unwrap();
                 let manifest = out.join("streams.json");
-                std::fs::write(&manifest,serde_json::to_vec(&vec![serde_json::json!({"path":path,"reference":true,"slot":slot,"frames":if winner{4}else{3},"dictionary":winner,"blend":if partial{"Replace"}else{"Add"},"partial":partial,"hidden_index":if intervening{0}else{1},"dictionary_index":if intervening{1}else{2}})]).unwrap()).unwrap();
+                std::fs::write(&manifest,serde_json::to_vec(&vec![serde_json::json!({"path":path,"reference":true,"slot":if known_one{2}else{slot},"frames":if winner{4}else{3},"dictionary":winner,"blend":if partial{"Replace"}else{"Add"},"partial":known_one,"source_before_ct":known_one,"hidden_index":if intervening || known_one{0}else{1},"dictionary_index":if intervening{1}else{2}})]).unwrap()).unwrap();
                 let script = Path::new(env!("CARGO_MANIFEST_DIR"))
                     .parent()
                     .unwrap()

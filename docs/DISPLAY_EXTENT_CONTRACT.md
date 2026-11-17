@@ -84,7 +84,7 @@ just resampled-display-regions <llvm-bin> <new-report> <passing-archives>...
 Canonicalized RGB8 input agrees byte-for-byte with explicit Gray8 input and retains Level 10 in default/minimal builds, with complete rendering in both decoders. The selected geometry grid does not render a 2^28-pixel image, test every
 precision/layout combination, or execute the 32-bit working-buffer refusal
 branch locally. Absolute header boundaries are header-only checks. Cumulative
-zero-duration frame area and animation clock order are separate open findings.
+zero-duration frame area remains open; [animation clock order](ANIMATION_CLOCK_CONTRACT.md) has its own repaired contract.
 
 Final validation preserves the full library baseline and all normal/strict byte
 locks and drift assertions. `resampled-final.log` retains the failed strict-lint
