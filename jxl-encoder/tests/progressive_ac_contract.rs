@@ -425,24 +425,27 @@ fn render_animation(
     height: usize,
     layout: PixelLayout,
 ) -> [Vec<Vec<f32>>; 2] {
-    let primary = decoded_extras::decode_current_frames(bytes, label);
-    assert_eq!(primary.len(), 2);
-    let primary: Vec<_> = primary
-        .into_iter()
-        .map(|(mut color, extras)| {
-            assert_eq!(
-                color.len(),
-                width * height * if layout.is_grayscale() { 1 } else { 3 }
-            );
-            assert_eq!(extras.len(), usize::from(layout.has_alpha()));
-            for plane in extras {
-                assert_eq!(plane.len(), width * height);
-                color.extend(plane);
-            }
-            assert!(color.iter().all(|v| v.is_finite()));
-            color
-        })
-        .collect();
+    let primary = std::panic::catch_unwind(|| {
+        let primary = decoded_extras::decode_current_frames(bytes, label);
+        assert_eq!(primary.len(), 2);
+        let primary: Vec<_> = primary
+            .into_iter()
+            .map(|(mut color, extras)| {
+                assert_eq!(
+                    color.len(),
+                    width * height * if layout.is_grayscale() { 1 } else { 3 }
+                );
+                assert_eq!(extras.len(), usize::from(layout.has_alpha()));
+                for plane in extras {
+                    assert_eq!(plane.len(), width * height);
+                    color.extend(plane);
+                }
+                assert!(color.iter().all(|v| v.is_finite()));
+                color
+            })
+            .collect();
+        primary
+    });
     let input = out.join(format!("{label}.jxl"));
     std::fs::write(&input, bytes).unwrap();
     let output = std::process::Command::new(jxl_encoder::test_helpers::djxl_path())
@@ -457,6 +460,7 @@ fn render_animation(
         .unwrap();
     std::fs::write(out.join(format!("{label}.log")), &output.stderr).unwrap();
     assert!(output.status.success(), "{label}: animation djxl rendering");
+    let primary = primary.expect("primary animation decoder rendering");
     let mut paths: Vec<_> = std::fs::read_dir(out)
         .unwrap()
         .map(|e| e.unwrap().path())
@@ -815,6 +819,404 @@ fn progressive_producer_options_preserve_final_pixels() {
                     entry: "request",
                 },
             );
+        }
+    }
+}
+
+#[test]
+fn progressive_multi_dc_groups_and_already_downsampled_preserve_final_pixels() {
+    use jxl_encoder::EncoderMode;
+    let root = directory();
+    let fixture = image::load_from_memory(include_bytes!("images/frymire.png"))
+        .unwrap()
+        .to_rgb8();
+    for (width, height, factor) in [(18433, 9, 1), (259, 133, 2)] {
+        let pixels: Vec<u8> = (0..height)
+            .flat_map(|y| {
+                let fixture = &fixture;
+                (0..width).flat_map(move |x| {
+                    fixture
+                        .get_pixel(x as u32 % fixture.width(), y as u32 % fixture.height())
+                        .0
+                })
+            })
+            .collect();
+        for strategy in [EncoderStrategy::Libjxl, EncoderStrategy::Zenjxl] {
+            for mode in [EncoderMode::Reference, EncoderMode::Experimental] {
+                let out = root.join(format!(
+                    "{strategy:?}-{mode:?}-{width}x{height}-factor{factor}"
+                ));
+                std::fs::create_dir(&out).unwrap();
+                std::fs::write(out.join("input.rgb8"), &pixels).unwrap();
+                let mut baseline: Option<[Vec<u32>; 2]> = None;
+                for progressive in [
+                    ProgressiveMode::Single,
+                    ProgressiveMode::QuantizedAcFullAc,
+                    ProgressiveMode::DcVlfLfAc,
+                ] {
+                    let config = LossyConfig::new(1.0)
+                        .with_effort(4)
+                        .with_threads(1)
+                        .with_strategy(strategy.clone())
+                        .with_mode(mode)
+                        .with_force_strategy(Some(3))
+                        .with_progressive(progressive)
+                        .with_resampling(factor)
+                        .with_already_downsampled(factor > 1);
+                    let bytes = config
+                        .encode(&pixels, width as u32, height as u32, PixelLayout::Rgb8)
+                        .unwrap();
+                    let image = jxl_oxide::JxlImage::builder()
+                        .read(std::io::Cursor::new(&bytes))
+                        .unwrap();
+                    if factor == 1 {
+                        assert_eq!(image.frame(0).unwrap().header().num_lf_groups(), 10);
+                    }
+                    let actual = render(
+                        &out,
+                        &bytes,
+                        &format!("{progressive:?}"),
+                        width * factor as usize,
+                        height * factor as usize,
+                        PixelLayout::Rgb8,
+                    );
+                    if let Some(expected) = &baseline {
+                        for (a, b) in actual.iter().zip(expected) {
+                            assert_eq!(
+                                a.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                                *b,
+                                "{} {progressive:?}",
+                                out.display()
+                            );
+                        }
+                    } else {
+                        baseline = Some(
+                            actual.map(|v| v.into_iter().map(f32::to_bits).collect::<Vec<_>>()),
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(feature = "corpus-tests")]
+#[test]
+fn progressive_corpus_patches_preserve_final_pixels() {
+    use jxl_encoder::EncoderMode;
+    let root = directory();
+    let input = jxl_encoder::test_helpers::corpus_dir().join("gb82-sc/imac_g3.png");
+    let source = std::fs::read(&input).expect("caller-selected imac_g3 PNG is required");
+    std::fs::write(root.join("source.png"), &source).unwrap();
+    let image = image::load_from_memory(&source).unwrap().to_rgb8();
+    let (width, height) = (image.width() as usize, image.height() as usize);
+    for strategy in [EncoderStrategy::Libjxl, EncoderStrategy::Zenjxl] {
+        for mode in [EncoderMode::Reference, EncoderMode::Experimental] {
+            let out = root.join(format!("{strategy:?}-{mode:?}"));
+            std::fs::create_dir(&out).unwrap();
+            let mut baseline: Option<[Vec<u32>; 2]> = None;
+            for progressive in [
+                ProgressiveMode::Single,
+                ProgressiveMode::QuantizedAcFullAc,
+                ProgressiveMode::DcVlfLfAc,
+            ] {
+                let config = LossyConfig::new(1.0)
+                    .with_effort(7)
+                    .with_threads(1)
+                    .with_strategy(strategy.clone())
+                    .with_mode(mode)
+                    .with_patches(true)
+                    .with_force_strategy(Some(3))
+                    .with_progressive(progressive);
+                let bytes = config
+                    .encode(
+                        image.as_raw(),
+                        width as u32,
+                        height as u32,
+                        PixelLayout::Rgb8,
+                    )
+                    .unwrap();
+                let decoded = jxl_oxide::JxlImage::builder()
+                    .read(std::io::Cursor::new(&bytes))
+                    .unwrap();
+                assert_eq!(
+                    decoded.frame(0).unwrap().header().frame_type as u8,
+                    2,
+                    "actual winning patch reference required"
+                );
+                let actual = render(
+                    &out,
+                    &bytes,
+                    &format!("{progressive:?}"),
+                    width,
+                    height,
+                    PixelLayout::Rgb8,
+                );
+                if let Some(expected) = &baseline {
+                    for (a, b) in actual.iter().zip(expected) {
+                        assert_eq!(
+                            a.iter().map(|v| v.to_bits()).collect::<Vec<_>>().as_slice(),
+                            b.as_slice(),
+                            "{} {progressive:?}",
+                            out.display()
+                        );
+                    }
+                } else {
+                    baseline =
+                        Some(actual.map(|v| v.into_iter().map(f32::to_bits).collect::<Vec<_>>()));
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn progressive_reference_only_and_cropped_animation_frames() {
+    use jxl_encoder::{AnimationFrame, AnimationParams};
+    let root = directory();
+    let fixture = image::load_from_memory(include_bytes!("images/frymire.png"))
+        .unwrap()
+        .to_rgb8();
+    let mut failures = Vec::new();
+    for (policy, strategy, mode) in encoder_policies::policies() {
+        for (width, height) in [(64, 64), (259, 133)] {
+            let rgb: Vec<u8> = (0..height)
+                .flat_map(|y| {
+                    let fixture = &fixture;
+                    (0..width).flat_map(move |x| {
+                        fixture
+                            .get_pixel(x as u32 % fixture.width(), y as u32 % fixture.height())
+                            .0
+                    })
+                })
+                .collect();
+            let mut second = rgb.clone();
+            for y in 16..32 {
+                for x in 16..32 {
+                    second[(y * width + x) * 3] ^= 0x7f;
+                }
+            }
+            for layout in [
+                PixelLayout::Rgb8,
+                PixelLayout::Rgba16,
+                PixelLayout::GrayAlpha8,
+            ] {
+                for associated in [false, true] {
+                    if associated && !layout.has_alpha() {
+                        continue;
+                    }
+                    let first = typed_pixels(&rgb, layout);
+                    let second = typed_pixels(&second, layout);
+                    let first = if associated {
+                        associated_pixels(&first, layout)
+                    } else {
+                        first
+                    };
+                    let second = if associated {
+                        associated_pixels(&second, layout)
+                    } else {
+                        second
+                    };
+                    let frames = [
+                        AnimationFrame::new(&second, 0)
+                            .with_reference_only(true)
+                            .with_save_as_reference(2),
+                        AnimationFrame::new(&first, 10),
+                        AnimationFrame::new(&first, 0)
+                            .with_reference_only(true)
+                            .with_save_as_reference(2),
+                        AnimationFrame::new(&second, 20),
+                    ];
+                    for entry in ["legacy", "request"] {
+                        let out = root.join(format!(
+                        "{policy}-{mode:?}-{width}x{height}-{layout:?}-{entry}-assoc{associated}"
+                    ));
+                        std::fs::create_dir(&out).unwrap();
+                        std::fs::write(out.join("input0.bin"), &first).unwrap();
+                        std::fs::write(out.join("input1.bin"), &second).unwrap();
+                        let mut baseline: Option<[Vec<Vec<f32>>; 2]> = None;
+                        for progressive in [
+                            ProgressiveMode::Single,
+                            ProgressiveMode::QuantizedAcFullAc,
+                            ProgressiveMode::DcVlfLfAc,
+                        ] {
+                            let config = LossyConfig::new(1.0)
+                                .with_effort(4)
+                                .with_threads(1)
+                                .with_strategy(strategy.clone())
+                                .with_mode(mode)
+                                .with_force_strategy(Some(3))
+                                .with_progressive(progressive)
+                                .with_auto_delta_frames(false)
+                                .with_patches(false);
+                            let params = AnimationParams {
+                                premultiplied_alpha: associated,
+                                ..Default::default()
+                            };
+                            let bytes = if entry == "legacy" {
+                                config.encode_animation(
+                                    width as u32,
+                                    height as u32,
+                                    layout,
+                                    &params,
+                                    &frames,
+                                )
+                            } else {
+                                config
+                                    .encode_request(width as u32, height as u32, layout)
+                                    .encode_animation(&params, &frames)
+                            }
+                            .unwrap();
+                            let actual = std::panic::catch_unwind(|| {
+                                render_animation(
+                                    &out,
+                                    &format!("{progressive:?}"),
+                                    &bytes,
+                                    width,
+                                    height,
+                                    layout,
+                                )
+                            });
+                            match actual {
+                                Ok(actual) => {
+                                    let image = jxl_oxide::JxlImage::builder()
+                                        .read(std::io::Cursor::new(&bytes))
+                                        .unwrap();
+                                    for index in [0, 2] {
+                                        let header = image.frame(index).unwrap().header();
+                                        assert_eq!(header.frame_type as u8, 2);
+                                        assert_eq!(header.passes.num_passes, 1);
+                                    }
+                                    let wanted = match progressive {
+                                        ProgressiveMode::Single => 1,
+                                        ProgressiveMode::QuantizedAcFullAc => 2,
+                                        ProgressiveMode::DcVlfLfAc => 3,
+                                    };
+                                    for index in [1, 3] {
+                                        assert_eq!(
+                                            image.frame(index).unwrap().header().passes.num_passes,
+                                            wanted,
+                                            "regular frame must restore requested schedule"
+                                        );
+                                    }
+                                    let crop = image.frame(3).unwrap().header();
+                                    assert!(
+                                        crop.width < width as u32 || crop.height < height as u32,
+                                        "actual crop required"
+                                    );
+                                    if let Some(expected) = &baseline {
+                                        for (a, b) in actual.iter().zip(expected) {
+                                            for (a, b) in a.iter().zip(b) {
+                                                assert_eq!(
+                                                    a.iter()
+                                                        .map(|v| v.to_bits())
+                                                        .collect::<Vec<_>>(),
+                                                    b.iter()
+                                                        .map(|v| v.to_bits())
+                                                        .collect::<Vec<_>>(),
+                                                    "{} {progressive:?}",
+                                                    out.display()
+                                                );
+                                            }
+                                        }
+                                    } else {
+                                        baseline = Some(actual);
+                                    }
+                                }
+                                Err(_) => failures.push(format!(
+                                    "{} {progressive:?} failed rendering",
+                                    out.display()
+                                )),
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[cfg(all(feature = "rate-control", feature = "__pre_quantized"))]
+#[test]
+fn progressive_rate_control_and_region_precompute_preserve_final_pixels() {
+    use jxl_encoder::__pre_quantized::VarDctEncoder;
+    use jxl_encoder::vardct::RateControlConfig;
+    use jxl_encoder::{Buffering, EncoderMode};
+    let root = directory();
+    let fixture = image::load_from_memory(include_bytes!("images/frymire.png"))
+        .unwrap()
+        .to_rgb8();
+    for (width, height) in [(64, 64), (18433, 9)] {
+        let pixels: Vec<u8> = (0..height)
+            .flat_map(|y| {
+                let fixture = &fixture;
+                (0..width).flat_map(move |x| {
+                    fixture
+                        .get_pixel(x as u32 % fixture.width(), y as u32 % fixture.height())
+                        .0
+                })
+            })
+            .collect();
+        let linear: Vec<f32> = pixels.iter().map(|v| f32::from(*v) / 255.0).collect();
+        for mode in [EncoderMode::Reference, EncoderMode::Experimental] {
+            for buffering in [
+                Buffering::FullBuffered,
+                Buffering::Threshold2048,
+                Buffering::BufferedOutput,
+                Buffering::FullStreaming,
+            ] {
+                let out = root.join(format!("{width}x{height}-{mode:?}-{buffering:?}"));
+                std::fs::create_dir(&out).unwrap();
+                std::fs::write(out.join("input.rgb8"), &pixels).unwrap();
+                let mut encoder = VarDctEncoder::new(1.0);
+                // The direct engine exposes its default policy, not a named-strategy setter.
+                encoder.profile = LossyConfig::new(1.0).with_effort(4).resolved_profile();
+                encoder.effort = 4;
+                encoder.encoder_mode = mode;
+                encoder.force_strategy = Some(3);
+                encoder.enable_patches = false;
+                encoder.buffering = buffering;
+                let control = RateControlConfig {
+                    max_iterations: 1,
+                    ..Default::default()
+                };
+                let mut baseline: Option<([Vec<u32>; 2], usize)> = None;
+                for (progressive, wanted) in [
+                    (ProgressiveMode::Single, 1),
+                    (ProgressiveMode::QuantizedAcFullAc, 2),
+                    (ProgressiveMode::DcVlfLfAc, 3),
+                ] {
+                    encoder.progressive = progressive;
+                    let (bytes, iterations) = encoder
+                        .encode_with_rate_control_config(width, height, &linear, &control)
+                        .unwrap();
+                    std::fs::write(
+                        out.join(format!("{progressive:?}.iterations")),
+                        format!("{iterations}\n"),
+                    )
+                    .unwrap();
+                    let image = jxl_oxide::JxlImage::builder()
+                        .read(std::io::Cursor::new(&bytes))
+                        .unwrap();
+                    assert_eq!(image.frame(0).unwrap().header().passes.num_passes, wanted);
+                    let actual = render(
+                        &out,
+                        &bytes,
+                        &format!("{progressive:?}"),
+                        width,
+                        height,
+                        PixelLayout::Rgb8,
+                    )
+                    .map(|v| v.into_iter().map(f32::to_bits).collect::<Vec<_>>());
+                    if let Some((expected, expected_iterations)) = &baseline {
+                        assert_eq!(&actual, expected, "{} {progressive:?}", out.display());
+                        assert_eq!(iterations, *expected_iterations);
+                    } else {
+                        baseline = Some((actual, iterations));
+                    }
+                }
+            }
         }
     }
 }

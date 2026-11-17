@@ -2728,3 +2728,18 @@ public entries at both sizes and efforts 1/2. Final colors remain exact per
 decoder relative to Single; all 340 observed Single hashes and existing byte
 locks remain unchanged. Library and broad strict lint pass. Further V1 caller
 checks remain separate.
+
+
+### Issue 144: ReferenceOnly effective pass schedule (I144-V1-reference, resolved)
+
+Part 1 F.2 omits Passes for ReferenceOnly; native v0.12 header bytes are identical
+for requested counts 1/2/3. The animation encoder previously retained the caller's
+progressive payload despite that implicit one-pass header. Both decoders reject
+actual before streams. The per-frame policy now uses Single exactly when
+`frame.reference_only`, otherwise the requested mode. This precedes all frame
+helpers so token sections and modular stream numbers agree. No named strategy
+or registry value changes. Full selected policy/layout/size/entry and associated
+controls, minimal build, both original-request/forget-regular mutations, library
+baseline, unchanged locks and strict feature/workspace lint pass. The changed
+schedule window covers 3/3 regions; all 204 observed Single hashes are unchanged.
+Remaining layout inventory is tracked separately in the progressive contract.

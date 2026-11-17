@@ -1766,6 +1766,36 @@ misclassify that CLI limitation as an invalid stream or strip the ICC to hide it
 
 ## Known Bugs (ACTIVE)
 
+### 2026-11-17: optional rate-control CLI private encoder import
+
+`cargo check -p jxl-encoder-cli --features rate-control` fails E0603 at the
+private `vardct::VarDctEncoder` import, before runtime. The before log is
+`rate-control-cli-before.log` (rc101, 4 seconds; peak RSS 0.64 GiB, minimum
+available 21,213 MiB). The candidate consumes the existing prepared-encoder
+export and enables that existing feature in the CLI feature closure. No new
+public API or runtime policy is added; feature/runtime validation is pending.
+
+
+### RESOLVED 2026-11-17: progressive ReferenceOnly animation payloads
+
+The new real-image animation sequence places reference-only frames before and
+between displayed frames and requires a final cropped frame. Progressive
+requests fail in both primary Rust (`NonZeroPadding`) and pinned djxl before
+repair; Single controls render. Retained before PID 2069907, ELF SHA256
+`cb8c7328ddd3a583eec299e7782de4e8f7626afe14630a7a65ea31a45d3de29e`,
+exit 101. Unmodified v0.12 header controls confirm that ReferenceOnly header
+bytes ignore requested counts 1/2/3; the implicit count is one. The candidate
+selects Single before each reference frame and restores the request for each
+displayed frame, including modular stream-count planning. Full selected policy,
+layout, size, entry and associated-alpha controls pass, as do minimal controls,
+both fault replays, the library baseline, unchanged locks and strict expanded
+feature/workspace lint. All 204 observed Single control streams retain their
+before hashes. The changed schedule window covers 3/3 LLVM regions.
+`progressive-reference-final-baseline.log`: rc0, 543 seconds, peak RSS 1.68 GiB,
+minimum available 20,024 MiB. Float-animation inventory remains under checking;
+no all-layout or whole-encoder coverage claim is made.
+
+
 ### RESOLVED 2026-11-17: static entropy discarded explicit progressive schedules
 
 The low-effort dispatch regression renders every selected stream, then checks

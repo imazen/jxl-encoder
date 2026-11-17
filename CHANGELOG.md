@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- Encode ReferenceOnly animation frames with their implicit single pass and
+  restore the requested progressive schedule for each displayed frame.
+
 - Route explicit progressive requests through the multi-pass writer when
   low-effort static entropy can represent only a single pass.
 

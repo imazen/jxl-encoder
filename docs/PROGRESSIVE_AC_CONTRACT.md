@@ -124,10 +124,12 @@ its exact mutated object, profile, source and nonzero verdict remain in
 `progressive-ac-regions.json` compares exact function bodies across four
 passing retained objects before unioning their LLVM code regions. The shared
 rectangular counter covers 35/35 regions, the existing quantizer delegate
-20/20 and the coefficient splitter 39/39. The tokenizer covers 269/281;
-the twelve remaining regions are its optional `JXL_TOKEN_FILL_STATS` stderr
-diagnostic loop. A separate enabled-diagnostic run passes and awaits its
-combined export. These numbers describe only the selected functions, not
+20/20 and the coefficient splitter 39/39. The final checksum-verified union also includes the enabled
+`JXL_TOKEN_FILL_STATS` diagnostic run: the tokenizer covers 281/281 regions.
+The changed static representability predicate covers 15/15 regions and the
+per-frame ReferenceOnly schedule selection covers 3/3. The complete extraction
+is `progressive-ac-final-region-report` (rc0, 4 seconds; peak RSS 0.21 GiB,
+minimum available 21,592 MiB). These numbers describe only the selected functions, not
 encoder completeness or all possible inputs.
 
 Producer-option controls pass selected e1/e2/e7/e8, explicit loop, LF-frame,
@@ -160,9 +162,37 @@ retained binary SHA256 is
 `f3239f0bc893b76f5307d17f298027c6624a5141d1a7a7844c4d1df49c8b0c18`.
 `progressive-ac-cmyk-first.log` passes (24 seconds, peak RSS 1.01 GiB,
 minimum available 20,732 MiB). Physical CMYK interpretation remains H10.
-Already-downsampled output,
-winning patches and truly sectioned multi-DC-group buffering remain additional
-caller checks. V1 remains open while these paths are resolved.
+Already-downsampled output and an actual ten-DC-group image now preserve final
+samples. The required corpus check observes a winning patch reference on the
+real imac_g3 source before comparing final pixels in strict/Zen and both modes.
+`progressive-ac-specialized.log` passes those controls and the original static
+fault replay (rc0, 233 seconds; peak RSS 1.06 GiB, minimum available 20,669 MiB).
+
+The rate-control direct engine also passes all four buffering policies, both
+modes, single/ten-DC-group inputs and every pass mode, with equal final samples
+and iteration counts relative to Single. Its actual default engine policy is
+used; the direct engine has no named-strategy setter. The rate-control CLI
+passes both progressive spellings at both selected sizes after repairing its
+private encoder import through the existing internal export. The source
+before feature build fails E0603; the repair adds no public API or runtime
+policy. `progressive-ac-rate-callers.log`: rc0, 54 seconds, peak RSS 1.08 GiB,
+minimum available 20,312 MiB.
+
+The ordinary pixel entry's buffering setter controls do not themselves prove
+per-region precomputation; the source routing is in rate-control preparation.
+The retained rate-control profiles observe both whole-image and per-region fill
+wrappers (11/11 regions each). Their shared preparation has 84/102 observed
+regions: allocation/step failures, the legacy environment override, AlwaysOff
+and Auto pixel-loss branches remain unexercised by this selected caller grid.
+The rate controller has 85/99: encode/decode/scorer errors, HDR intensity,
+non-improving best-result, early convergence and its unreachable final fallback
+remain outside this grid. These supporting routines were not repaired by V1;
+these observations establish caller reach, not their complete qualification.
+
+V1 remains open while the accepted animation-layout inventory is checked.
+Older notes asserting that float animation is unsupported are not sufficient
+input-admission evidence. GPU execution has not been measured; external
+prequantized inputs share the tested existing CPU emission seam.
 
 
 ## Reference-only frame schedule interaction
@@ -184,11 +214,16 @@ Reproduce with `just reference-progressive-native-oracle <v012-source>
 <v012-build> <new-executable>`. The successful component log and executable
 identities are retained in `native-reference-and-color-controls`.
 
-The current local candidate selects Single before each reference-only frame's
+The repair selects Single before each reference-only frame's
 helpers and restores the request for each regular frame. This also makes
 modular stream numbering use the effective count. Its full selected policy,
 layout, size and animation-entry matrix passes (first-fix log rc0, 99 seconds;
 peak RSS 1.06 GiB, minimum available 20,679 MiB). Separate assertions that
 regular frames restore two/three passes pass in `progressive-ac-reference-regular-fields`.
-Minimal, mutation and broad gates remain in progress; this section does not
-claim the candidate has landed or close the wider V1 audit.
+Minimal controls and both requested-reference/forget-regular fault replays
+pass. The associated-alpha matrix, library baseline, unchanged locks and strict
+expanded feature/workspace lint pass in `progressive-reference-final-baseline.log`
+(rc0, 543 seconds; peak RSS 1.68 GiB, minimum available 20,024 MiB). All 204
+observed Single control hashes remain unchanged. The changed schedule window
+covers 3/3 code regions. These are selected function and caller observations;
+the wider accepted-layout inventory remains open.

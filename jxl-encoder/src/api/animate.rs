@@ -906,6 +906,15 @@ pub(crate) fn encode_animation_lossy(
 
     for (i, frame) in frames.iter().enumerate() {
         crate::error::check_stop(stop).map_err(at_from)?;
+        // ReferenceOnly omits Passes and implies exactly one AC pass.
+        // Resolve before any frame helpers so modular stream numbering and
+        // coefficient/section planning share the effective frame schedule.
+        // Reset regular frames explicitly after an intervening reference.
+        enc.progressive = if frame.reference_only {
+            crate::api::ProgressiveMode::Single
+        } else {
+            cfg.progressive
+        };
         // Reference-only frames are written full-size into a save slot
         // — they ARE the canvas that subsequent regular frames composite
         // against, so cropping them would discard the area outside the
