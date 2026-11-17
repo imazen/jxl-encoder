@@ -1796,7 +1796,7 @@ entries. The isolated main-only library and unchanged normal/strict/drift
 checks pass. The unchecked replay also passes, with an executing arithmetic
 marker verifying disabled overflow checks. No expectation or ignore changes.
 [Admission contract, route scope and evidence](docs/SQUEEZE_RCT_ADMISSION.md).
-The separate channel-count and anisotropic-group defects remain open.
+The separate channel-count and anisotropic-group repair is recorded below.
 
 ### 2026-11-17: squeeze field-vector Rust 1.100 lint
 
@@ -1807,7 +1807,7 @@ do both field-vector tests (`squeeze-current-rust1100-lint-2.log`, rc0,
 219 seconds; run-heavy peak RSS 1.68 GiB, minimum available 20,081 MiB).
 This is a test-lint repair, not a pixel change or a passing CI claim.
 
-### 2026-11-17: squeeze count and anisotropic group repair (issue 144)
+### RESOLVED 2026-11-17: squeeze count and anisotropic group repair (issue 144)
 
 Before repair, explicit count twenty panics and tall/transposed squeeze streams
 fail rendering. The shared serializer now validates explicit fields before

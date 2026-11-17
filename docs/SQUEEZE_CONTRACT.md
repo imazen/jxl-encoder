@@ -180,3 +180,36 @@ no-default-features library check passes. Matching Rust 1.100 strict workspace
 all-target and focused expert Clippy plus field-vector tests also pass. The
 first local matching-compiler attempt failed on incomplete extracted dependency
 sources; the isolated Cargo home leaves the shared cache unchanged.
+
+## Final selected region and caller record
+
+The exact-object reports in `squeeze-current-final-selected-coverage` and the
+separate patch/no-RCT/axis/tall reports have no LLVM mapping diagnostics.
+`scope-union.json` uses matching production source bodies and records the
+separate counters; it never merges unrelated historical executables.
+
+| Selected function | Executed regions | Unexecuted regions |
+|---|---:|---|
+| Explicit descriptor writer | 88/111 | 23 fallible bit-writer error returns |
+| Default descriptor adapter | 11/11 | None |
+| Lossless default admission | 19/19 | None |
+| Implicit dimension admission | 34/34 | None |
+| Shared default builder | 77/77 | None |
+| LF lossy default builder | 68/68 | None |
+| Group schedule admission | 94/95 | Metadata allocation refusal |
+| Ordered geometry step | 39/39 | None |
+| Remaining-group validity | 28/28 | None |
+
+Every one of the ten default-adapter call sites is observed: simple SG
+Huffman/ANS with/without RCT, learned SG with/without RCT, simple MG with/without
+RCT, and learned MG with/without RCT. The earlier library-only profile missed
+simple writers; the separate actual patch/no-RCT/tall executions fill those
+sites. Caller hits establish dispatch execution; sample assertions and native
+component controls establish the selected semantic properties independently.
+`scripts/squeeze_coverage_summary.py` refuses mismatched source bodies or an
+unexecuted default-adapter caller.
+
+CI now explicitly selects all five standalone squeeze contract/matrix targets
+in the expert job (`6661449c`). Its profile disables debug symbols and
+incremental caches without changing optimization, assertions or tolerances.
+Remote CI remains a separate verdict; canceled revisions are not passes.

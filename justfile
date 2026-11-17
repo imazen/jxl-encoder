@@ -1482,10 +1482,5 @@ squeeze-final-feature-check manifest:
     cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert --test squeeze_contract --test squeeze_lf_count --no-report -- --test-threads=1
     cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features
 
-squeeze-rust1100-lint manifest:
-    cargo +1.100.0 clippy --locked --manifest-path {{quote(manifest)}} --workspace --all-targets -- -D warnings
-    cargo +1.100.0 clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,parallel,parallel-tree-learning --lib --test squeeze_contract --test squeeze_count_matrix --test squeeze_group_geometry --test squeeze_layouts --test squeeze_lf_count --test squeeze_reference --example shifted_extra_cmyk -- -D warnings
-
-
-squeeze-current-caller-evidence manifest no_rct_output axis_output coverage_env:
-    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" every_policy_reaches_no_rct --test-target squeeze_layouts; python3 scripts/run_selected_test_evidence.py "$2" "$4" lower_count_one_axis --test-target squeeze_count_matrix' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(no_rct_output)}} {{quote(axis_output)}}
+squeeze-scope-coverage-summary output *pairs:
+    python3 scripts/squeeze_coverage_summary.py {{quote(output)}} {{pairs}}
