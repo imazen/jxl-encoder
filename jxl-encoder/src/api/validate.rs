@@ -232,7 +232,8 @@ pub(crate) fn validate_metadata_sizes(
 }
 
 /// Validate `with_source_gamma(gamma)` value. JXL spec stores the
-/// gamma exponent in (1/255, 1] (decode: `pixel = sample^gamma`).
+/// gamma exponent. This setter retains its historical (1/255, 1] API range;
+/// direct ColorEncoding gamma uses the wider Part 1 E.2 wire range.
 /// Our encode pipeline uses `inv_gamma = 1.0 / gamma`, so any
 /// non-positive / non-finite value yields silently garbage output
 /// (LUT becomes all-zero or all-one, or contains NaN/Inf). Reject
@@ -246,8 +247,9 @@ pub(crate) fn validate_source_gamma(gamma: Option<f32>) -> Result<()> {
             message: format!("source_gamma must be finite (got {g})"),
         }));
     }
-    // libjxl accepts gamma in (1/255, 1]; we mirror that exactly so
-    // codestreams round-trip through cjxl/djxl unchanged.
+    // Keep the established setter range. Pinned libjxl SetGamma accepts
+    // [1/8192, 1]; direct ColorEncoding admission checks that wider wire range.
+    // Changing this setter's established refusal contract is a separate policy.
     const GAMMA_MIN: f32 = 1.0 / 255.0;
     if g <= GAMMA_MIN {
         return Err(at!(EncodeError::InvalidInput {

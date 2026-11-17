@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- Validate parametric color numbers before encoding and preserve valid
+  zero-y primaries through fallible source-color matrix conversion.
+
 - Treat explicit animation blends as full-canvas inputs and store hidden
   color-blend references after the color transform, preserving the existing
   patch-dictionary storage domain. Reserve live color reference slot three

@@ -61,7 +61,7 @@ fn pack_signed(value: i32) -> u32 {
 ///
 /// Returns `Error::InvalidInput` if the value is out of range.
 fn xy_to_fixed(value: f64, name: &str) -> Result<i32> {
-    if value.abs() >= CUSTOMXY_ROUGH_LIMIT {
+    if !value.is_finite() || value.abs() >= CUSTOMXY_ROUGH_LIMIT {
         return Err(Error::InvalidInput(format!(
             "custom {name} coordinate {value} out of range (must be < {CUSTOMXY_ROUGH_LIMIT})"
         )));
@@ -546,6 +546,125 @@ impl ColorEncoding {
         self.color_space == ColorSpace::Gray
     }
 
+    /// Validate numerical input and its quantized wire description (Part 1 E.2).
+    pub(crate) fn validate_parametric(&self) -> Result<()> {
+        use crate::color_math as math;
+        let invalid =
+            |message: &str| Error::InvalidInput(format!("invalid color encoding: {message}"));
+        if self.want_icc {
+            return Ok(());
+        }
+        if self.color_space == ColorSpace::Xyb {
+            return if self.rendering_intent == RenderingIntent::Perceptual {
+                Ok(())
+            } else {
+                Err(invalid("XYB requires Perceptual rendering intent"))
+            };
+        }
+        if let Some(gamma) = self.gamma {
+            let wire = (gamma * 10_000_000.0).round();
+            if !gamma.is_finite() || !(1221.0..=10_000_000.0).contains(&wire) {
+                return Err(invalid("gamma must encode in 1221..=10000000"));
+            }
+        }
+        let white = match self.white_point {
+            WhitePoint::D65 => (0.3127, 0.3290),
+            WhitePoint::Dci => (0.314, 0.351),
+            WhitePoint::E => (1.0 / 3.0, 1.0 / 3.0),
+            WhitePoint::Custom => {
+                let value = self
+                    .custom_white_point
+                    .ok_or_else(|| invalid("custom_white_point must be set"))?;
+                (value.x, value.y)
+            }
+        };
+        let chrom = match self.primaries {
+            Primaries::Srgb => ((0.64, 0.33), (0.30, 0.60), (0.15, 0.06)),
+            Primaries::P3 => ((0.68, 0.32), (0.265, 0.69), (0.15, 0.06)),
+            Primaries::Bt2100 => ((0.708, 0.292), (0.170, 0.797), (0.131, 0.046)),
+            Primaries::Custom if self.color_space != ColorSpace::Gray => {
+                let value = self
+                    .custom_primaries
+                    .ok_or_else(|| invalid("custom_primaries must be set"))?;
+                (
+                    (value.red.x, value.red.y),
+                    (value.green.x, value.green.y),
+                    (value.blue.x, value.blue.y),
+                )
+            }
+            Primaries::Custom => ((0.64, 0.33), (0.30, 0.60), (0.15, 0.06)),
+        };
+        let quantize = |(x, y): (f64, f64)| -> Result<(f64, f64)> {
+            Ok((
+                f64::from(xy_to_fixed(x, "x").map_err(|error| invalid(&format!("{error}")))?)
+                    / 1_000_000.0,
+                f64::from(xy_to_fixed(y, "y").map_err(|error| invalid(&format!("{error}")))?)
+                    / 1_000_000.0,
+            ))
+        };
+        let wire_white = if self.white_point == WhitePoint::Custom {
+            quantize(white)?
+        } else {
+            white
+        };
+        let wire_chrom =
+            if self.primaries == Primaries::Custom && self.color_space != ColorSpace::Gray {
+                (quantize(chrom.0)?, quantize(chrom.1)?, quantize(chrom.2)?)
+            } else {
+                chrom
+            };
+        let fixed = |v: f64| v.is_finite() && (-32768.0..=32767.9999847412109375).contains(&v);
+        let (white, chrom) = (wire_white, wire_chrom);
+        {
+            if !white.0.is_finite()
+                || !white.1.is_finite()
+                || !(0.0..=1.0).contains(&white.0)
+                || !(white.1 > 0.0 && white.1 <= 1.0)
+            {
+                return Err(invalid("white point requires x in [0,1] and y in (0,1]"));
+            }
+            let xyz =
+                math::white_xyz(white).ok_or_else(|| invalid("non-finite normalized white"))?;
+            if self.color_space == ColorSpace::Gray {
+                if !xyz.into_iter().all(fixed) {
+                    return Err(invalid("gray white exceeds s15Fixed16"));
+                }
+            } else {
+                // Every named/custom primary is on the 1e-6 xy lattice.
+                // The raw determinant is its oriented triangle area. Compute
+                // its integer numerator exactly: abs(numerator)>=100 is
+                // equivalent to abs(det)>=1e-10, including the boundary.
+                let xy = |(x, y): (f64, f64)| {
+                    (
+                        (x * 1_000_000.0).round() as i64,
+                        (y * 1_000_000.0).round() as i64,
+                    )
+                };
+                let (r, g, b) = (xy(chrom.0), xy(chrom.1), xy(chrom.2));
+                let det = (r.0 - b.0) * (g.1 - b.1) - (g.0 - b.0) * (r.1 - b.1);
+                if det.unsigned_abs() < 100 {
+                    return Err(invalid("raw primaries determinant is below 1e-10"));
+                }
+                let source = math::rgb_to_xyz(chrom, white)
+                    .ok_or_else(|| invalid("invalid primary matrix"))?;
+                // ICC PCS adopted white, ICC.1 7.2.16. This is separate from
+                // the source-to-D65 transform used for XYB pixel conversion.
+                let chad = math::adaptation(xyz, [0.9642, 1.0, 0.8249])
+                    .ok_or_else(|| invalid("invalid Bradford adaptation"))?;
+                if !chad.iter().flatten().copied().all(fixed)
+                    || !math::product(&chad, &source)
+                        .iter()
+                        .flatten()
+                        .copied()
+                        .all(fixed)
+                {
+                    return Err(invalid("adaptation or adapted primaries exceed s15Fixed16"));
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Writes the color encoding to the bitstream.
     pub fn write(&self, writer: &mut BitWriter) -> Result<()> {
         self.write_with_spec_default_fast_path(writer, true)
@@ -563,6 +682,7 @@ impl ColorEncoding {
         writer: &mut BitWriter,
         allow_spec_default: bool,
     ) -> Result<()> {
+        self.validate_parametric()?;
         // The normal color writer opts in. VarDCT's historical long-form
         // policy can opt out without changing the encoding's Relative intent.
         // Perceptual is never eligible for the compact spec-default bundle.
@@ -686,7 +806,7 @@ impl ColorEncoding {
 
             if have_gamma {
                 let g = self.gamma.expect("gamma must be set when have_gamma=true");
-                // JXL spec: 24-bit integer = round(gamma * 10_000_000), clamped to [1, 2^24-1]
+                // Preserve the established f32 quantization, validated above against E.2.
                 let encoded = (g * 10_000_000.0).round() as u32;
                 crate::trace::debug_eprintln!(
                     "CENC [bit {}]: gamma = {} (encoded {})",
@@ -1224,6 +1344,11 @@ mod tests {
     fn test_xyb_color_space() {
         let mut enc = ColorEncoding::srgb();
         enc.color_space = ColorSpace::Xyb;
+        // Part 1 E.2 requires Perceptual for an explicit XYB description.
+        let mut invalid_writer = BitWriter::new();
+        assert!(enc.write(&mut invalid_writer).is_err());
+        assert_eq!(invalid_writer.bits_written(), 0);
+        enc.rendering_intent = RenderingIntent::Perceptual;
 
         let mut writer = BitWriter::new();
         enc.write(&mut writer).unwrap();
@@ -1863,5 +1988,119 @@ mod tests {
             .expect("jxl-rs should decode CICP-derived BT.2100 PQ");
         assert_eq!(decoded.width, width as usize);
         assert_eq!(decoded.height, height as usize);
+    }
+}
+
+#[cfg(test)]
+mod parametric_admission_tests {
+    use super::*;
+    #[test]
+    fn color_admission_gamma_wire_rounding_matches_native_fields() {
+        for (bits, field) in [
+            (0x38fff518, 1221_u32),
+            (0x38fff519, 1221),
+            (1.0_f32.to_bits(), 10000000),
+        ] {
+            let mut ce = ColorEncoding::with_gamma(f32::from_bits(bits));
+            ce.rendering_intent = RenderingIntent::Relative;
+            let row = include_str!("../vardct/color_admission_v012.tsv")
+                .lines()
+                .find(|line| line.starts_with(&format!("gamma-field\t{field}\t")))
+                .unwrap();
+            let fields: Vec<_> = row.split('\t').collect();
+            let expected: Vec<u8> = fields[3]
+                .as_bytes()
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|pair| u8::from_str_radix(core::str::from_utf8(pair).unwrap(), 16).unwrap())
+                .collect();
+            let mut writer = BitWriter::new();
+            ce.write(&mut writer).unwrap();
+            assert_eq!(writer.bits_written(), fields[2].parse::<usize>().unwrap());
+            writer.zero_pad_to_byte();
+            assert_eq!(writer.as_bytes(), expected);
+        }
+        assert!(
+            ColorEncoding::with_gamma(f32::from_bits(0x38fff517))
+                .validate_parametric()
+                .is_err()
+        );
+    }
+    #[test]
+    fn color_admission_exact_wire_determinant_boundary() {
+        for (g, b, numerator) in [
+            ((9, 0), (0, 11), 99),
+            ((10, 0), (0, 10), 100),
+            ((10, 1), (-1, 10), 101),
+        ] {
+            for reverse in [false, true] {
+                let point = |(x, y): (i32, i32)| {
+                    CIExy::new(
+                        f64::from(333333 + x) / 1_000_000.0,
+                        f64::from(333333 + y) / 1_000_000.0,
+                    )
+                };
+                let mut ce = ColorEncoding::with_custom_primaries(CustomPrimaries {
+                    red: point((0, 0)),
+                    green: point(if reverse { b } else { g }),
+                    blue: point(if reverse { g } else { b }),
+                });
+                ce.white_point = WhitePoint::Custom;
+                ce.custom_white_point = Some(CIExy::new(0.333336, 0.333336));
+                assert_eq!(
+                    ce.validate_parametric().is_ok(),
+                    numerator >= 100,
+                    "area{numerator} reverse{reverse}"
+                );
+            }
+        }
+    }
+    #[test]
+    fn color_admission_file_header_rejects_before_writing() {
+        for ce in [
+            ColorEncoding::with_gamma(0.0),
+            ColorEncoding::with_custom_white_point(CIExy::new(0.3, f64::NAN)),
+        ] {
+            for compact in [false, true] {
+                let mut header = super::super::file_header::FileHeader::new_rgb(16, 17);
+                header.header_all_default_fast_paths = compact;
+                header.metadata.color_encoding = ce.clone();
+                for with_icc in [false, true] {
+                    let mut writer = BitWriter::new();
+                    writer.write(3, 5).unwrap();
+                    let result = if with_icc {
+                        header.write_with_icc(None, &mut writer)
+                    } else {
+                        header.write(&mut writer)
+                    };
+                    assert!(result.is_err());
+                    assert_eq!(
+                        writer.bits_written(),
+                        3,
+                        "compact={compact} with_icc={with_icc}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn color_admission_rejects_before_either_header_policy_writes() {
+        for ce in [
+            ColorEncoding::with_gamma(0.0),
+            ColorEncoding::with_custom_white_point(CIExy::new(0.3, f64::NAN)),
+        ] {
+            for compact in [false, true] {
+                let mut writer = BitWriter::new();
+                writer.write(3, 5).unwrap();
+                let before = writer.bits_written();
+                assert!(
+                    ce.write_with_spec_default_fast_path(&mut writer, compact)
+                        .is_err()
+                );
+                assert_eq!(writer.bits_written(), before);
+            }
+        }
     }
 }

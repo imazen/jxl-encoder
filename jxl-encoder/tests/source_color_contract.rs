@@ -875,3 +875,6 @@ fn source_white_neutral_layout_inventory_keeps_brightness() {
         }
     }
 }
+
+#[path = "source_color_contract/numeric.rs"]
+mod numeric;

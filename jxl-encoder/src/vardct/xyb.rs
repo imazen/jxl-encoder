@@ -36,12 +36,12 @@ pub(crate) const BT2020_TO_SRGB: [[f32; 3]; 3] = [
 /// Compute a 3x3 matrix to convert from custom primaries (D65 white point) to sRGB.
 ///
 /// Uses the standard xy-chromaticity → XYZ → sRGB pipeline.
-/// Panics if any primary has y=0 or if the matrix is singular.
+/// Zero-y primaries use the unnormalized XYZ columns; singular matrices fail.
 pub(crate) fn compute_primaries_to_srgb(
     r: (f64, f64),
     g: (f64, f64),
     b: (f64, f64),
-) -> [[f32; 3]; 3] {
+) -> Option<[[f32; 3]; 3]> {
     // D65 white point
     let (wx, wy) = (0.3127, 0.3290);
 
@@ -57,7 +57,9 @@ pub(crate) fn compute_primaries_to_srgb(
     // M = [[Xr,Xg,Xb],[Yr,Yg,Yb],[Zr,Zg,Zb]]
     // Using Cramer's rule for 3x3
     let det = xr * (yg * zb - yb * zg) - xg * (yr * zb - yb * zr) + xb * (yr * zg - yg * zr);
-    assert!(det.abs() > 1e-10, "singular primaries matrix");
+    if !det.is_finite() || det.abs() <= 1e-10 {
+        return crate::color_math::source_to_srgb((r, g, b), (wx, wy));
+    }
 
     let inv_det = 1.0 / det;
     let sr =
@@ -119,37 +121,45 @@ pub(crate) fn compute_primaries_to_srgb(
             result[i][j] = sum as f32;
         }
     }
-    result
+    Some(result)
 }
 
 /// Compute the primaries-to-sRGB matrix for a given color encoding, if needed.
 ///
 /// Returns `None` for sRGB/D65 (no transform needed). Non-D65 sources
 /// include Bradford adaptation to the XYB transform's D65 reference white. For `Primaries::Custom`
-/// without a `custom_primaries` field, returns `None` to skip the matrix
-/// application — this is a defensive fallback only; validation happens
-/// upstream via [`validate_color_encoding`] which surfaces the
-/// inconsistency as a regular [`crate::error::Error::InvalidInput`].
+/// without a `custom_primaries` field, returns an input error.
 pub(crate) fn primaries_to_srgb_matrix(
     ce: &crate::headers::color_encoding::ColorEncoding,
-) -> Option<[[f32; 3]; 3]> {
-    use crate::headers::color_encoding::WhitePoint;
+) -> crate::error::Result<Option<[[f32; 3]; 3]>> {
+    use crate::headers::color_encoding::{ColorSpace, WhitePoint};
+    ce.validate_parametric()?;
+    let matrix_error = || {
+        crate::error::Error::InvalidInput(
+            "invalid color encoding: source matrix cannot be represented".into(),
+        )
+    };
+    let primaries = if ce.color_space == ColorSpace::Gray {
+        Primaries::Srgb
+    } else {
+        ce.primaries
+    };
     if ce.white_point != WhitePoint::D65 {
         let white = match ce.white_point {
             WhitePoint::D65 => unreachable!(),
             WhitePoint::Dci => (0.314, 0.351),
             WhitePoint::E => (1.0 / 3.0, 1.0 / 3.0),
             WhitePoint::Custom => {
-                let wp = ce.custom_white_point.as_ref()?;
+                let wp = ce.custom_white_point.as_ref().ok_or_else(matrix_error)?;
                 (wp.x, wp.y)
             }
         };
-        let chrom = match ce.primaries {
+        let chrom = match primaries {
             Primaries::Srgb => ((0.64, 0.33), (0.30, 0.60), (0.15, 0.06)),
             Primaries::P3 => ((0.68, 0.32), (0.265, 0.69), (0.15, 0.06)),
             Primaries::Bt2100 => ((0.708, 0.292), (0.170, 0.797), (0.131, 0.046)),
             Primaries::Custom => {
-                let cp = ce.custom_primaries.as_ref()?;
+                let cp = ce.custom_primaries.as_ref().ok_or_else(matrix_error)?;
                 (
                     (cp.red.x, cp.red.y),
                     (cp.green.x, cp.green.y),
@@ -157,20 +167,24 @@ pub(crate) fn primaries_to_srgb_matrix(
                 )
             }
         };
-        return Some(super::source_white::to_srgb(chrom, white));
+        return super::source_white::to_srgb(chrom, white)
+            .map(Some)
+            .ok_or_else(matrix_error);
     }
-    match ce.primaries {
-        Primaries::P3 => Some(P3_TO_SRGB),
-        Primaries::Bt2100 => Some(BT2020_TO_SRGB),
+    match primaries {
+        Primaries::P3 => Ok(Some(P3_TO_SRGB)),
+        Primaries::Bt2100 => Ok(Some(BT2020_TO_SRGB)),
         Primaries::Custom => {
-            let cp = ce.custom_primaries.as_ref()?;
-            Some(compute_primaries_to_srgb(
+            let cp = ce.custom_primaries.as_ref().ok_or_else(matrix_error)?;
+            compute_primaries_to_srgb(
                 (cp.red.x, cp.red.y),
                 (cp.green.x, cp.green.y),
                 (cp.blue.x, cp.blue.y),
-            ))
+            )
+            .map(Some)
+            .ok_or_else(matrix_error)
         }
-        Primaries::Srgb => None,
+        Primaries::Srgb => Ok(None),
     }
 }
 
@@ -182,12 +196,7 @@ pub(crate) fn primaries_to_srgb_matrix(
 pub(crate) fn validate_color_encoding(
     ce: &crate::headers::color_encoding::ColorEncoding,
 ) -> crate::error::Result<()> {
-    if matches!(ce.primaries, Primaries::Custom) && ce.custom_primaries.is_none() {
-        return Err(crate::error::Error::InvalidInput(
-            "ColorEncoding has Primaries::Custom but custom_primaries is None".into(),
-        ));
-    }
-    Ok(())
+    ce.validate_parametric()
 }
 
 /// Apply a 3x3 matrix to RGB row buffers in-place.
@@ -281,7 +290,9 @@ impl VarDctEncoder {
         let primaries_matrix = self
             .color_encoding
             .as_ref()
-            .and_then(primaries_to_srgb_matrix);
+            .map(primaries_to_srgb_matrix)
+            .transpose()?
+            .flatten();
 
         let padded_n = padded_width.checked_mul(padded_height).ok_or(
             crate::error::Error::DimensionOverflow {

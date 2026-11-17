@@ -359,3 +359,41 @@ The public native setter accepts gamma in [1/8192, 1]. The existing
 The raw-small and wire-singular primary controls have finite bounded raw CMS
 matrices, isolating determinant admission and coordinate quantization from
 an unrelated derived-matrix overflow.
+
+## H4 numeric admission core
+
+Parametric validation now checks finite and representable wire coordinates,
+white bounds, direct gamma fields 1221..=10000000, the raw primary determinant
+and the derived s15Fixed16 ranges before writing. The determinant uses the
+exact integer numerator of the 1e-6 coordinate lattice; magnitude 100 is the
+inclusive 1e-10 boundary. Gamma uses the writer's f32 multiplication and rounding.
+ICC-present omitted fields retain the established raw-profile acceptance.
+
+Valid zero-y primaries use unnormalized columns and barycentric weights.
+The non-D65 conversion shares f64 adaptation arithmetic; ordinary D65 paths
+remain. The original XYZ source/native pixel regressions now pass, as do the
+unchanged native matrix vectors at their existing 2e-6 tolerance.
+The original malformed-descriptor regressions return typed errors instead of
+accepting bad fields or panicking. Whole-file and color-only writers both
+reject before changing the caller's bit writer.
+
+The isolated numeric core passes its original negative/XYZ pixel regressions,
+full library baseline, unchanged normal/strict/divergence checks, strict
+Rust 1.100 library/contract Clippy and no-default-feature build. The owned
+pinned sibling closure temporarily replaces the separate pending gamma,
+streaming and animation changes with main versions, then restores them.
+`color-numeric-core-isolated.log` retains those passing stages and the final
+format failure (rc1/406 seconds, peak RSS 1.71 GiB, minimum available
+19,787 MiB). Only the private helper signature needed line wrapping; the
+separate `color-numeric-core-format-continuation.log` verifies its correction.
+The focused retained executable SHA256 is
+`ac4fbde5dcd97e59d17c3cadea8b63357cfb349844b01f14497e2a05fd464b43`;
+its checksum-bound profile, selected source and restored-pending-source
+identities are retained under `color-numeric-core-isolated`.
+Two older XYB-positive fixtures now use the E.2-required Perceptual intent;
+the color test also asserts rejection of Relative intent before writing bits.
+No numeric threshold, existing ignore or byte expectation is loosened.
+
+H4 remains open for the separately reproduced gamma input, streaming admission,
+animation DC-width/level and final coverage follow-ups. Those fixes are not
+claimed by this numeric core. [Gamma evidence](COLOR_GAMMA_CONTROLS.md).

@@ -1658,7 +1658,10 @@ fn convert_to_xyb_padded(
     use super::xyb::primaries_to_srgb_matrix;
     use crate::color::xyb::linear_rgb_to_xyb;
 
-    let primaries_matrix = color_encoding.and_then(primaries_to_srgb_matrix);
+    let primaries_matrix = color_encoding
+        .map(primaries_to_srgb_matrix)
+        .transpose()?
+        .flatten();
 
     let padded_n =
         padded_width

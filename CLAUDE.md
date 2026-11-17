@@ -1768,6 +1768,17 @@ misclassify that CLI limitation as an invalid stream or strip the ICC to hide it
 
 ## Known Bugs (ACTIVE)
 
+
+### RESOLVED 2026-11-17: diagnostic parser custom-coordinate selectors
+
+The independent envelope reader used 19 bits for every custom-xy selector and
+left signed coordinates packed. A native v0.12 198-bit Bundle control fails
+with EOF before the repair and matches all four selector widths and both
+signs afterward. Existing parser regressions and retained source-color
+animation header comparisons pass. Encoder bytes are unchanged.
+[Controls](docs/COLOR_GAMMA_CONTROLS.md).
+
+
 ### 2026-11-17: parametric color admission and valid XYZ-basis samples
 
 H4 runtime controls at `4572d184` accept invalid white/primary/gamma headers;
@@ -1777,7 +1788,11 @@ source samples and1.1509478 against native linear-sRGB CMS output. Native
 setter success and final-encoding success differ for invalid inputs; raw CMS
 matrices support zero-coordinate primaries refused by its public setter.
 [Before evidence and controls](docs/COLOR_METADATA_CONTRACT.md#h4-before-evidence-and-native-controls).
-No production repair or complete affected-entry coverage is claimed yet.
+Numeric descriptor admission and valid zero-y source conversion are repaired
+in the selected numeric core. Whole-file and color-only writers refuse invalid
+fields before writing; native matrix tolerances and existing byte expectations
+remain unchanged. H4 remains open for streaming, gamma-input and animation
+buffer-promise follow-ups and final affected-entry region accounting.
 
 ### RESOLVED 2026-11-17: explicit blend cropping and pre-transform color references
 

@@ -1,7 +1,8 @@
 # Source color conversion controls
 
 Lossy source conversion now includes the selected non-D65 white point before
-XYB. Named and custom D65 inputs retain their previous matrix paths. This
+XYB. Ordinary named and custom D65 inputs retain their previous matrix paths;
+H4 adds a fallible unnormalized-column path for zero-y primaries. This
 corrects issue 144 H5's source interpretation; color-description admission
 (H4) and CMYK/Black requirements (H10) remain separate work.
 
@@ -53,8 +54,9 @@ encoder output.
 
 The repair applies Bradford adaptation for non-D65 sources, reusing
 Imazen's existing zenpixels matrix implementation from
-`f23ac7535be1144a22d0dc6b71f866a08b151f34`. The D65 cases retain their original
-matrix paths. Its focused public regression and original native vector set
+`f23ac7535be1144a22d0dc6b71f866a08b151f34`. The ordinary D65 cases retain their original
+matrix paths. H4 shares f64 barycentric/adaptation arithmetic for non-D65
+and zero-y sources; its refreshed native vectors keep the existing 2e-6 bound. Its focused public regression and original native vector set
 pass. Expanded native controls add AP0/DCI while preserving every previous
 numeric row byte for byte. The selected caller controls below pass; final region/fault evidence is recorded separately.
 

@@ -3849,6 +3849,9 @@ impl VarDctEncoder {
         if let Some(s) = stop {
             s.check().map_err(|_| Error::Cancelled)?;
         }
+        if let Some(ce) = &self.color_encoding {
+            super::xyb::validate_color_encoding(ce)?;
+        }
         let expected_rgb = width
             .checked_mul(height)
             .and_then(|n| n.checked_mul(3))
@@ -7071,6 +7074,9 @@ impl VarDctEncoder {
         linear_rgb: &[f32],
         config: &super::rate_control::RateControlConfig,
     ) -> Result<(Vec<u8>, usize)> {
+        if let Some(ce) = &self.color_encoding {
+            super::xyb::validate_color_encoding(ce)?;
+        }
         // Compute precomputed state — patches detected and subtracted
         // BEFORE quant_field / mask / gaborish / CfL / AC strategy so
         // that all subsequent precomputation sees the patches-subtracted
@@ -7201,6 +7207,9 @@ impl VarDctEncoder {
         quant_field: &[u8],
         extras: &[crate::api::ExtraChannel<'_>],
     ) -> Result<Vec<u8>> {
+        if let Some(ce) = &self.color_encoding {
+            super::xyb::validate_color_encoding(ce)?;
+        }
         // Validate extras at the entry boundary (dim_shift = 0,
         // sample-count = width * height) before any encoding work runs.
         // Mirrors `encode_with_extras` so error messages and behavior
@@ -7750,6 +7759,9 @@ impl VarDctEncoder {
         raw_nzeros: &[alloc::vec::Vec<alloc::vec::Vec<u16>>; 3],
         extras: &[crate::api::ExtraChannel<'_>],
     ) -> Result<Vec<u8>> {
+        if let Some(ce) = &self.color_encoding {
+            super::xyb::validate_color_encoding(ce)?;
+        }
         let width = precomputed.width;
         let height = precomputed.height;
         let xsize_blocks = precomputed.xsize_blocks;
@@ -7886,7 +7898,11 @@ impl LinearSource<'_> {
         color_encoding: Option<&crate::headers::color_encoding::ColorEncoding>,
         budget: Option<&alloc::sync::Arc<crate::budget::MemoryBudget>>,
     ) -> crate::error::Result<crate::budget::BudgetGuard> {
-        let Some(matrix) = color_encoding.and_then(super::xyb::primaries_to_srgb_matrix) else {
+        let Some(matrix) = color_encoding
+            .map(super::xyb::primaries_to_srgb_matrix)
+            .transpose()?
+            .flatten()
+        else {
             return Ok(crate::budget::BudgetGuard::inert());
         };
         let mut guard = crate::budget::BudgetGuard::inert();

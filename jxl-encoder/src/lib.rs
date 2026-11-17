@@ -27,6 +27,7 @@ pub(crate) mod bit_writer;
 pub(crate) mod budget;
 pub(crate) mod clock;
 pub(crate) mod color;
+mod color_math;
 pub(crate) mod container;
 pub(crate) mod debug_rect;
 // `effort` carries internal effort-derived knobs (#76: now

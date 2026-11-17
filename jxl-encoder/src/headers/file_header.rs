@@ -500,6 +500,7 @@ impl FileHeader {
         // Validate the wire values too: internal header builders bypass API
         // admission, and a positive f32 peak can serialize as binary16 zero.
         let meta = &self.metadata;
+        meta.color_encoding.validate_parametric()?;
         let peak = crate::f16::f16_roundtrip(meta.intensity_target)?;
         let minimum = crate::f16::f16_roundtrip(meta.min_nits)?;
         let linear_below = crate::f16::f16_roundtrip(meta.linear_below)?;
@@ -1071,6 +1072,10 @@ mod tests {
                         let mut header = FileHeader::new_rgb(8, 8);
                         header.header_all_default_fast_paths = compact;
                         header.metadata.color_encoding.color_space = space;
+                        if space == ColorSpace::Xyb {
+                            header.metadata.color_encoding.rendering_intent =
+                                super::super::color_encoding::RenderingIntent::Perceptual;
+                        }
                         header.metadata.color_encoding.want_icc = want_icc;
                         let valid = want_icc == profile.is_some()
                             && profile.is_none_or(|icc| {
