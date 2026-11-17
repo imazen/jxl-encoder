@@ -17,6 +17,9 @@ int main() {
       {"srgb-e", .64f,.33f,.30f,.60f,.15f,.06f,1.f/3,1.f/3},
       {"bt2020-dci", .708f,.292f,.17f,.797f,.131f,.046f,.314f,.351f},
       {"aces-ap0-d65", .7347f,.2653f,0.f,1.f,.0001f,-.077f,.3127f,.3290f},
+      {"srgb-d65", .64f,.33f,.30f,.60f,.15f,.06f,.3127f,.3290f},
+      {"bt2020-d65", .708f,.292f,.17f,.797f,.131f,.046f,.3127f,.3290f},
+      {"aces-ap0-dci", .7347f,.2653f,0.f,1.f,.0001f,-.077f,.314f,.351f},
   };
   std::puts("# unmodified v0.12 PrimariesToXYZD50, Inv3x3Matrix, Mul3x3Matrix/Vector");
   for (const auto& c : cases) {

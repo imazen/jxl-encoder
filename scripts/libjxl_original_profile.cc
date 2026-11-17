@@ -14,7 +14,8 @@ int main(int argc, char **argv) {
               << "\n";
     return JxlDecoderVersion() == 12000 ? 0 : 2;
   }
-  if (argc != 3 || JxlDecoderVersion() != 12000)
+  const bool source_fields = argc == 4 && std::string(argv[3]) == "--source-fields";
+  if ((argc != 3 && !source_fields) || JxlDecoderVersion() != 12000)
     return 2;
   std::ifstream in(argv[1], std::ios::binary);
   if (!in)
@@ -39,6 +40,15 @@ int main(int argc, char **argv) {
       if (JxlDecoderGetBasicInfo(dec, &info) != JXL_DEC_SUCCESS)
         return 3;
     } else if (status == JXL_DEC_COLOR_ENCODING) {
+      if (source_fields) {
+        JxlColorEncoding encoded;
+        if (JxlDecoderGetColorAsEncodedProfile(dec, JXL_COLOR_PROFILE_TARGET_ORIGINAL,
+                                               &encoded) != JXL_DEC_SUCCESS ||
+            encoded.color_space != JXL_COLOR_SPACE_RGB) return 5;
+        // Keep the decoder's original parametric profile directly. Serializing
+        // to ICC and parsing it back can change custom-primary coordinates.
+        continue;
+      }
       size_t size = 0;
       if (JxlDecoderGetICCProfileSize(dec, JXL_COLOR_PROFILE_TARGET_ORIGINAL,
                                       &size) != JXL_DEC_SUCCESS)

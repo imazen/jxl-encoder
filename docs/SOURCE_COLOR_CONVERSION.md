@@ -36,3 +36,17 @@ an existing executable. Native component agreement does not establish complete
 CMS or encoder bit parity. Still/streaming/animation and prepared metric paths,
 custom whites, packed/strided input and all supported source layouts remain
 H5 work.
+
+## November 17 native control extension
+
+The unmodified native matrix wrapper now observes AP0/DCI and explicit sRGB/
+BT.2020 D65 controls; every previous numeric row remains byte-identical. The
+source-field output option in the original-profile API oracle preserves the
+original parametric profile directly for selected cropped animations. Its
+existing two-argument ICC behavior remains unchanged. P3/custom AP0 runtime
+controls decode both displayed frames with the source-field option; separate
+failed CLI and ICC-reparsed attempts remain retained. Exact custom-profile
+identity at the native blending stage is a source-based explanation, not a
+decoder conformance verdict. Expanded native vectors and successful original-
+field runs are retained under source-color-native-d65-controls and
+source-color-public-final at the issue artifact root.
