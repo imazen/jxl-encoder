@@ -1245,3 +1245,24 @@ squeeze-rct-guard-regions report:
     python3 scripts/coverage_function_regions.py {{quote(report)}} 33write_modular_stream_with_squeeze --file-suffix modular/encode.rs --start-line 943 --end-line 946
     python3 scripts/coverage_function_regions.py {{quote(report)}} write_modular_stream_with_squeeze_and_tree_stop --file-suffix modular/encode.rs --start-line 3221 --end-line 3224
     python3 scripts/coverage_function_regions.py {{quote(report)}} encode_modular_multi_group_squeeze_with_tree --file-suffix modular/frame.rs --start-line 2472 --end-line 2475
+
+coverage-from-archive llvm_directory archive output:
+    python3 scripts/coverage_from_archive.py {{quote(llvm_directory)}} {{quote(archive)}} {{quote(output)}}
+
+squeeze-rct-isolated manifest revision output:
+    python3 scripts/validate_squeeze_rct_isolated.py {{quote(manifest)}} {{quote(revision)}} {{quote(output)}}
+
+squeeze-rct-isolated-resume manifest revision output start:
+    python3 scripts/validate_squeeze_rct_isolated.py {{quote(manifest)}} {{quote(revision)}} {{quote(output)}} --start-at {{start}}
+
+squeeze-rct-unchecked manifest revision output:
+    python3 scripts/validate_squeeze_rct_isolated.py {{quote(manifest)}} {{quote(revision)}} {{quote(output)}} --unchecked --end-before 1
+
+squeeze-rct-isolated-contracts manifest revision output:
+    python3 scripts/validate_squeeze_rct_isolated.py {{quote(manifest)}} {{quote(revision)}} {{quote(output)}} --contracts
+
+squeeze-rct-isolated-lint manifest revision output:
+    python3 scripts/validate_squeeze_rct_isolated.py {{quote(manifest)}} {{quote(revision)}} {{quote(output)}} --lint
+
+squeeze-rct-planar-controls manifest revision output:
+    python3 scripts/validate_squeeze_rct_isolated.py {{quote(manifest)}} {{quote(revision)}} {{quote(output)}} --planar-only
