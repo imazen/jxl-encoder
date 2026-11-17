@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Export coverage from a checksum-preserved completed-test archive."""
 import argparse
+import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -11,6 +12,8 @@ p.add_argument('llvm_directory', type=Path)
 p.add_argument('archive', type=Path)
 p.add_argument('output', type=Path)
 p.add_argument('--source-root', type=Path)
+p.add_argument('--failed-test', action='store_true',
+               help='explicitly export a completed failed test, retaining its nonzero verdict')
 p.add_argument('--source', action='append', default=[], type=Path)
 a = p.parse_args()
 if a.source and not a.source_root:
@@ -18,13 +21,22 @@ if a.source and not a.source_root:
 for source in a.source:
     if source.is_absolute() or '..' in source.parts or not (a.archive / 'source' / source).is_file():
         p.error('required frozen source missing: ' + str(source))
-rows = json.loads((a.archive / 'originals.json').read_text())
+if a.failed_test:
+    identity = json.loads((a.archive / 'identity.json').read_text())
+    if identity.get('exit_code') in (None, 0):
+        p.error('--failed-test requires a recorded completed nonzero test verdict')
+    rows = [dict(staged='test-binary', object=True, sha256=identity['binary_sha256']),
+            dict(staged='test.profraw', object=False, sha256=identity['profile_sha256'])]
+else:
+    rows = json.loads((a.archive / 'originals.json').read_text())
 objects = []
 profiles = []
 for row in rows:
     path = a.archive / Path(row['staged']).name
     if not path.is_file():
         p.error('missing archived input: ' + str(path))
+    if hashlib.sha256(path.read_bytes()).hexdigest() != row['sha256']:
+        p.error('archived input checksum mismatch: ' + str(path))
     if row['object']:
         objects.append(path)
     elif path.suffix == '.profraw':
@@ -32,6 +44,11 @@ for row in rows:
 if not objects or not profiles:
     p.error('archive must contain both completed profiles and exact objects')
 a.output.mkdir(exist_ok=False)
+if a.failed_test:
+    (a.output / 'test-verdict.json').write_text(json.dumps(
+        dict(exit_code=identity['exit_code'], pid=identity['pid'],
+             binary_sha256=identity['binary_sha256'],
+             note='Coverage of a failed test; not a passing validation verdict'), indent=2))
 profile = a.output / 'merged.profdata'
 subprocess.run([str(a.llvm_directory / 'llvm-profdata'), 'merge', '-sparse',
                 *map(str, profiles), '-o', str(profile)], check=True)

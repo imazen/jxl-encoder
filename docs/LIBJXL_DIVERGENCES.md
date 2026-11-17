@@ -2661,7 +2661,7 @@ effort/LF, unchanged-byte and strict lint controls pass. The partition observes
 36/37 selected regions; the non-generated empty-band continuation is retained
 as a gap in the contract.
 
-### Issue 144: progressive alpha-band placement (I144-V2, resolved)
+### Issue 144: progressive alpha-band placement (I144-V2, resolved at aab13cd6)
 
 HF alpha bands must follow the per-pass channel-shift bracket in the frame
 header (Part 1 G.4.2). The repair selects the ordered HF subset for
@@ -2683,7 +2683,7 @@ Final native progressive-alpha samples are separate controls, not proof of
 matching coefficient schedules or early previews.
 
 
-### Issue 144: alpha remaining-band grid admission (I144-E3-alpha, resolved)
+### Issue 144: alpha remaining-band grid admission (I144-E3-alpha, resolved at cddcdfec)
 
 The alpha-only squeeze builder previously bypassed the shared group geometry
 adapter. At 131585x17/transposed its default creates a 257x5/5x257 grouped

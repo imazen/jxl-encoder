@@ -11,13 +11,15 @@
 #include "lib/jxl/modular/transform/enc_squeeze.h"
 #include "lib/jxl/modular/transform/squeeze.h"
 #include "lib/jxl/modular/transform/transform.h"
-jxl::Status Run(JxlMemoryManager* memory, bool thin_alpha) {
-  const size_t group_dim = thin_alpha ? 256 : 128;
-  const auto shapes = thin_alpha
+jxl::Status Run(JxlMemoryManager* memory, bool thin_alpha, bool elongated_alpha) {
+  const size_t group_dim = thin_alpha || elongated_alpha ? 256 : 128;
+  const auto shapes = elongated_alpha
+      ? std::vector<std::pair<size_t,size_t>>{{131073,17},{17,131073},{131585,17},{17,131585}}
+      : thin_alpha
       ? std::vector<std::pair<size_t,size_t>>{{1025,17},{17,1025}}
       : std::vector<std::pair<size_t,size_t>>{{2,16449},{16449,2}};
   for (auto shape : shapes) {
-    for (int count : thin_alpha ? std::vector<int>{1} : std::vector<int>{1,2}) {
+    for (int count : (thin_alpha || elongated_alpha) ? std::vector<int>{1} : std::vector<int>{1,2}) {
       JXL_ASSIGN_OR_RETURN(auto image,jxl::Image::Create(memory,shape.first,shape.second,8,count));
       for (auto& channel:image.channel) for(size_t y=0;y<channel.h;++y)
         for(size_t x=0;x<channel.w;++x) channel.Row(y)[x]=static_cast<int>((x+37*y)%256);
@@ -28,12 +30,16 @@ jxl::Status Run(JxlMemoryManager* memory, bool thin_alpha) {
       for(size_t i=0;i<image.channel.size();++i) {
         const auto& ch=image.channel[i];
         if(ch.w>group_dim || ch.h>group_dim) global=false;
+        bool tile_valid = true;
         if(!global && ch.w && ch.h) {
           const unsigned extent=std::min(ch.hshift,ch.vshift)>=3?8*group_dim:group_dim;
-          JXL_RETURN_IF_ERROR((extent>>std::max(ch.hshift,ch.vshift))!=0);
+          tile_valid = (extent>>std::max(ch.hshift,ch.vshift))!=0;
+          if (!elongated_alpha) JXL_RETURN_IF_ERROR(tile_valid);
         }
         std::cout<<shape.first<<'\t'<<shape.second<<'\t'<<count<<'\t'<<i<<'\t'
-          <<ch.w<<'\t'<<ch.h<<'\t'<<ch.hshift<<'\t'<<ch.vshift<<'\t'<<global<<'\n';
+          <<ch.w<<'\t'<<ch.h<<'\t'<<ch.hshift<<'\t'<<ch.vshift<<'\t'<<global;
+        if (elongated_alpha) std::cout<<'\t'<<tile_valid;
+        std::cout<<'\n';
       }
     }
   }
@@ -41,8 +47,9 @@ jxl::Status Run(JxlMemoryManager* memory, bool thin_alpha) {
 }
 int main(int argc, char** argv) {
   const bool thin_alpha = argc == 2 && std::string(argv[1]) == "--thin-alpha";
-  if(argc != 1 && !thin_alpha) return 3;
+  const bool elongated_alpha = argc == 2 && std::string(argv[1]) == "--elongated-alpha";
+  if(argc != 1 && !thin_alpha && !elongated_alpha) return 3;
   JxlMemoryManager memory;
   if(!jxl::MemoryManagerInit(&memory,nullptr)) return 1;
-  return Run(&memory,thin_alpha)?0:2;
+  return Run(&memory,thin_alpha,elongated_alpha)?0:2;
 }

@@ -14,7 +14,7 @@ import re
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('output', type=Path)
 p.add_argument('--pair', action='append', nargs=2, required=True)
-p.add_argument('--scope', choices=['alpha', 'progressive', 'partition'], default='alpha')
+p.add_argument('--scope', choices=['alpha', 'progressive', 'partition', 'admission'], default='alpha')
 a = p.parse_args()
 if a.output.exists():
     p.error('refusing existing result')
@@ -39,6 +39,11 @@ if a.scope == 'progressive':
     ]}
 elif a.scope == 'partition':
     functions = {'jxl-encoder/src/vardct/extras.rs': ['partition']}
+if a.scope == 'admission':
+    functions = {
+        'jxl-encoder/src/vardct/extras.rs': ['build_alpha_squeeze_pipeline'],
+        'jxl-encoder/src/modular/squeeze.rs': ['default_squeeze_params_for_groups'],
+    }
 rows = []
 for relative, names in functions.items():
     for name in names:
@@ -77,6 +82,11 @@ for relative, names in functions.items():
                 counts[key] = max(counts.get(key, 0), value)
         assert counts, ('no mapped code regions', name)
         row = dict(function=name, file=relative,
+                   input_archives=[str(archive) for archive, _ in inputs],
+                   input_test_exit_codes=[
+                       json.loads((archive / 'identity.json').read_text()).get('exit_code')
+                       if (archive / 'identity.json').is_file() else None
+                       for archive, _ in inputs],
                    body_sha256=hashlib.sha256(bodies[0].encode()).hexdigest(),
                    source_spans=spans, observed_per_input=observed,
                    covered=sum(value > 0 for value in counts.values()), total=len(counts),

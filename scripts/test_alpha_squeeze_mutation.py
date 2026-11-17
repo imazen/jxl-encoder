@@ -11,6 +11,7 @@ import sys
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('manifest', type=Path)
 p.add_argument('output', type=Path)
+p.add_argument('--case', action='append', default=[], help='run only named faults')
 a = p.parse_args()
 root = a.manifest.resolve().parent
 if (root / '.git').exists() or not (root.parent.parent / 'provenance.json').is_file():
@@ -31,13 +32,25 @@ cases = [
     ('global-prefix', 'jxl-encoder/src/vardct/extras.rs',
      'if global_prefix {', 'if { let _ = global_prefix; w <= group_dim && h <= group_dim } {',
      None, 'thin_alpha_global_partition'),
+    ('geometry-admission', 'jxl-encoder/src/vardct/extras.rs',
+     '__RESTORE_UNADMITTED_ALPHA_PLAN__',
+     '    let params = crate::modular::squeeze::default_squeeze_params(&mi);',
+     'alpha_squeeze_progressive', 'zz_elongated'),
 ]
+if set(a.case) - {case[0] for case in cases}:
+    p.error('unknown fault selection')
+if a.case:
+    cases = [case for case in cases if case[0] in a.case]
 for name, source, before, after, target, selection in cases:
     path = root / source
     original = path.read_text()
     if before == '__RESTORE_PLACEHOLDERS__':
         start = original.index('        // DecodeGroup compacts')
         end = original.index('        // ── GroupHeader', start)
+        before = original[start:end]
+    if before == '__RESTORE_UNADMITTED_ALPHA_PLAN__':
+        start = original.index('    let params = default_squeeze_params_for_groups(')
+        end = original.index('    )?;', start) + len('    )?;')
         before = original[start:end]
     assert original.count(before) == 1, (name, 'unique mutation site')
     (a.output / (name + '.before.rs')).write_text(original)
