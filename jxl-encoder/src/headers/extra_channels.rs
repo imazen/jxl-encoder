@@ -135,6 +135,29 @@ impl Default for ExtraChannelInfo {
 }
 
 impl ExtraChannelInfo {
+    /// Check semantic limits before serializing any part of the bundle.
+    pub(crate) fn validate(&self) -> Result<()> {
+        let invalid = |message: &str| crate::error::Error::InvalidInput(message.into());
+        if self.dim_shift > 3 {
+            return Err(invalid("extra-channel dim_shift must be within 0..=3"));
+        }
+        if self.name.len() > 1071 {
+            return Err(invalid("extra-channel name exceeds 1071 bytes"));
+        }
+        if self.ec_type == ExtraChannelType::Cfa && self.cfa_channel > 274 {
+            return Err(invalid("extra-channel CFA index must be within 0..=274"));
+        }
+        if self.ec_type == ExtraChannelType::SpotColor {
+            for &value in &self.spot_color {
+                crate::f16::f16_roundtrip(value)?;
+            }
+            if !(0.0..=1.0).contains(&self.spot_color[3]) {
+                return Err(invalid("spot-color solidity must be within [0,1]"));
+            }
+        }
+        Ok(())
+    }
+
     /// Creates an alpha channel with default settings.
     pub fn alpha() -> Self {
         Self {
@@ -162,6 +185,7 @@ impl ExtraChannelInfo {
 
     /// Writes the extra channel info to the bitstream.
     pub fn write(&self, writer: &mut BitWriter) -> Result<()> {
+        self.validate()?;
         // d_alpha flag (true if this is default alpha)
         let d_alpha = self.is_default_alpha();
         writer.write_bit(d_alpha)?;
@@ -551,5 +575,136 @@ mod tests {
         let mut writer = BitWriter::new();
         alpha.write(&mut writer).unwrap();
         assert!(writer.bits_written() > 1);
+    }
+}
+
+#[cfg(test)]
+mod metadata_limit_tests {
+    use super::*;
+    #[test]
+    fn extra_metadata_legal_fields_match_unmodified_v012() {
+        // scripts/extra_metadata_oracle.cc, libjxl v0.12.0 a7a9c78 Bundle::Write.
+        for (kind, shift, cfa, solidity, bits, expected) in [
+            (ExtraChannelType::Depth, 0, 0, 0.0, 10, "0200"),
+            (ExtraChannelType::Depth, 3, 0, 0.0, 10, "4200"),
+            (ExtraChannelType::Cfa, 0, 0, 0.0, 18, "1c4000"),
+            (ExtraChannelType::Cfa, 0, 274, 0.0, 24, "1cc0ff"),
+            (
+                ExtraChannelType::SpotColor,
+                0,
+                0,
+                0.0,
+                78,
+                "04000030000e00100000",
+            ),
+            (
+                ExtraChannelType::SpotColor,
+                0,
+                0,
+                1.0,
+                78,
+                "04000030000e0010000f",
+            ),
+        ] {
+            let info = ExtraChannelInfo {
+                ec_type: kind,
+                dim_shift: shift,
+                cfa_channel: cfa,
+                spot_color: [-2.0, 0.5, 2.0, solidity],
+                ..Default::default()
+            };
+            let mut writer = BitWriter::new();
+            info.write(&mut writer).unwrap();
+            assert_eq!(writer.bits_written(), bits);
+            let actual: String = writer
+                .finish_with_padding()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect();
+            assert_eq!(actual, expected);
+        }
+        for len in [0, 15, 16, 47, 48, 1071] {
+            let info = ExtraChannelInfo {
+                name: "a".repeat(len),
+                ..ExtraChannelInfo::depth()
+            };
+            info.write(&mut BitWriter::new()).unwrap();
+        }
+        ExtraChannelInfo::alpha()
+            .write(&mut BitWriter::new())
+            .unwrap();
+        ExtraChannelInfo {
+            alpha_associated: true,
+            ..ExtraChannelInfo::alpha()
+        }
+        .write(&mut BitWriter::new())
+        .unwrap();
+        for value in [-65504.0, 65504.0, -1.0e-10, 1.0e-10] {
+            ExtraChannelInfo::spot_color([value, 0.0, 0.0, 0.5])
+                .write(&mut BitWriter::new())
+                .unwrap();
+        }
+        // Unserialized fields cannot restrict an unrelated channel type.
+        ExtraChannelInfo {
+            cfa_channel: u32::MAX,
+            spot_color: [f32::NAN; 4],
+            ..ExtraChannelInfo::depth()
+        }
+        .write(&mut BitWriter::new())
+        .unwrap();
+    }
+    #[test]
+    fn extra_metadata_invalid_writer_is_atomic() {
+        let mut cases = Vec::new();
+        for shift in [4, 8, 31, u32::MAX] {
+            cases.push(ExtraChannelInfo {
+                dim_shift: shift,
+                ..ExtraChannelInfo::depth()
+            });
+        }
+        for cfa in [275, u32::MAX] {
+            cases.push(ExtraChannelInfo {
+                ec_type: ExtraChannelType::Cfa,
+                cfa_channel: cfa,
+                ..Default::default()
+            });
+        }
+        for solidity in [-0.001, 2.0, f32::NAN, f32::INFINITY] {
+            cases.push(ExtraChannelInfo::spot_color([0.0, 0.0, 0.0, solidity]));
+        }
+        for component in [f32::NAN, f32::INFINITY, 65536.0, -65536.0] {
+            cases.push(ExtraChannelInfo::spot_color([component, 0.0, 0.0, 1.0]));
+        }
+        cases.push(ExtraChannelInfo {
+            name: "a".repeat(1072),
+            ..ExtraChannelInfo::depth()
+        });
+        let mut failures = Vec::new();
+        for (index, info) in cases.iter().enumerate() {
+            let mut writer = BitWriter::new();
+            writer.write(5, 19).unwrap();
+            let before = writer.bits_written();
+            let result =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| info.write(&mut writer)));
+            if !matches!(result, Ok(Err(_))) || writer.bits_written() != before {
+                failures.push(format!(
+                    "case {index}: {result:?}, bits {} -> {}",
+                    before,
+                    writer.bits_written()
+                ));
+            }
+            let mut header = crate::headers::file_header::FileHeader::new_rgb(32, 17);
+            header.metadata.extra_channels.push(info.clone());
+            let mut writer = BitWriter::new();
+            writer.write(5, 19).unwrap();
+            let result = header.write(&mut writer);
+            if result.is_ok() || writer.bits_written() != 5 {
+                failures.push(format!(
+                    "file header case {index}: {result:?}, bits {}",
+                    writer.bits_written()
+                ));
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
     }
 }

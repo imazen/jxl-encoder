@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+- Reject out-of-range extra-channel shifts, CFA indices, names and spot-color
+  fields before writing header bits; validate request and prepared extras
+  before image/coefficient work.
+
 - Validate parametric color numbers before encoding, preserve valid zero-y
   primaries, and decode explicit gamma input over its full exponent range.
   Recheck changed streaming color/gamma settings before accepting rows.

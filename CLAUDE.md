@@ -863,6 +863,17 @@ checklist) were archived to [docs/CODE-HISTORY.md](docs/CODE-HISTORY.md)
 
 ## Resolved Bugs
 
+### RESOLVED 2026-11-17: extra-channel metadata bounds and atomic admission
+
+Shared validation now refuses shift 4, CFA 275, oversized names and invalid
+spot fields before header writes. Public requests and direct/prepared/
+prequantized extras validate before image/coefficient work. Actual before
+regressions, unmodified v0.12 field bytes, both-decoder default/minimal/stride
+controls, fault replays, unchanged broad baselines, strict lint and explicit
+region gaps are recorded in [EXTRA_METADATA_CONTRACT.md](docs/EXTRA_METADATA_CONTRACT.md).
+Black/CMYK profile requirements and missing animation Black remain separate.
+
+
 ### RESOLVED 2026-11-04: strict faster-decoding DC quantizer selection
 
 `9a0f6931` extends the existing `dc_encode_libjxl_parity` permission to

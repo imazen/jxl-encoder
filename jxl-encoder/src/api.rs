@@ -6698,6 +6698,9 @@ impl<'a> EncodeRequest<'a> {
             self.layout,
             self.metadata.and_then(|metadata| metadata.icc_profile),
         )?;
+        for extra in self.extra_channels {
+            extra.info.validate().map_err(at_from)?;
+        }
         // Defensive caps on caller-supplied metadata buffers (see
         // `validate_metadata_sizes` for rationale).
         validate_metadata_sizes(
@@ -7573,19 +7576,7 @@ impl<'a> EncodeRequest<'a> {
         // added to the modular image and its `ExtraChannelInfo` is
         // written into the file header.
         for (idx, ec) in self.extra_channels.iter().enumerate() {
-            // dim_shift > 30 cannot correspond to a real channel (the max
-            // image dimension is 2^30) and would overflow the modular
-            // writer's per-group region shifts; reject it up front instead
-            // of relying on the `.min(31)` cap inside `downsampled_dims`
-            // (which only protects the length check below).
-            if ec.info.dim_shift > 30 {
-                return Err(EncodeError::InvalidInput {
-                    message: format!(
-                        "extra_channels[{idx}]: dim_shift {} exceeds the maximum of 30",
-                        ec.info.dim_shift
-                    ),
-                });
-            }
+            ec.info.validate().map_err(EncodeError::from)?;
             let (ec_w, ec_h) = ec.downsampled_dims(w, h);
             let len = ec.data.len();
             if len != ec_w * ec_h {

@@ -2768,3 +2768,10 @@ controls, minimal build, both original-request/forget-regular mutations, library
 baseline, unchanged locks and strict feature/workspace lint pass. The changed
 schedule window covers 3/3 regions; all 204 observed Single hashes are unchanged.
 Remaining layout inventory is tracked separately in the progressive contract.
+
+
+## Issue 144 extra-channel metadata bounds
+
+| Site | Encoder | libjxl v0.12 / format | Status |
+|---|---|---|---|
+| `ExtraChannelInfo::validate`, request/direct/prepared/prequantized entry and file-header writers | Shared shift 0–3, name ≤1071 bytes, CFA 0–274, finite binary16 spot components, solidity [0,1]; check before output mutation | Bundle writer refuses shift 4/CFA 275 but public setter accepts them. Bundle writer also accepts solidity 2; Part 1 D.3.6/L.4 supplies the semantic limit. | RESOLVED H9 metadata bounds; actual before, final controls and explicit region gaps in [EXTRA_METADATA_CONTRACT.md](EXTRA_METADATA_CONTRACT.md). All strategies share the correction; no registry gate/value/metadata changes. H10 Black/CMYK remains open. |

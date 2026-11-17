@@ -3651,6 +3651,7 @@ impl VarDctEncoder {
         // dimensions + bit depth + dim_shift up-front before any work.
         let mut views: Vec<super::extras::VardctExtra<'_>> = Vec::with_capacity(extras.len());
         for (idx, ec) in extras.iter().enumerate() {
+            ec.info().validate()?;
             if ec.info().dim_shift != 0 {
                 return Err(Error::InvalidInput(format!(
                     "extras[{idx}]: dim_shift = {} not yet supported in lossy encode (dim_shift > 0 \
@@ -7224,6 +7225,7 @@ impl VarDctEncoder {
         let mut extras_views: Vec<super::extras::VardctExtra<'_>> =
             Vec::with_capacity(extras.len());
         for (idx, ec) in extras.iter().enumerate() {
+            ec.info().validate()?;
             if ec.info().dim_shift != 0 {
                 return Err(Error::InvalidInput(format!(
                     "extras[{idx}]: dim_shift = {} not yet supported in lossy encode (dim_shift > 0 \
@@ -7780,6 +7782,7 @@ impl VarDctEncoder {
         let mut extras_views: Vec<super::extras::VardctExtra<'_>> =
             Vec::with_capacity(extras.len());
         for (idx, ec) in extras.iter().enumerate() {
+            ec.info().validate()?;
             if ec.info().dim_shift != 0 {
                 return Err(Error::InvalidInput(format!(
                     "extras[{idx}]: dim_shift = {} not yet supported in lossy encode (dim_shift > 0 \

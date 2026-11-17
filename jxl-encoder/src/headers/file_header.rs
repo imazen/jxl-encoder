@@ -501,6 +501,9 @@ impl FileHeader {
         // admission, and a positive f32 peak can serialize as binary16 zero.
         let meta = &self.metadata;
         meta.color_encoding.validate_parametric()?;
+        for extra in &meta.extra_channels {
+            extra.validate()?;
+        }
         let peak = crate::f16::f16_roundtrip(meta.intensity_target)?;
         let minimum = crate::f16::f16_roundtrip(meta.min_nits)?;
         let linear_below = crate::f16::f16_roundtrip(meta.linear_below)?;
