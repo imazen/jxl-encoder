@@ -9,6 +9,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import tomllib
 
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('manifest', type=Path)
@@ -35,7 +36,16 @@ if a.test_target:
         if name not in names:
             names.append(name)
     os.environ[key] = ','.join(names)
-    os.utime(root / a.package / 'tests' / (a.test_target + '.rs'), None)
+    manifest = tomllib.loads((root / a.package / 'Cargo.toml').read_text())
+    registered = next((t for t in manifest.get('test', []) if t['name'] == a.test_target), None)
+    if registered and 'path' in registered:
+        test_source = root / a.package / registered['path']
+    else:
+        test_source = root / a.package / 'tests' / (a.test_target + '.rs')
+        if not test_source.is_file():
+            test_source = root / a.package / 'tests' / a.test_target / 'main.rs'
+    assert test_source.is_file(), 'missing selected Cargo test source: ' + str(test_source)
+    os.utime(test_source, None)
 command = ['cargo', 'test', '--locked', '--manifest-path', str(a.manifest),
            '-p', a.package, '--features', a.features, '--no-run', '--message-format=json']
 if a.no_default_features:
@@ -57,7 +67,7 @@ for relative in a.source:
         p.error('required relative source file missing: ' + str(relative))
     source_paths.append(root / relative)
 if a.test_target:
-    source_paths += [root / a.package / 'tests' / (a.test_target + '.rs')]
+    source_paths += [test_source]
     source_paths += list((root / 'jxl-encoder/tests/support').glob('*.rs'))
 for source in sorted(source_paths):
     dest = a.output / 'source' / source.relative_to(root)

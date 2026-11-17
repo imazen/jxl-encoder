@@ -18,6 +18,16 @@ if (root / '.git').exists() or not (root.parent.parent / 'provenance.json').is_f
     p.error('requires an owned clean-source export')
 a.output.mkdir(exist_ok=False)
 cases = [
+    ('animation-alpha-u8', 'jxl-encoder/src/api/animate.rs',
+     '__FLOAT_ALPHA_CODING__', '    let float_alpha_coding: Option<AlphaCoding> = None;',
+     'progressive_ac_contract', 'animation_float_alpha_preserves_source_precision'),
+    ('animation-alpha-first-frame', 'jxl-encoder/src/api/animate.rs',
+     'frames.iter().flat_map(|frame| {', 'frames.iter().take(1).flat_map(|frame| {',
+     'progressive_ac_contract', 'animation_alpha_policy_precision_matrix'),
+    ('animation-rounded-visibility', 'jxl-encoder/src/api/animate.rs',
+     'exact_visibility.as_ref().or(alpha.as_ref())',
+     '{ let _ = &exact_visibility; alpha.as_ref() }',
+     'progressive_ac_contract', 'animation_nonzero_alpha_is_visible_to_simplification'),
     ('reference-requested-passes', 'jxl-encoder/src/api/animate.rs',
      '__REFERENCE_PASS_SCHEDULE__', '        enc.progressive = cfg.progressive;',
      'progressive_ac_contract', 'progressive_reference_only'),
@@ -56,10 +66,14 @@ if a.case:
     cases = [case for case in cases if case[0] in a.case]
 else:
     # Preserve the established alpha-only default selection.
-    cases = [case for case in cases if case[0] not in ('ac-flat-prefix', 'static-progressive', 'reference-requested-passes', 'reference-forget-regular')]
+    cases = [case for case in cases if case[0] in ('survivor-multiplier', 'empty-payload', 'non-lz-context-map', 'global-prefix', 'geometry-admission')]
 for name, source, before, after, target, selection in cases:
     path = root / source
     original = path.read_text()
+    if before == '__FLOAT_ALPHA_CODING__':
+        start = original.index('    let float_alpha_coding =')
+        end = original.index('    });', start) + len('    });')
+        before = original[start:end]
     if before == '__REFERENCE_PASS_SCHEDULE__':
         start = original.index('        enc.progressive = if frame.reference_only {')
         end = original.index('        };', start) + len('        };')
@@ -84,7 +98,9 @@ for name, source, before, after, target, selection in cases:
         path.write_text(mutated)
         command = [sys.executable, str(Path(__file__).with_name('run_selected_test_evidence.py')),
                    str(a.manifest), str(a.output / name), selection,
-                   '--source', source, '--source', 'jxl-encoder/src/vardct/bitstream.rs',
+                   '--source', source, '--source', 'jxl-encoder/src/api.rs',
+                   '--source', 'jxl-encoder/src/api/ingest.rs',
+                   '--source', 'jxl-encoder/src/vardct/bitstream.rs',
                    '--source', 'jxl-encoder/tests/images/frymire.png',
                    '--source', 'jxl-encoder/src/vardct/ac_group.rs',
                    '--source', 'jxl-encoder/src/vardct/progressive_ac_token_tests.rs',

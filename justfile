@@ -1709,8 +1709,57 @@ progressive-ac-typed-animation-evidence manifest output coverage_env:
 progressive-ac-typed-minimal-evidence manifest output coverage_env:
     bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" progressive_typed --test-target progressive_ac_contract --no-default-features --features std,convenience,__expert --source jxl-encoder/src/vardct/bitstream.rs --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/api.rs --source jxl-encoder/tests/images/frymire.png' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
 
+animation-alpha-source-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" animation_float_alpha_preserves_source_precision --test-target progressive_ac_contract --features __expert,parallel --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/ingest.rs --source jxl-encoder/tests/images/frymire.png' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
 animation-alpha-native source build output:
     python3 scripts/frame_header_oracle.py --component animation_alpha {{quote(source)}} {{quote(build)}} {{quote(output)}}
 
 animation-alpha-native-check log djxl output:
     python3 scripts/check_animation_alpha_native.py {{quote(log)}} {{quote(djxl)}} {{quote(output)}}
+
+animation-alpha-visibility-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" animation_nonzero_alpha_is_visible_to_simplification --test-target progressive_ac_contract --features __expert,parallel --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/ingest.rs --source jxl-encoder/tests/images/frymire.png' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+animation-alpha-matrix-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" animation_ --test-target progressive_ac_contract --features __expert,parallel --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/ingest.rs --source jxl-encoder/tests/images/frymire.png' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+animation-alpha-faults manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/test_alpha_squeeze_mutation.py "$2" "$3" --case animation-alpha-u8 --case animation-alpha-first-frame --case animation-rounded-visibility' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+animation-alpha-minimal-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" animation_ --test-target progressive_ac_contract --no-default-features --features std,convenience,__expert --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/ingest.rs --source jxl-encoder/tests/images/frymire.png' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+animation-alpha-existing-precision manifest:
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test it --no-report -- lossy_alpha_precision --test-threads=1
+
+animation-alpha-regions llvm archive output:
+    python3 scripts/animation_alpha_coverage.py {{quote(llvm)}} {{quote(archive)}} {{quote(output)}}
+
+animation-alpha-still-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" lossy_alpha_precision --test-target it --features __expert,parallel --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/ingest.rs --source jxl-encoder/tests/it/lossy_alpha_precision.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+animation-alpha-validation manifest artifacts coverage_env lint_home lint_target:
+    just animation-alpha-minimal-evidence {{quote(manifest)}} {{quote(artifacts + "/animation-alpha-minimal")}} {{quote(coverage_env)}}
+    just animation-alpha-faults {{quote(manifest)}} {{quote(artifacts + "/animation-alpha-faults")}} {{quote(coverage_env)}}
+    just animation-alpha-still-evidence {{quote(manifest)}} {{quote(artifacts + "/animation-alpha-still")}} {{quote(coverage_env)}}
+    just alpha-squeeze-broad-baseline {{quote(manifest)}}
+    env CARGO_HOME={{quote(lint_home)}} CARGO_TARGET_DIR={{quote(lint_target)}} just progressive-reference-final-lint {{quote(manifest)}}
+    env CARGO_HOME={{quote(lint_home)}} CARGO_TARGET_DIR={{quote(lint_target)}} cargo +1.100.0 clippy --locked --manifest-path {{quote(manifest)}} --workspace --all-targets -- -D warnings
+
+animation-alpha-combined-regions llvm animation still output:
+    python3 scripts/animation_alpha_coverage.py {{quote(llvm)}} {{quote(animation)}} {{quote(output)}} --support {{quote(still)}}
+
+animation-alpha-validation-rest manifest artifacts coverage_env lint_home lint_target:
+    just animation-alpha-still-evidence {{quote(manifest)}} {{quote(artifacts + "/animation-alpha-still-registered-path")}} {{quote(coverage_env)}}
+    just alpha-squeeze-broad-baseline {{quote(manifest)}}
+    env CARGO_HOME={{quote(lint_home)}} CARGO_TARGET_DIR={{quote(lint_target)}} just progressive-reference-final-lint {{quote(manifest)}}
+    env CARGO_HOME={{quote(lint_home)}} CARGO_TARGET_DIR={{quote(lint_target)}} cargo +1.100.0 clippy --locked --manifest-path {{quote(manifest)}} --workspace --all-targets -- -D warnings
+
+animation-alpha-delta-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" animation_identical_delta --test-target progressive_ac_contract --features __expert,parallel --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/ingest.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+animation-alpha-final-evidence manifest artifacts coverage_env llvm lint_home lint_target:
+    just animation-alpha-delta-evidence {{quote(manifest)}} {{quote(artifacts + "/animation-alpha-identical-delta")}} {{quote(coverage_env)}}
+    just animation-alpha-combined-regions {{quote(llvm)}} {{quote(artifacts + "/animation-alpha-minimal")}} {{quote(artifacts + "/animation-alpha-still-registered-path")}} {{quote(artifacts + "/animation-alpha-region-report")}}
+    env CARGO_HOME={{quote(lint_home)}} CARGO_TARGET_DIR={{quote(lint_target)}} cargo +1.100.0 clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel,corpus-tests,rate-control --test progressive_ac_contract -- -D warnings
