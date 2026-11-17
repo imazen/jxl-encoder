@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+- Classify already-downsampled output using its checked display dimensions,
+  reject unrepresentable display extents before input work, and reject spatial
+  resampling on the optional subsampled coefficient path.
+
 - Reject out-of-range extra-channel shifts, CFA indices, names and spot-color
   fields before writing header bits; validate request and prepared extras
   before image/coefficient work (`bec4eaa7`).

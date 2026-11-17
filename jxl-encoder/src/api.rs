@@ -4568,7 +4568,7 @@ impl LossyConfig {
     /// The three subsampled modes support RGB8 still images when both
     /// `chroma-subsampling` and `jpeg-reencoding` are enabled, through
     /// the JPEG-shaped YCbCr coefficient path. Other layouts, additional
-    /// extra channels and subsampled animations return
+    /// extra channels, spatial resampling and subsampled animations return
     /// [`EncodeError::InvalidConfig`]. See [`ChromaSubsampling`] for
     /// the per-mode shifts and supported feature combinations.
     pub fn with_chroma_subsampling(mut self, mode: ChromaSubsampling) -> Self {
@@ -6855,9 +6855,10 @@ impl<'a> EncodeRequest<'a> {
             || self.extra_channels.iter().any(|ec| {
                 ec.info.ec_type == crate::headers::extra_channels::ExtraChannelType::Black
             });
+        let (display_width, display_height) = self.display_dimensions().map_err(at_from)?;
         let level = compute_required_level(
-            self.width,
-            self.height,
+            display_width,
+            display_height,
             num_ec,
             has_black,
             icc_size,
@@ -6973,6 +6974,17 @@ impl<'a> EncodeRequest<'a> {
     }
 
     fn check_limits(&self) -> Result<()> {
+        if let ConfigRef::Lossy(config) = self.config
+            && !config.chroma_subsampling.is_full()
+            && config.effective_resampling() > 1
+        {
+            return Err(at!(EncodeError::InvalidConfig {
+                message:
+                    "spatial resampling is not supported by the subsampled RGB8 coefficient path"
+                        .into(),
+            }));
+        }
+        self.display_dimensions().map_err(at_from)?;
         let Some(limits) = self.limits else {
             return Ok(());
         };
@@ -7026,6 +7038,24 @@ impl<'a> EncodeRequest<'a> {
             }
         }
         Ok(())
+    }
+
+    /// The SizeHeader extent; input admission still budgets the supplied rows.
+    fn display_dimensions(&self) -> crate::error::Result<(u32, u32)> {
+        let factor = match self.config {
+            ConfigRef::Lossy(config) if config.already_downsampled => config.effective_resampling(),
+            _ => 1,
+        };
+        let overflow = || {
+            crate::error::Error::InvalidInput(format!(
+                "already-downsampled display dimensions {}x{} times {factor} overflow u32",
+                self.width, self.height
+            ))
+        };
+        let width = self.width.checked_mul(factor).ok_or_else(overflow)?;
+        let height = self.height.checked_mul(factor).ok_or_else(overflow)?;
+        crate::headers::file_header::FileHeader::validate_display_dimensions(width, height)?;
+        Ok((width, height))
     }
 
     /// Maximum of butteraugli/ssim2/zensim iters across the loop knobs
@@ -8971,9 +9001,7 @@ impl<'a> EncodeRequest<'a> {
         // deliberately keeps the product, because there the caller
         // passes post-downsample dims and asks for `dims × N`.
         enc.upsampling = effective_resampling;
-        if effective_resampling > 1 && !cfg.already_downsampled {
-            enc.display_dims = Some((w as u32, h as u32));
-        }
+        enc.display_dims = Some(self.display_dimensions()?);
         // Custom upsampling LUT selection (libjxl
         // `JxlEncoderSetUpsamplingMode`). The encoder records the
         // mode on the file-header builder; the LUT itself is emitted

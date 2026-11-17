@@ -1779,6 +1779,24 @@ misclassify that CLI limitation as an invalid stream or strip the ICC to hide it
 
 ## Known Bugs (ACTIVE)
 
+### RESOLVED 2026-11-17: already-downsampled display level and extent validation
+
+The actual 32769×1/factor-eight header advertises 262152×8, but its wrapper
+previously declared Level 5 under every offered policy. The request now shares
+checked display dimensions between the header and level classifier. Both axes,
+adjacent Level-5 controls, request/legacy/writer/stride/streaming and canonicalized
+input render fully through primary Rust and djxl v0.12. All retained compressed
+payloads remain byte-identical. Invalid extents fail before missing-row work;
+raw file-header guards preserve existing output bits. The optional subsampled
+RGB8 coefficient path now refuses spatial resampling, which it previously
+ignored. Factor-one controls retain full rendering.
+
+[Contract, exact evidence and gaps](docs/DISPLAY_EXTENT_CONTRACT.md). Existing
+library/byte-lock/drift expectations remain unchanged. Animation resampling
+settings still need an executed entry-path control; clock order and cumulative
+zero-duration area remain separate open work. No full-input/platform coverage
+claim follows from these selected geometry checks.
+
 
 ### 2026-11-17: ICC output did not validate consumed source parameters
 

@@ -497,6 +497,7 @@ impl FileHeader {
 
     /// Writes the complete file header (signature + size + metadata + transform_data).
     pub fn write(&self, writer: &mut BitWriter) -> Result<()> {
+        Self::validate_display_dimensions(self.width, self.height)?;
         // Validate the wire values too: internal header builders bypass API
         // admission, and a positive f32 peak can serialize as binary16 zero.
         let meta = &self.metadata;
@@ -528,6 +529,20 @@ impl FileHeader {
         // For simple images, all_default = true (just 1 bit)
         self.write_transform_data(writer)?;
         crate::trace::debug_eprintln!("FHDR [bit {}]: After transform_data", writer.bits_written());
+        Ok(())
+    }
+
+    /// Bounds shared by SizeHeader emission and public container selection.
+    pub(crate) fn validate_display_dimensions(width: u32, height: u32) -> Result<()> {
+        if width == 0
+            || height == 0
+            || crate::container::compute_codestream_level(width, height, 0, false, 0, true)
+                .is_none()
+        {
+            return Err(crate::error::Error::InvalidInput(format!(
+                "display dimensions {width}x{height} exceed JPEG XL dimension or pixel limits"
+            )));
+        }
         Ok(())
     }
 
@@ -1189,5 +1204,47 @@ mod tests {
         let bytes = writer.finish_with_padding();
         // Should start with JXL signature
         assert_eq!(&bytes[0..2], &[0xFF, 0x0A]);
+    }
+}
+
+#[cfg(test)]
+mod display_geometry_tests {
+    use super::*;
+    #[test]
+    fn legal_file_header_display_boundaries_write_without_allocating_pixels() {
+        for (width, height) in [
+            (1, 1),
+            (1_u32 << 30, 1),
+            (1, 1_u32 << 30),
+            (1_u32 << 20, 1_u32 << 20),
+            (1_u32 << 30, 1024),
+        ] {
+            let mut writer = BitWriter::new();
+            FileHeader::new_rgb(width, height)
+                .write(&mut writer)
+                .unwrap();
+            assert!(writer.bits_written() > 16);
+        }
+    }
+    #[test]
+    fn invalid_file_header_display_extent_is_atomic() {
+        for (width, height) in [
+            (0, 1),
+            (1, 0),
+            (1_u32 << 31, 1),
+            (1, 1_u32 << 31),
+            (1_u32 << 21, 1_u32 << 21),
+        ] {
+            let mut writer = BitWriter::new();
+            writer.write(5, 19).unwrap();
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                FileHeader::new_rgb(width, height).write(&mut writer)
+            }));
+            assert!(
+                matches!(result, Ok(Err(_))) && writer.bits_written() == 5,
+                "{width}x{height}: {result:?}, changed bits {}",
+                writer.bits_written()
+            );
+        }
     }
 }

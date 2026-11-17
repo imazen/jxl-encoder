@@ -2775,3 +2775,11 @@ Remaining layout inventory is tracked separately in the progressive contract.
 | Site | Encoder | libjxl v0.12 / format | Status |
 |---|---|---|---|
 | `ExtraChannelInfo::validate`, request/direct/prepared/prequantized entry and file-header writers | Shared shift 0–3, name ≤1071 bytes, CFA 0–274, finite binary16 spot components, solidity [0,1]; check before output mutation | Bundle writer refuses shift 4/CFA 275 but public setter accepts them. Bundle writer also accepts solidity 2; Part 1 D.3.6/L.4 supplies the semantic limit. | RESOLVED H9 metadata bounds; actual before, final controls and explicit region gaps in [EXTRA_METADATA_CONTRACT.md](EXTRA_METADATA_CONTRACT.md). All strategies share the correction; no registry gate/value/metadata changes. H10 Black/CMYK remains open. |
+
+
+## Issue 144 display extent and container levels
+
+| Site | Encoder | libjxl v0.12 / format | Status |
+|---|---|---|---|
+| `EncodeRequest::display_dimensions`, container selection and `FileHeader::write` | Checked `input × effective_resampling` for already-downsampled input; one shared display extent for header and level, absolute bounds before output writes | Native public width controls select Level 5 at 262144 and Level 10 at 262152. Part 1 D.2/F.2 and Annex M define display geometry and level bounds. | Still/streaming dimension defect repaired; selected actual streams, faults and remaining caller gaps in [DISPLAY_EXTENT_CONTRACT.md](DISPLAY_EXTENT_CONTRACT.md). No registry gate/value/metadata changes. |
+| Optional subsampled RGB8 admission | Reject `!Full444 && effective_resampling() > 1`, including automatic and already-downsampled requests | The format supports frame upsampling; this JPEG-shaped coefficient adapter has no spatial-resampling implementation. Before runs actually emit the unscaled input dimensions. | Explicit unsupported-combination refusal shared by policies; factor-one positive controls retain rendering. No new strategy gate. |
