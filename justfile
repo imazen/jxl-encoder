@@ -2204,3 +2204,72 @@ extra-metadata-all-header-evidence manifest output coverage_env:
 extra-metadata-complete-regions manifest artifacts coverage_env llvm:
     just extra-metadata-all-header-evidence {{quote(manifest)}} {{quote(artifacts + "/extra-metadata-all-header-final")}} {{quote(coverage_env)}}
     just extra-metadata-regions {{quote(llvm)}} {{quote(artifacts + "/extra-metadata-regions-final")}} {{quote(artifacts + "/extra-metadata-complete/writer")}} {{quote(artifacts + "/extra-metadata-complete/public")}} {{quote(artifacts + "/extra-metadata-complete/prepared")}} {{quote(artifacts + "/extra-metadata-complete/minimal")}} {{quote(artifacts + "/extra-metadata-header-final")}} {{quote(artifacts + "/extra-metadata-admission-final")}} {{quote(artifacts + "/extra-metadata-all-header-final")}}
+
+resampled-level-before-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" already_downsampled_level --test-target animation_level_contract --features __expert,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/ingest.rs --source jxl-encoder/src/container.rs --source jxl-encoder/src/vardct/bitstream.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+clock-level-native source build oracle output:
+    python3 scripts/frame_header_oracle.py --component clock_level {{quote(source)}} {{quote(build)}} {{quote(oracle)}}
+    {{quote(oracle)}} {{quote(output)}}
+
+resampled-display-overflow-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" already_downsampled_invalid --test-target animation_level_contract --features __expert,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/headers/file_header.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+resampled-header-geometry-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" display_geometry_tests --features __expert,parallel --source jxl-encoder/src/headers/file_header.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+resampled-level-candidate-evidence manifest artifacts coverage_env:
+    just resampled-header-geometry-evidence {{quote(manifest)}} {{quote(artifacts + "/resampled-header-geometry-after")}} {{quote(coverage_env)}}
+    just resampled-level-before-evidence {{quote(manifest)}} {{quote(artifacts + "/resampled-level-after")}} {{quote(coverage_env)}}
+    just resampled-display-overflow-evidence {{quote(manifest)}} {{quote(artifacts + "/resampled-display-overflow-after")}} {{quote(coverage_env)}}
+
+resampled-display-controls manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" resampling_display_extent_controls --test-target animation_level_contract --features __expert,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/headers/file_header.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+resampled-display-faults manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/test_alpha_squeeze_mutation.py "$2" "$3" --case display-level --case display-header --case display-admission --case display-width-overflow --case display-height-overflow --case display-header-admission' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+resampled-display-regions llvm output *archives:
+    python3 scripts/color_admission_coverage.py {{quote(llvm)}} {{quote(output)}} {{archives}} --display-extents
+
+resampled-display-controls-and-faults manifest artifacts coverage_env:
+    mkdir {{quote(artifacts)}}
+    just resampled-display-controls {{quote(manifest)}} {{quote(artifacts + "/controls")}} {{quote(coverage_env)}}
+    just resampled-display-faults {{quote(manifest)}} {{quote(artifacts + "/faults")}} {{quote(coverage_env)}}
+
+resampled-display-final-validation manifest artifacts coverage_env lint_home lint_target:
+    mkdir {{quote(artifacts)}}
+    just resampled-optional-evidence {{quote(manifest)}} {{quote(artifacts + "/optional")}} {{quote(coverage_env)}}
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3/minimal" "" --test-target animation_level_contract --no-default-features --features std,convenience,__expert --source jxl-encoder/src/api.rs --source jxl-encoder/src/headers/file_header.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    just alpha-squeeze-broad-baseline {{quote(manifest)}}
+    env CARGO_HOME={{quote(lint_home)}} CARGO_TARGET_DIR={{quote(lint_target)}} cargo +1.100.0 clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --lib --test animation_level_contract -- -D warnings
+    env CARGO_HOME={{quote(lint_home)}} CARGO_TARGET_DIR={{quote(lint_target)}} cargo +1.100.0 clippy --locked --manifest-path {{quote(manifest)}} --workspace --all-targets -- -D warnings
+    env CARGO_HOME={{quote(lint_home)}} CARGO_TARGET_DIR={{quote(lint_target)}} cargo +1.100.0 clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,chroma-subsampling,jpeg-reencoding --lib --test animation_level_contract -- -D warnings
+    cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder -p jxl-encoder-cli -p jxl-encoder-simd --check
+
+resampled-optional-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" optional_subsampling_refuses --test-target animation_level_contract --features __expert,parallel,chroma-subsampling,jpeg-reencoding --source jxl-encoder/src/api.rs --source jxl-encoder/src/headers/file_header.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+resampled-optional-after-and-fault manifest artifacts coverage_env:
+    mkdir {{quote(artifacts)}}
+    just resampled-optional-evidence {{quote(manifest)}} {{quote(artifacts + "/after")}} {{quote(coverage_env)}}
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/test_alpha_squeeze_mutation.py "$2" "$3/fault" --case display-optional' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+
+resampled-display-last-controls manifest artifacts coverage_env:
+    mkdir {{quote(artifacts)}}
+    just resampled-optional-evidence {{quote(manifest)}} {{quote(artifacts + "/optional-positive")}} {{quote(coverage_env)}}
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3/canonicalized" already_downsampled_canonicalized --test-target animation_level_contract --features __expert,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/headers/file_header.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+
+resampled-display-lint-continuation manifest lint_home lint_target:
+    env CARGO_HOME={{quote(lint_home)}} CARGO_TARGET_DIR={{quote(lint_target)}} cargo +1.100.0 clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --lib --test animation_level_contract -- -D warnings
+    env CARGO_HOME={{quote(lint_home)}} CARGO_TARGET_DIR={{quote(lint_target)}} cargo +1.100.0 clippy --locked --manifest-path {{quote(manifest)}} --workspace --all-targets -- -D warnings
+    env CARGO_HOME={{quote(lint_home)}} CARGO_TARGET_DIR={{quote(lint_target)}} cargo +1.100.0 clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,chroma-subsampling,jpeg-reencoding --lib --test animation_level_contract -- -D warnings
+    cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder -p jxl-encoder-cli -p jxl-encoder-simd --check
+
+resampled-display-final-continuation manifest artifacts coverage_env lint_home lint_target:
+    just resampled-display-last-controls {{quote(manifest)}} {{quote(artifacts)}} {{quote(coverage_env)}}
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3/canonicalized-minimal" already_downsampled_canonicalized --test-target animation_level_contract --no-default-features --features std,convenience,__expert --source jxl-encoder/src/api.rs --source jxl-encoder/src/headers/file_header.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3/lossless" display_extent_unscaled_lossless --test-target animation_level_contract --features __expert,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/headers/file_header.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    just resampled-display-lint-continuation {{quote(manifest)}} {{quote(lint_home)}} {{quote(lint_target)}}

@@ -18,6 +18,30 @@ if (root / '.git').exists() or not (root.parent.parent / 'provenance.json').is_f
     p.error('requires an owned clean-source export')
 a.output.mkdir(exist_ok=False)
 cases = [
+    ('display-optional', 'jxl-encoder/src/api.rs',
+     '            && config.effective_resampling() > 1', '            && false',
+     'animation_level_contract', 'optional_subsampling_refuses'),
+    ('display-level', 'jxl-encoder/src/api.rs',
+     '            display_width,\n            display_height,', '            self.width,\n            self.height,',
+     'animation_level_contract', 'already_downsampled_level'),
+    ('display-header', 'jxl-encoder/src/api.rs',
+     '        enc.display_dims = Some(self.display_dimensions()?);',
+     '        enc.display_dims = Some((self.width, self.height));',
+     'animation_level_contract', 'already_downsampled_level'),
+    ('display-admission', 'jxl-encoder/src/api.rs',
+     '        self.display_dimensions().map_err(at_from)?;\n', '',
+     'animation_level_contract', 'already_downsampled_invalid'),
+    ('display-width-overflow', 'jxl-encoder/src/api.rs',
+     'let width = self.width.checked_mul(factor).ok_or_else(overflow)?;',
+     'let width = self.width.wrapping_mul(factor);',
+     'animation_level_contract', 'already_downsampled_invalid'),
+    ('display-height-overflow', 'jxl-encoder/src/api.rs',
+     'let height = self.height.checked_mul(factor).ok_or_else(overflow)?;',
+     'let height = self.height.wrapping_mul(factor);',
+     'animation_level_contract', 'already_downsampled_invalid'),
+    ('display-header-admission', 'jxl-encoder/src/headers/file_header.rs',
+     '        Self::validate_display_dimensions(self.width, self.height)?;\n', '',
+     None, 'invalid_file_header_display_extent'),
     ('extra-shift', 'jxl-encoder/src/headers/extra_channels.rs',
      'if self.dim_shift > 3 {', 'if false {', None, 'metadata_limit_tests'),
     ('extra-cfa', 'jxl-encoder/src/headers/extra_channels.rs',
@@ -286,6 +310,8 @@ for name, source, before, after, target, selection in cases:
                    '--source', 'jxl-encoder/src/vardct/progressive_ac_v012.tsv',
                    '--source', 'jxl-encoder/src/vardct/alpha_squeeze_thin_v012.tsv',
                    '--source', 'jxl-encoder/src/vardct/progressive_brackets_v012.tsv']
+        if name == 'display-optional':
+            command += ['--features', '__expert,parallel,chroma-subsampling,jpeg-reencoding']
         if name.startswith('color-width-'):
             command += ['--features', '__expert,parallel,corpus-tests',
                         '--source', 'jxl-encoder/src/api/animate.rs',

@@ -17,6 +17,7 @@ p.add_argument('llvm', type=Path)
 p.add_argument('output', type=Path)
 p.add_argument('archives', nargs='+', type=Path)
 p.add_argument('--extra-metadata', action='store_true')
+p.add_argument('--display-extents', action='store_true')
 a = p.parse_args()
 a.output.mkdir(exist_ok=False)
 reports = []
@@ -86,6 +87,17 @@ def observe(relative, name, occurrence=0, window=False):
                      inputs=inputs, excluded_different_body=excluded, covered=sum(v > 0 for v in counts.values()), total=len(counts),
                      missing_relative_regions=[k for k, v in sorted(counts.items()) if not v]))
     print(json.dumps(rows[-1]))
+
+if a.display_extents:
+    observe('jxl-encoder/src/api.rs', 'display_dimensions')
+    observe('jxl-encoder/src/api.rs', 'check_limits', window=('if let ConfigRef::Lossy(config) = self.config', 11))
+    observe('jxl-encoder/src/api.rs', 'encode_prepared', window=('let (display_width, display_height)', 4))
+    observe('jxl-encoder/src/api.rs', 'encode_lossy', window=('enc.display_dims = Some(self.display_dimensions()?);', 1))
+    observe('jxl-encoder/src/headers/file_header.rs', 'validate_display_dimensions')
+    observe('jxl-encoder/src/headers/file_header.rs', 'write', occurrence=1, window=('Self::validate_display_dimensions(self.width, self.height)?;', 1))
+    (a.output / 'regions.json').write_text(json.dumps(dict(inputs=identities, functions=rows,
+        source_comparison='Exact function bodies; code-region keys relative to each declaration'), indent=2))
+    raise SystemExit(0)
 
 if a.extra_metadata:
     for name in ['validate', 'write', 'write_name_string_length', 'write_cfa_channel']:
