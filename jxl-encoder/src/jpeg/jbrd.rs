@@ -125,8 +125,7 @@ pub fn encode_jbrd(jpeg: &JpegData) -> Result<Vec<u8>> {
         // 17 count values (bit lengths 0-16)
         // U32(Val(0), Val(1), BitsOffset(3, 2), Bits(8))
         write_u32_jbrd(&mut writer, 0, &[0, 1], &[(3, 2), (8, 0)])?; // counts[0] = 0
-        for i in 0..16 {
-            let mut count = hc.counts[i];
+        for (i, mut count) in hc.counts.iter().copied().enumerate() {
             if i == max_depth_idx {
                 count += 1; // sentinel symbol at max depth
             }
