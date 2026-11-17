@@ -109,8 +109,24 @@ pub(crate) fn write_hybrid_data_histogram(
     histogram: &[u32],
     max_token: u32,
 ) -> Result<(Vec<u8>, Vec<u16>)> {
+    write_hybrid_data_histogram_with_contexts(writer, histogram, max_token, 1)
+}
+
+/// A shared Huffman histogram for one or more modular tree-leaf contexts.
+/// More than one context requires a map even when every entry selects zero.
+pub(crate) fn write_hybrid_data_histogram_with_contexts(
+    writer: &mut BitWriter,
+    histogram: &[u32],
+    max_token: u32,
+    num_contexts: usize,
+) -> Result<(Vec<u8>, Vec<u16>)> {
+    debug_assert!(num_contexts > 0);
     // lz77.enabled = 0
     writer.write(1, 0)?;
+    if num_contexts > 1 {
+        writer.write(1, 1)?; // simple context map
+        writer.write(2, 0)?; // every context selects histogram zero
+    }
     // use_prefix_code = 1
     writer.write(1, 1)?;
 

@@ -2632,3 +2632,20 @@ The retained before streams fail both decoders; repaired streams recover exact
 source samples. Selected geometry-region and mutation controls retain their
 allocation-error gap. Part 1 G.4.2 and H.6.2 apply.
 [Caller coverage and limits](SQUEEZE_CONTRACT.md).
+
+
+### Issue 144: local alpha-band contexts (I144-V3, resolved)
+
+The cropped alpha-squeeze section must build its property-zero tree from the
+ordered surviving channels, pairing each survivor with its own multiplier.
+Empty per-group sub-images write no modular bits; LfGlobal retains its header.
+The local repair follows v0.12 DecodeGroup's compact sub-image construction.
+A non-LZ77 section with multiple tree leaves also requires its entropy context
+map, even when all contexts select one histogram; the single-context writer
+alone cannot represent that header. The private context-aware adapter preserves
+existing one-context bits. Part 1 G.4.2, H.4.1 and C.2 apply. Native sample,
+public/engine caller, feature, mutation, unchanged-byte and strict lint controls
+pass. Selected coverage observes all four wrappers, 352/382 shared-section and
+33/40 adapter regions; serializer-error and unreachable-region gaps are retained
+in [the contract](ALPHA_SQUEEZE_CONTRACT.md). Progressive placement remains V2.
+No new strategy gate or public API is introduced.

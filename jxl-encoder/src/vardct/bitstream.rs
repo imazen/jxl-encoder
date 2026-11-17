@@ -5849,8 +5849,8 @@ impl VarDctEncoder {
     /// XYB color image):
     ///
     /// 1. `GroupHeader { use_global_tree=0, wp_default=1,
-    ///    nb_transforms = squeeze_params.len() }`.
-    /// 2. One `kSqueeze` transform descriptor per param via
+    ///    nb_transforms = 1 }` when the squeeze script is nonempty.
+    /// 2. One `kSqueeze` descriptor containing the full parameter list via
     ///    [`crate::modular::encode::write_squeeze_transform`] (already
     ///    spec-compliant — same encoder used by the lossless modular
     ///    path).
@@ -5911,13 +5911,8 @@ impl VarDctEncoder {
     /// decoder's `Rect(rect.x0() >> hshift, ..., rect.xsize() >> hshift,
     /// ...)` slicing in `dec_modular.cc:357`.
     ///
-    /// Returns `Ok(false)` if this DC group has no LF sub-channel data
-    /// to emit (rare — happens only if every LF sub-channel's crop is
-    /// empty). The caller should still emit a no-op GroupHeader for
-    /// the section if extras is non-empty so the decoder reads
-    /// something coherent — but in practice the partition guarantees
-    /// at least one nonempty channel per section, so `Ok(true)` is the
-    /// usual outcome.
+    /// Writes no bits when every selected channel's crop is empty, matching
+    /// the decoder's empty-sub-image return before modular header parsing.
     pub(crate) fn write_modular_extras_alpha_squeezed_lf_group(
         pipeline: &super::extras::AlphaSqueezePipeline,
         partition: &super::extras::AlphaSqueezePartition,
@@ -5969,9 +5964,8 @@ impl VarDctEncoder {
     /// `local_indices` selects which sub-channels from `pipeline`
     /// participate in this section. Their order here is the order they
     /// appear in the bitstream and the order the decoder assigns local
-    /// channel indices to (so `local_indices[k]` becomes channel `k`
-    /// in the decoder's per-section sub-image and the tree's `prop 0`
-    /// values cover `0..local_indices.len()`).
+    /// channel indices to after removing empty crops. The tree's property-0
+    /// range and multipliers use only that compacted surviving sequence.
     ///
     /// `declare_squeeze = true` writes `nb_transforms = 1` + the
     /// kSqueeze descriptor. False writes `nb_transforms = 0` — used
@@ -5992,8 +5986,8 @@ impl VarDctEncoder {
             K_LZ77_MIN_LENGTH, K_LZ77_MIN_SYMBOL, Token, build_sparse_histogram,
             decompose_multiplier_pub, encode_hybrid_uint_000, encode_hybrid_uint_lz77_length,
             write_channel_split_tree_tokens, write_gradient_tree_tokens,
-            write_gradient_tree_tokens_lossy, write_hybrid_data_histogram, write_num_transforms,
-            write_sparse_lz77_histogram, write_squeeze_transform,
+            write_gradient_tree_tokens_lossy, write_hybrid_data_histogram_with_contexts,
+            write_num_transforms, write_sparse_lz77_histogram, write_squeeze_transform,
             write_tree_histogram_for_channel_split_lossy, write_tree_histogram_for_gradient,
             write_tree_histogram_for_gradient_lossy,
         };
@@ -6001,6 +5995,37 @@ impl VarDctEncoder {
 
         let num_subs = pipeline.sub_channels.len();
         debug_assert!(num_subs >= 1, "alpha squeeze must produce ≥1 sub-channel");
+
+        // DecodeGroup compacts the nonempty cropped bands into a new local
+        // image. Build that same ordered subset before assigning property-0
+        // indices or tree multipliers; an empty band consumes neither index.
+        let mut section_channels = alloc::vec::Vec::with_capacity(local_indices.len());
+        let mut per_sub_q = alloc::vec::Vec::with_capacity(local_indices.len());
+        for &index in local_indices {
+            let sub = &pipeline.sub_channels[index];
+            let view = match crop_region {
+                None => sub.channel.clone(),
+                Some(crop) => {
+                    let Some(view) =
+                        sub.channel
+                            .extract_grid_cell(crop.grid_x, crop.grid_y, crop.group_dim)
+                    else {
+                        continue;
+                    };
+                    view
+                }
+            };
+            if view.width() == 0 || view.height() == 0 {
+                continue;
+            }
+            section_channels.push(view);
+            per_sub_q.push(sub.q.max(1));
+        }
+        // A per-group sub-image with no channels has no modular bitstream.
+        // LfGlobal still carries the transform/header even without local data.
+        if !declare_squeeze && section_channels.is_empty() {
+            return Ok(());
+        }
 
         // ── GroupHeader ────────────────────────────────────────────────
         // GroupHeader layout (libjxl/jxl-rs `headers/modular.rs:160-166`):
@@ -6034,26 +6059,13 @@ impl VarDctEncoder {
             write_squeeze_transform(writer, &pipeline.squeeze_params)?;
         }
 
-        // Per-LOCAL-channel quantizer vector for the tree leaves —
-        // sized to this section's subset, indexed by tree prop 0
-        // exactly as the decoder consumes it. Single-group flattens
-        // to the full sub-channel list; per-group sections use only
-        // their slice of the partition.
-        let per_sub_q: alloc::vec::Vec<u32> = local_indices
-            .iter()
-            .map(|&i| pipeline.sub_channels[i].q.max(1))
-            .collect();
-
         // ── Local tree ─────────────────────────────────────────────────
-        // - 0 sub-channels (empty section): still emit a valid empty
-        //   tree + entropy header so the bitstream parses (rare — only
-        //   happens when every sub-channel in this section's partition
-        //   bucket cropped to empty in this group). Tree is the
-        //   single-channel gradient form with q=1 which uses minimal
-        //   bits; the entropy code then writes zero data tokens.
+        // - 0 locally coded channels in LfGlobal: retain its metadata,
+        //   a single gradient leaf and an entropy header with zero tokens.
+        //   Empty per-group images have already returned without any bits.
         // - 1 sub-channel: single-leaf gradient (lossless or lossy).
         // - ≥2 sub-channels: channel-split tree dispatching on prop 0.
-        let n = local_indices.len();
+        let n = section_channels.len();
         if n <= 1 {
             let q = if n == 1 { per_sub_q[0] } else { 1 };
             if q == 1 {
@@ -6069,7 +6081,7 @@ impl VarDctEncoder {
             // sub-channel index, each carrying its own integer
             // quantizer. The decoder's per-section tree dispatches
             // on the channel index *within that section's sub-image*,
-            // which is exactly 0..local_indices.len().
+            // which is exactly the compacted 0..section_channels.len().
             let (d, c) = write_tree_histogram_for_channel_split_lossy(writer, &per_sub_q)?;
             write_channel_split_tree_tokens(writer, &d, &c, &per_sub_q)?;
         }
@@ -6088,32 +6100,6 @@ impl VarDctEncoder {
         let mut current_run: usize = 0;
         let mut num_decoded: usize = 0;
         let mut last_value: u32 = u32::MAX;
-
-        // Materialize per-section channel views. `Channel` is cheap to
-        // clone (Vec<i32>) for the cropped case; the uncropped case
-        // re-uses the existing storage.
-        let mut section_channels: alloc::vec::Vec<super::super::modular::channel::Channel> =
-            alloc::vec::Vec::with_capacity(local_indices.len());
-        for &i in local_indices {
-            let src = &pipeline.sub_channels[i].channel;
-            let view = match crop_region {
-                None => src.clone(),
-                Some(cr) => match src.extract_grid_cell(cr.grid_x, cr.grid_y, cr.group_dim) {
-                    Some(cropped) => cropped,
-                    None => {
-                        // This sub-channel has no data in this group's
-                        // region — push a zero-sized placeholder so
-                        // the index alignment with `per_sub_q` stays
-                        // intact; the inner loop skips empty channels.
-                        let mut z = super::super::modular::channel::Channel::new_zero_sized();
-                        z.hshift = src.hshift;
-                        z.vshift = src.vshift;
-                        z
-                    }
-                },
-            };
-            section_channels.push(view);
-        }
 
         for (local_idx, ch) in section_channels.iter().enumerate() {
             let w = ch.width();
@@ -6277,7 +6263,8 @@ impl VarDctEncoder {
             for &(tok, _, _) in &histogram_data {
                 histogram[tok as usize] += 1;
             }
-            let (depths, codes) = write_hybrid_data_histogram(writer, &histogram, max_token)?;
+            let (depths, codes) =
+                write_hybrid_data_histogram_with_contexts(writer, &histogram, max_token, n.max(1))?;
             for &(token, extra_bits, num_extra) in &histogram_data {
                 let depth = depths[token as usize];
                 let code = codes[token as usize];
@@ -6508,5 +6495,59 @@ mod global_palette_cost_tests {
                 i32::from(reject[i])
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod alpha_squeeze_section_tests {
+    use super::*;
+    use crate::modular::channel::Channel;
+    use crate::vardct::extras::{AlphaSqueezePipeline, AlphaSqueezeSubChannel};
+
+    #[test]
+    fn empty_group_alpha_section_preserves_the_writer() {
+        // A legal full-image residual band, empty only in the right corner
+        // group's cropped sub-image. DecodeGroup skips this substream entirely.
+        let mut channel = Channel::new(128, 257).unwrap();
+        channel.hshift = 1;
+        let pipeline = AlphaSqueezePipeline {
+            sub_channels: vec![AlphaSqueezeSubChannel { channel, q: 15 }],
+            squeeze_params: Vec::new(),
+        };
+        let mut writer = BitWriter::new();
+        writer.write(3, 5).unwrap();
+        VarDctEncoder::write_modular_extras_alpha_squeezed_section(
+            &pipeline,
+            &[0],
+            false,
+            Some(CropRegion {
+                grid_x: 1,
+                grid_y: 1,
+                group_dim: 256,
+            }),
+            &mut writer,
+        )
+        .unwrap();
+        assert_eq!(
+            writer.bits_written(),
+            3,
+            "empty per-group sub-image writes no bits"
+        );
+        writer.zero_pad_to_byte();
+        assert_eq!(writer.finish(), [5]);
+
+        let mut global = BitWriter::new();
+        VarDctEncoder::write_modular_extras_alpha_squeezed_section(
+            &pipeline,
+            &[],
+            true,
+            None,
+            &mut global,
+        )
+        .unwrap();
+        assert!(
+            global.bits_written() > 0,
+            "global metadata still has its header"
+        );
     }
 }

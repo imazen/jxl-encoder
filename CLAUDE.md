@@ -1766,6 +1766,35 @@ misclassify that CLI limitation as an invalid stream or strip the ICC to hide it
 
 ## Known Bugs (ACTIVE)
 
+### RESOLVED 2026-11-17: alpha squeeze local indices and entropy context maps (issue 144 V3)
+
+The original 1025x1024/1026x1024 alpha-band streams return edge codes 56/154
+for source 0/210 through both Rust and djxl; unmodified v0.12 responsive
+controls preserve every selected source code. The local candidate compacts
+cropped survivors and their multipliers before building the tree. Both edge
+regressions and the aligned control pass afterward. A direct empty-crop check
+also finds 56 unused bits emitted where DecodeGroup reads no substream;
+the 257-square image already rendered before repair, so this is not an
+invalid-stream claim.
+
+The expanded precision matrix independently exposes missing entropy context
+maps in the non-LZ77 multi-leaf path: the shared single-context histogram
+writer omits the map, and both decoders reject retained 257-square and float
+streams. A private context-count-aware adapter now emits the required map.
+Public, precomputed and prequantized callers, all alpha layouts and offered
+policies, LF/HF groups, one/two workers and minimal features pass against native
+quantized alpha samples. The full library and unchanged byte/drift locks pass;
+strict Rust 1.100 workspace and focused Clippy pass. Original faults are
+mutation-detected. The selected shared section covers 352/382 regions and its
+histogram adapter 33/40; un-injected serializer errors and unreachable branches
+are itemized in [the owning contract](docs/ALPHA_SQUEEZE_CONTRACT.md). These
+fractions do not prove full encoder coverage. Progressive placement remains V2.
+
+The animation builder does not forward either alpha-distance or alpha-squeeze
+configuration. This source-audit gap is separate from actual squeeze-writer
+coverage; no runtime animation alpha-knob verdict is claimed yet.
+
+
 ### RESOLVED dependency: global squeeze intermediates — 2026-11-17
 
 The owner-authorized isolated decoder repair preserves global intermediates

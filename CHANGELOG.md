@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+- Compact cropped squeezed-alpha channels and their quantizers together, omit
+  empty per-group payloads, and emit the required multi-context entropy map
+  in the non-LZ77 path. Progressive alpha placement remains a separate issue.
+
 - Validate explicit squeeze descriptor fields, use matching implicit defaults
   for larger channel sets, and preserve positive remaining-group tile extents
   on tall/transposed inputs. Keep LF color transforms separate from zero
