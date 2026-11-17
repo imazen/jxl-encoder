@@ -227,3 +227,33 @@ expanded feature/workspace lint pass in `progressive-reference-final-baseline.lo
 observed Single control hashes remain unchanged. The changed schedule window
 covers 3/3 code regions. These are selected function and caller observations;
 the wider accepted-layout inventory remains open.
+
+
+## Accepted floating animation inventory
+
+The actual typed probe accepts all 24 non-CMYK layouts through legacy/request
+animation in Reference/Experimental modes. It uses reference-only frames
+interleaved with displayed frames and compares both progressive modes with
+Single in both decoders. Aligned/odd sizes alternate across layouts, rather
+than claiming their full Cartesian product. The retained object SHA256 is
+`8b6e37e5b8c48eccc4f458f5eca69a8a9c0d8cfffa62d7a460a8ed7107d2c638`,
+actual PID 2116811, exit zero. `progressive-ac-typed-animation-first.log`:
+rc0, 102 seconds, peak RSS 1.06 GiB, minimum available 20,676 MiB.
+Older notes asserting that floating animation is unsupported were incorrect.
+
+This verifies final progressive intent relative to each decoder's Single
+control; it does not prove source-alpha precision. Independently reading the
+first RGBA-f16 native alpha PFM finds 22,679 of 34,447 samples different from
+the supplied half values, first 0.9372549653053284 versus 0.9375. The measured
+maximum difference is 0.0019608139991760254. The animation currently codes its
+u8 alpha copy. That separate source-precision bug remains open, together with
+the existing rounded-u16 visibility item. CMYK animation still needs its own
+caller-selected-profile investigation under H10. No complete encoder or
+all-layout source-fidelity claim follows from the V1 comparisons.
+
+The minimal `std,convenience,__expert` build repeats both typed still and
+animation controls successfully (retained object
+`c45034b57626e24aacde09448d107b6de722700076947d190db57ff9132c0ba6`,
+PID 2122811). Expanded feature/CLI/workspace lint also passes.
+`progressive-ac-typed-minimal-lint.log`: rc0, 93 seconds, peak RSS
+0.89 GiB, minimum available 20,911 MiB.

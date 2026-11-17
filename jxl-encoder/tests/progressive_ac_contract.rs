@@ -327,13 +327,8 @@ fn typed_pixels(rgb: &[u8], layout: PixelLayout) -> Vec<u8> {
     }
     out
 }
-#[test]
-fn progressive_typed_layouts_preserve_final_color_and_alpha() {
-    let root = directory();
-    let fixture = image::load_from_memory(include_bytes!("images/frymire.png"))
-        .unwrap()
-        .to_rgb8();
-    for (index, layout) in [
+fn non_cmyk_lossy_layouts() -> [PixelLayout; 24] {
+    [
         PixelLayout::Rgb8,
         PixelLayout::Rgba8,
         PixelLayout::Bgr8,
@@ -359,9 +354,14 @@ fn progressive_typed_layouts_preserve_final_color_and_alpha() {
         PixelLayout::RgbBt709F32,
         PixelLayout::RgbaBt709F32,
     ]
-    .into_iter()
-    .enumerate()
-    {
+}
+#[test]
+fn progressive_typed_layouts_preserve_final_color_and_alpha() {
+    let root = directory();
+    let fixture = image::load_from_memory(include_bytes!("images/frymire.png"))
+        .unwrap()
+        .to_rgb8();
+    for (index, layout) in non_cmyk_lossy_layouts().into_iter().enumerate() {
         let (width, height) = if index % 2 == 0 { (64, 64) } else { (259, 133) };
         let rgb: Vec<u8> = (0..height)
             .flat_map(|y| {
@@ -1214,6 +1214,99 @@ fn progressive_rate_control_and_region_precompute_preserve_final_pixels() {
                         assert_eq!(iterations, *expected_iterations);
                     } else {
                         baseline = Some((actual, iterations));
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn progressive_typed_animation_layout_inventory() {
+    use jxl_encoder::{AnimationFrame, AnimationParams, EncoderMode};
+    let root = directory();
+    let fixture = image::load_from_memory(include_bytes!("images/frymire.png"))
+        .unwrap()
+        .to_rgb8();
+    for (index, layout) in non_cmyk_lossy_layouts().into_iter().enumerate() {
+        let (width, height) = if index % 2 == 0 { (64, 64) } else { (259, 133) };
+        let rgb: Vec<u8> = (0..height)
+            .flat_map(|y| {
+                let fixture = &fixture;
+                (0..width).flat_map(move |x| {
+                    fixture
+                        .get_pixel(x as u32 % fixture.width(), y as u32 % fixture.height())
+                        .0
+                })
+            })
+            .collect();
+        let shifted: Vec<u8> = rgb.iter().map(|v| v.wrapping_add(17)).collect();
+        let first = typed_pixels(&rgb, layout);
+        let second = typed_pixels(&shifted, layout);
+        let frames = [
+            AnimationFrame::new(&second, 0)
+                .with_reference_only(true)
+                .with_save_as_reference(2),
+            AnimationFrame::new(&first, 10),
+            AnimationFrame::new(&first, 0)
+                .with_reference_only(true)
+                .with_save_as_reference(2),
+            AnimationFrame::new(&second, 20),
+        ];
+        for mode in [EncoderMode::Reference, EncoderMode::Experimental] {
+            for entry in ["legacy", "request"] {
+                let out = root.join(format!("{layout:?}-{mode:?}-{entry}-{width}x{height}"));
+                std::fs::create_dir(&out).unwrap();
+                std::fs::write(out.join("input0.bin"), &first).unwrap();
+                std::fs::write(out.join("input1.bin"), &second).unwrap();
+                let mut baseline: Option<[Vec<Vec<u32>>; 2]> = None;
+                for progressive in [
+                    ProgressiveMode::Single,
+                    ProgressiveMode::QuantizedAcFullAc,
+                    ProgressiveMode::DcVlfLfAc,
+                ] {
+                    let config = LossyConfig::new(1.0)
+                        .with_effort(4)
+                        .with_threads(1)
+                        .with_strategy(EncoderStrategy::Libjxl)
+                        .with_mode(mode)
+                        .with_force_strategy(Some(3))
+                        .with_progressive(progressive)
+                        .with_auto_delta_frames(false)
+                        .with_patches(false);
+                    let params = AnimationParams::default();
+                    let bytes = if entry == "legacy" {
+                        config.encode_animation(
+                            width as u32,
+                            height as u32,
+                            layout,
+                            &params,
+                            &frames,
+                        )
+                    } else {
+                        config
+                            .encode_request(width as u32, height as u32, layout)
+                            .encode_animation(&params, &frames)
+                    }
+                    .unwrap();
+                    let actual = render_animation(
+                        &out,
+                        &format!("{progressive:?}"),
+                        &bytes,
+                        width,
+                        height,
+                        layout,
+                    )
+                    .map(|frames| {
+                        frames
+                            .into_iter()
+                            .map(|p| p.into_iter().map(f32::to_bits).collect::<Vec<_>>())
+                            .collect::<Vec<_>>()
+                    });
+                    if let Some(expected) = &baseline {
+                        assert_eq!(&actual, expected, "{} {progressive:?}", out.display());
+                    } else {
+                        baseline = Some(actual);
                     }
                 }
             }

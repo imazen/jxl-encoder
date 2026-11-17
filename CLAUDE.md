@@ -909,7 +909,9 @@ plain linear floats and lossless samples keep their existing units.
 255/1000/4000/10000 nits, metadata/request precedence, still and two-frame
 integer animation. jxl-rs and djxl v0.12 check every sample of the first
 displayed frame; 48 still cases also require exact streaming byte equality.
-Float animation is outside the supported integer animation surface. This is
+That matrix did not exercise float animation. Current lossy animation accepts
+float layouts; the issue-144 typed animation controls verify progressive
+coefficient preservation, with alpha precision tracked separately below. This is
 separate from #138's ten default-intensity PQ quality failures.
 The 34 existing HDR integration checks, 1,664 library tests, unchanged normal/strict
 byte locks, divergence checks, metric-domain and animation contracts also pass,
@@ -1765,6 +1767,21 @@ API accepts every frame when the original ICC is explicitly requested; do not
 misclassify that CLI limitation as an invalid stream or strip the ICC to hide it.
 
 ## Known Bugs (ACTIVE)
+
+### 2026-11-17: accepted float animation narrows alpha to eight bits
+
+The actual typed animation probe accepts f16/f32/HDR layouts. On the first
+259x133 RGBA f16 displayed frame, pinned djxl returns 22,679 alpha samples
+different from the supplied binary16 values (34,447 total). First sample is
+0.9372549653053284 versus 0.9375; maximum absolute difference is
+0.0019608139991760254. These are observed native output samples, not an
+inference from header bits. `animation-float-alpha-observed.json` binds the
+input and PFM under typed run-24. Its source keeps only the u8 alpha copy in
+animation, while the still path has precision-preserving extra-channel
+preparation. A dedicated failing source-precision regression and repair remain
+required. Progressive-versus-Single equality does not establish source-alpha
+precision.
+
 
 ### RESOLVED 2026-11-17: optional rate-control CLI private encoder import
 

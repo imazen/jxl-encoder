@@ -1703,3 +1703,8 @@ progressive-reference-final-lint manifest:
 progressive-ac-final-regions llvm artifacts output:
     python3 scripts/progressive_ac_coverage.py {{quote(llvm)}} {{quote(artifacts)}} {{quote(output)}}
 
+progressive-ac-typed-animation-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" progressive_typed_animation --test-target progressive_ac_contract --features __expert,parallel --source jxl-encoder/src/vardct/bitstream.rs --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/api.rs --source jxl-encoder/tests/images/frymire.png' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+progressive-ac-typed-minimal-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" progressive_typed --test-target progressive_ac_contract --no-default-features --features std,convenience,__expert --source jxl-encoder/src/vardct/bitstream.rs --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/api.rs --source jxl-encoder/tests/images/frymire.png' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
