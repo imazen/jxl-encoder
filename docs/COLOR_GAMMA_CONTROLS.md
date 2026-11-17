@@ -33,3 +33,13 @@ no numeric expectation was relaxed to hide them.
 The input repair and broader caller/feature/region verification remain in
 progress. These controls do not qualify all gamma values, image content,
 platforms, output profiles or lossy quality behavior.
+
+The independent envelope parser also had a custom-coordinate reader error:
+all four U32 selectors used 19 bits without their offsets, and signed values
+remained packed. The native `custom_xy_oracle.cc` Bundle writer produces a
+198-bit descriptor spanning all four selector widths and both signs. Its new
+regression fails with EOF before the parser repair and passes afterward;
+all existing envelope parser regressions pass unchanged. This diagnostic
+repair changes no encoder bytes. Reproduce with `just custom-xy-native
+<v0.12-source> <v0.12-build> <new-executable>` and
+`just bitstream-parser-check`.

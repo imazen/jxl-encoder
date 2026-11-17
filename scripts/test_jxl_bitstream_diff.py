@@ -16,6 +16,22 @@ class ReferenceFrameHeaderTest(unittest.TestCase):
         self.assertEqual(fields["color_encoding.rendering_intent"], "kPerceptual")
         self.assertNotIn("color_encoding.have_gamma", fields)
 
+    def test_custom_xy_matches_all_native_selector_widths(self):
+        # Unmodified v0.12 ColorEncoding Bundle writer, custom_xy_oracle.cc.
+        # Includes positive/negative coordinates and all four U32 selectors.
+        data = bytes.fromhex("2000d43000352c047c92006ad88fd005e6aa013ec9bfc68d1b")
+        parser = Parser(data)
+        parser.br = BitReader(data)
+        parser.color_encoding()
+        self.assertEqual(parser.br.pos, 198)
+        fields = {name: value for _, name, value in parser.fields}
+        self.assertEqual(fields["color_encoding.white.xy"], (100000, 200000))
+        self.assertEqual(fields["color_encoding.red.xy"], (300000, 400000))
+        self.assertEqual(fields["color_encoding.green.xy"], (-500000, 700000))
+        self.assertEqual(fields["color_encoding.blue.xy"], (1200000, -1500000))
+        self.assertEqual(fields["color_encoding.transfer_function"], "kSRGB")
+        self.assertEqual(fields["color_encoding.rendering_intent"], "kRelative")
+
     def test_unknown_description_has_primaries(self):
         parser = Parser(bytes.fromhex("18c505"))
         parser.br = BitReader(bytes.fromhex("18c505"))

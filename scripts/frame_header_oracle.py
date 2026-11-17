@@ -5,7 +5,7 @@ from pathlib import Path
 import subprocess
 
 p = argparse.ArgumentParser(description=__doc__)
-p.add_argument("--component", choices=["frame_header", "color_header", "color_profile", "icc_policy", "extra_rect", "squeeze_params", "lf_squeeze_color", "squeeze_gray_geometry", "progressive_brackets", "progressive_ac", "color_matrix", "reference_passes", "animation_alpha", "animation_blend", "color_admission"], default="frame_header")
+p.add_argument("--component", choices=["frame_header", "color_header", "color_profile", "icc_policy", "extra_rect", "squeeze_params", "lf_squeeze_color", "squeeze_gray_geometry", "progressive_brackets", "progressive_ac", "color_matrix", "reference_passes", "animation_alpha", "animation_blend", "color_admission", "custom_xy"], default="frame_header")
 p.add_argument("source", type=Path, help="source exported from v0.12.0")
 p.add_argument("build", type=Path, help="existing Ninja build of v0.12.0")
 p.add_argument("output", type=Path, help="new executable path")

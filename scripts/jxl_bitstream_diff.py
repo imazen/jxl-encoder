@@ -186,9 +186,11 @@ class Parser:
     # ── ColorEncoding ───────────────────────────────────────────────────────
     def custom_xy(self, p):
         br = self.br
-        x = br.u32([("B", 19), ("B", 19), ("B", 19), ("B", 19)])
-        y = br.u32([("B", 19), ("B", 19), ("B", 19), ("B", 19)])
-        self.f(f"{p}.xy", (x, y))
+        selectors = [("B", 19), ("O", (19, 524288)),
+                     ("O", (20, 1048576)), ("O", (21, 2097152))]
+        x, y = br.u32(selectors), br.u32(selectors)
+        unpack = lambda value: -(value // 2) - 1 if value & 1 else value // 2
+        self.f(f"{p}.xy", (unpack(x), unpack(y)))
 
     def color_encoding(self, p="color_encoding"):
         br = self.br
