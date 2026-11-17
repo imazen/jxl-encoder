@@ -1666,3 +1666,9 @@ progressive-dispatch-lint manifest:
 progressive-dispatch-original-replay manifest output coverage_env:
     bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/test_alpha_squeeze_mutation.py "$2" "$3" --case static-progressive' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
 
+
+reference-progressive-native-oracle source build output:
+    python3 scripts/frame_header_oracle.py --component reference_passes {{quote(source)}} {{quote(build)}} {{quote(output)}}
+
+color-matrix-native-oracle source build output:
+    python3 scripts/frame_header_oracle.py --component color_matrix {{quote(source)}} {{quote(build)}} {{quote(output)}}
