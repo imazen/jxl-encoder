@@ -1766,6 +1766,19 @@ misclassify that CLI limitation as an invalid stream or strip the ICC to hide it
 
 ## Known Bugs (ACTIVE)
 
+### 2026-11-17: Windows ARM reference setup lacks a test verdict
+
+[Run 44044868568](https://github.com/imazen/jxl-encoder/actions/runs/44044868568)
+job 133908156355 exits with -2147483644 during cached reference-tool version
+verification, before Rust installation or encoder tests. The log has no
+captured version output; it does not identify which command failed or prove
+an encoder failure. The version loop now prints the selected tool path before
+execution and prints captured output plus exit status on a failed tool.
+Success, wrong-version rejection and an exit-23 stderr fixture pass locally.
+The original failed check remains failed; remote diagnosis is pending.
+[Reference setup evidence](docs/CI_REFERENCE_TOOLS.md).
+
+
 ### RESOLVED 2026-11-17: thin squeezed-alpha global prefix (issue 144 V3 follow-up)
 
 The extended 1025x17/17x1025 controls fail complete rendering even in Single
