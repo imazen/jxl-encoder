@@ -1779,6 +1779,17 @@ misclassify that CLI limitation as an invalid stream or strip the ICC to hide it
 
 ## Known Bugs (ACTIVE)
 
+### RESOLVED 2026-11-17: envelope parser conditional reference bit and timecodes
+
+The diagnostic parser read `save_before_ct` after an unsaved positive-duration
+frame and omitted serialized animation timecodes. Both errors shifted the TOC
+on actual decoder-verified streams. Two frozen full-stream regressions fail
+before repair and pass afterward with the existing parser expectations intact.
+Part 1 F.2 now drives reference eligibility and timecode presence. This changes
+only diagnostics; native/Rust rendering and encoder bytes are unchanged.
+`animation-parser-before.log` retains both failures; `animation-parser-after.log`
+passes the full parser suite. No encoder policy or strategy registry changes.
+
 ### RESOLVED 2026-11-17: already-downsampled display level and extent validation
 
 The actual 32769×1/factor-eight header advertises 262152×8, but its wrapper

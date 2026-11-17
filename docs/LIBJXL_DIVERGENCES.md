@@ -2783,3 +2783,10 @@ Remaining layout inventory is tracked separately in the progressive contract.
 |---|---|---|---|
 | `EncodeRequest::display_dimensions`, container selection and `FileHeader::write` | Checked `input × effective_resampling` for already-downsampled input; one shared display extent for header and level, absolute bounds before output writes | Native public width controls select Level 5 at 262144 and Level 10 at 262152. Part 1 D.2/F.2 and Annex M define display geometry and level bounds. | Still/streaming dimension defect repaired; selected actual streams, faults and remaining caller gaps in [DISPLAY_EXTENT_CONTRACT.md](DISPLAY_EXTENT_CONTRACT.md). No registry gate/value/metadata changes. |
 | Optional subsampled RGB8 admission | Reject `!Full444 && effective_resampling() > 1`, including automatic and already-downsampled requests | The format supports frame upsampling; this JPEG-shaped coefficient adapter has no spatial-resampling implementation. Before runs actually emit the unscaled input dimensions. | Explicit unsupported-combination refusal shared by policies; factor-one positive controls retain rendering. No new strategy gate. |
+
+
+## Issue 144 animation envelope diagnostics
+
+| Site | Diagnostic | libjxl v0.12 / format | Status |
+|---|---|---|---|
+| `scripts/jxl_bitstream_diff.py` animation FrameHeader walk | Read timecodes when advertised; reference eligibility requires `!is_last && (duration == 0 || save_as_reference != 0)` | Part 1 F.2 conditions, confirmed by two actual streams fully rendered in primary Rust and pinned djxl | RESOLVED diagnostic alignment; frozen full-stream regressions fail before repair and pass afterward. Encoder bytes and all strategy registry values/metadata remain unchanged. |

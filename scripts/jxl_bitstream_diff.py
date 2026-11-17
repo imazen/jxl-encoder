@@ -147,6 +147,7 @@ class Parser:
         self.fields = []          # [(bitpos, name, value)]
         self.toc = None           # {"entries": [...], "labels": [...], ...}
         self.note = []
+        self.have_timecodes = False
 
     def f(self, name, value):
         self.fields.append((self.br.pos, name, value))
@@ -297,7 +298,7 @@ class Parser:
                br.u32([("V", 1), ("V", 1001), ("O", (8, 1)), ("O", (10, 1))]))
         self.f("metadata.animation.num_loops",
                br.u32([("V", 0), ("B", 3), ("B", 16), ("B", 32)]))
-        self.f("metadata.animation.have_timecodes", br.bit())
+        self.have_timecodes = bool(self.f("metadata.animation.have_timecodes", br.bit()))
 
     # ── CustomTransformData ─────────────────────────────────────────────────
     def custom_transform_data(self):
@@ -439,6 +440,7 @@ class Parser:
                 fy = self.f("frame.size.ysize", br.u32(CROP_DIST))
                 self.frame["fx"], self.frame["fy"] = fx, fy
                 is_partial = (fx < image_xsize or fy < image_ysize)
+        duration = 0
         if ft_i in (0, 3):
             mode = self.blending_info("frame.blending", self.num_extra_channels,
                                       is_partial)
@@ -446,17 +448,20 @@ class Parser:
                 self.blending_info(f"frame.ec_blending[{i}]",
                                    self.num_extra_channels, is_partial)
             if self.have_animation:
-                self.f("frame.animation.duration", br.u32(
+                duration = self.f("frame.animation.duration", br.u32(
                     [("V", 0), ("V", 1), ("B", 8), ("B", 32)]))
+                if self.have_timecodes:
+                    self.f("frame.animation.timecode", br.bits(32))
             is_last = self.f("frame.is_last", br.bit())
             self.frame["is_last"] = bool(is_last)
         else:
             is_last = False
+        save_as_reference = 0
         if ft_i != 1 and not is_last:
-            self.f("frame.save_as_reference",
+            save_as_reference = self.f("frame.save_as_reference",
                    br.u32([("V", 0), ("V", 1), ("V", 2), ("V", 3)]))
         if ft_i != 1:
-            can_ref = (self.frame["frame_type"] != 0 or not is_last)
+            can_ref = not is_last and (duration == 0 or save_as_reference != 0)
             if can_ref and ft_i in (0, 3) and mode == 0 and not is_partial:
                 self.f("frame.save_before_color_transform", br.bit())
             elif ft_i == 2:

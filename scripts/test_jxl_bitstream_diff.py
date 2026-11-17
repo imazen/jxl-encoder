@@ -5,6 +5,60 @@ from jxl_bitstream_diff import BitReader, Parser
 
 
 class ReferenceFrameHeaderTest(unittest.TestCase):
+    def walk_frame_envelopes(self, data):
+        class Envelopes(Parser):
+            def lf_global_prefix(self, *args):
+                pass
+            def hf_global_prefix(self):
+                pass
+        parser = Envelopes(data)
+        parser.br = BitReader(data, 2)
+        width, height = parser.size_header()
+        parser.image_metadata()
+        parser.custom_transform_data()
+        parser.br.jump_to_byte_boundary()
+        frames = []
+        while parser.br.pos < len(data) * 8:
+            parser.fields = []
+            parser.toc = None
+            start = parser.br.pos // 8
+            parser.frame_header(width, height)
+            parser.read_toc(width, height)
+            end = parser.toc['payload_start'] + sum(parser.toc['entries'])
+            self.assertTrue(start < end <= len(data), (start, end, len(data)))
+            fields = {name: value for _, name, value in parser.fields}
+            frames.append(fields)
+            parser.br.pos = end * 8
+            if fields.get('frame.all_default') or fields.get('frame.is_last'):
+                break
+        self.assertEqual(parser.br.pos, len(data) * 8)
+        return frames
+
+    def test_unsaved_positive_duration_omits_save_before_ct(self):
+        # Actual stream fully rendered by primary Rust and djxl v0.12.
+        # SHA256 6326e6d28a2abab268b0ebfc46202bfdeec1cb28b78064f05c464b08a11476f3
+        data = bytes.fromhex(
+            "ff0a410401880908022a00003c004b12a114845dd6ff00034ae2ab26fe08022a04003c004b12a114"
+            "845dd6ff00034ae2ab26fe"
+        )
+        frames = self.walk_frame_envelopes(data)
+        self.assertEqual(len(frames), 2)
+        self.assertEqual(frames[0]['frame.save_as_reference'], 0)
+        self.assertEqual(frames[0]['frame.animation.duration'], 10)
+        self.assertNotIn('frame.save_before_color_transform', frames[0])
+
+    def test_animation_timecodes_keep_following_toc_aligned(self):
+        # Actual stream fully rendered by primary Rust and djxl v0.12.
+        # SHA256 3755881f61d18066e5ff5557e30782fb1a97ba3090f48edabaa1dc645e46cc78
+        data = bytes.fromhex(
+            "ff0ac70581880908022a0800000008000028004b120839c00000c004000802520c00000004004400"
+            "4b12a114845dfeff0003405205008539fe"
+        )
+        frames = self.walk_frame_envelopes(data)
+        self.assertEqual(len(frames), 2)
+        self.assertEqual([f['frame.animation.timecode'] for f in frames], [2, 3])
+        self.assertEqual([f['frame.animation.duration'] for f in frames], [10, 20])
+
     def test_xyb_color_grammar_matches_pinned_component_writer(self):
         # Unmodified v0.12 ColorEncoding output: no white/primaries/TF fields.
         parser = Parser(bytes.fromhex("0800"))
