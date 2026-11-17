@@ -25,16 +25,19 @@ uint8_t Level(const std::vector<uint8_t>& bytes) {
   return 5;
 }
 
-int Run(const std::filesystem::path& directory, unsigned zero_count, bool lossless) {
-  const uint32_t width=4096,height=4096;
-  const auto name=std::string(lossless?"lossless-":"lossy-")+std::to_string(zero_count);
+int Run(const std::filesystem::path& directory, unsigned zero_count, bool lossless,
+        uint32_t width=4096,uint32_t height=4096,uint32_t numerator=100,
+        uint32_t denominator=1,uint32_t duration=10) {
+  auto name=std::string(lossless?"lossless-":"lossy-")+std::to_string(zero_count);
+  if(zero_count==0) name+="-"+std::to_string(numerator)+"-"+
+      std::to_string(denominator)+"-"+std::to_string(duration);
   std::cerr<<name<<" stage=encoding\n";
   JxlEncoder* encoder=JxlEncoderCreate(nullptr);
   auto ok=[](JxlEncoderStatus status){return status==JXL_ENC_SUCCESS;};
   JxlBasicInfo info;JxlEncoderInitBasicInfo(&info);
   info.xsize=width;info.ysize=height;info.bits_per_sample=8;info.num_color_channels=3;
-  info.have_animation=JXL_TRUE;info.animation.tps_numerator=100;
-  info.animation.tps_denominator=1;info.uses_original_profile=lossless;
+  info.have_animation=JXL_TRUE;info.animation.tps_numerator=numerator;
+  info.animation.tps_denominator=denominator;info.uses_original_profile=lossless;
   if(!ok(JxlEncoderSetBasicInfo(encoder,&info))) return 10;
   JxlColorEncoding color;JxlColorEncodingSetToSRGB(&color,JXL_FALSE);
   if(!ok(JxlEncoderSetColorEncoding(encoder,&color))) return 11;
@@ -46,7 +49,7 @@ int Run(const std::filesystem::path& directory, unsigned zero_count, bool lossle
   std::vector<uint8_t> pixels(size_t(width)*height*3);
   for(unsigned index=0;index<=zero_count;++index) {
     JxlFrameHeader header;JxlEncoderInitFrameHeader(&header);
-    header.duration=index==zero_count?10:0;
+    header.duration=index==zero_count?duration:0;
     header.layer_info.save_as_reference=1;
     header.layer_info.blend_info.blendmode=JXL_BLEND_REPLACE;
     std::fill(pixels.begin(),pixels.end(),index==zero_count?255:(index%2?128:0));
@@ -78,10 +81,15 @@ int Run(const std::filesystem::path& directory, unsigned zero_count, bool lossle
     if(status==JXL_DEC_BASIC_INFO) {
       JxlBasicInfo basic;
       if(JxlDecoderGetBasicInfo(decoder,&basic)!=JXL_DEC_SUCCESS ||
-         basic.xsize!=width || basic.ysize!=height) return 15;
+         basic.xsize!=width || basic.ysize!=height ||
+         basic.animation.tps_numerator!=numerator ||
+         basic.animation.tps_denominator!=denominator) return 15;
+      fields<<"ticks="<<basic.animation.tps_numerator<<'/'
+            <<basic.animation.tps_denominator<<'\n';
     } else if(status==JXL_DEC_FRAME) {
       JxlFrameHeader header;
       if(JxlDecoderGetFrameHeader(decoder,&header)!=JXL_DEC_SUCCESS) return 16;
+      if(header.duration!=(frames==zero_count?duration:0)) return 21;
       const uint64_t area=uint64_t(header.layer_info.xsize)*header.layer_info.ysize;
       consecutive=header.duration==0?consecutive+area:0;
       maximum=std::max(maximum,consecutive);
@@ -107,8 +115,17 @@ int Run(const std::filesystem::path& directory, unsigned zero_count, bool lossle
 int main(int argc,char** argv) {
   if(JxlEncoderVersion()!=12000 || JxlDecoderVersion()!=12000) return 2;
   if(argc==1) return 0;
-  if(argc!=2 || !std::filesystem::create_directory(argv[1])) return 3;
-  for(bool lossless:{true,false}) for(unsigned count:{16u,17u})
-    if(int result=Run(argv[1],count,lossless)) return result;
+  if((argc!=2 && argc!=3) || !std::filesystem::create_directory(argv[1])) return 3;
+  if(argc==3) {
+    if(std::string(argv[2])!="duration") return 4;
+    for(bool lossless:{true,false})
+      for(const auto config:std::vector<std::vector<uint32_t>>{
+          {120,1,1},{121,1,1},{240,2,1},{241,2,1},{240,1,2},
+          {241,1,2},{1000,1,0},{1u<<30,1024,0xffffffffu}})
+        if(int result=Run(argv[1],0,lossless,8,8,config[0],config[1],config[2])) return result;
+  } else {
+    for(bool lossless:{true,false}) for(unsigned count:{16u,17u})
+      if(int result=Run(argv[1],count,lossless)) return result;
+  }
   return 0;
 }

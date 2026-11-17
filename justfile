@@ -2361,3 +2361,8 @@ animation-crop-patch-continuation manifest output coverage_env corpus oracle lin
 animation-zero-area-native source build oracle output:
     python3 scripts/frame_header_oracle.py --component zero_area {{quote(source)}} {{quote(build)}} {{quote(oracle)}}
     python3 scripts/run_zero_area_native.py {{quote(oracle)}} {{quote(output)}}
+
+animation-duration-native source build oracle output:
+    python3 scripts/frame_header_oracle.py --component zero_area {{quote(source)}} {{quote(build)}} {{quote(oracle)}}
+    python3 scripts/run_zero_area_native.py {{quote(oracle)}} {{quote(output)}} --durations
+

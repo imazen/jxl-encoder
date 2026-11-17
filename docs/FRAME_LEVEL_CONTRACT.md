@@ -47,3 +47,16 @@ Exact source/executable hashes, actual per-layer dimensions/durations and full
 native logs are retained in `zero-area-native`. The wrapper completes with rc0 in 43 seconds (run-heavy peak RSS 1.10 GiB,
 minimum available 20,165 MiB). The executable SHA256 is
 `a524f46e8983bac8aa5a85e23087d57f7158ab6d59c6e82c9293397417a94409`.
+
+## Native duration baseline
+
+The unmodified pinned public v0.12 encoder and decoder also accept durations
+below 1/120 second while declaring Level 5. Sixteen selected writer/timebase
+controls fully render; actual serialized clocks, duration fields and samples
+are retained in `duration-level-before/native`. Part 1 Annex M supplies the
+level requirement, so reproducing this reference omission is not acceptance.
+
+Source SHA256 `fd93479c19d7fc560566d925b4bf077f9fcd1d60fab612d1bc45b5a644cad53d`;
+executable SHA256 `0523ad5d599f07b5d1fc3159569596700922c089a70debd7bd91e3743ee97595`.
+Run `just animation-duration-native <source> <build> <oracle> <new-output>`.
+This reference control does not repair encoder level signaling.
