@@ -327,7 +327,9 @@ mod squeeze_field_tests {
             };
             let expected: Vec<u8> = fields[2]
                 .as_bytes()
-                .chunks_exact(2)
+                .as_chunks::<2>()
+                .0
+                .iter()
                 .map(|v| u8::from_str_radix(core::str::from_utf8(v).unwrap(), 16).unwrap())
                 .collect();
             let mut writer = BitWriter::new();

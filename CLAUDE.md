@@ -1798,6 +1798,15 @@ marker verifying disabled overflow checks. No expectation or ignore changes.
 [Admission contract, route scope and evidence](docs/SQUEEZE_RCT_ADMISSION.md).
 The separate channel-count and anisotropic-group defects remain open.
 
+### 2026-11-17: squeeze field-vector Rust 1.100 lint
+
+CI run 44018300977 fails both strict Clippy jobs on constant-size
+`chunks_exact(2)` in the new squeeze wire-vector test. Its iterator now uses
+`as_chunks::<2>()`; vector bytes and assertions are unchanged. Matching Rust 1.100 workspace all-target and focused expert Clippy pass, as
+do both field-vector tests (`squeeze-current-rust1100-lint-2.log`, rc0,
+219 seconds; run-heavy peak RSS 1.68 GiB, minimum available 20,081 MiB).
+This is a test-lint repair, not a pixel change or a passing CI claim.
+
 ### 2026-11-17: squeeze count and anisotropic group repair (issue 144)
 
 Before repair, explicit count twenty panics and tall/transposed squeeze streams
