@@ -18,6 +18,23 @@ if (root / '.git').exists() or not (root.parent.parent / 'provenance.json').is_f
     p.error('requires an owned clean-source export')
 a.output.mkdir(exist_ok=False)
 cases = [
+    ('blend-icc-lossless-domain', 'jxl-encoder/src/modular/frame.rs',
+     'fh.save_before_ct = !self.options.reference_only_after_ct;', 'fh.save_before_ct = true;',
+     'frame_header_contract', 'original_icc_addition'),
+    ('blend-icc-lossy-domain', 'jxl-encoder/src/vardct/bitstream.rs',
+     'fh.save_before_ct = !opts.reference_only_after_ct;', 'fh.save_before_ct = true;',
+     'frame_header_contract', 'original_icc_addition'),
+    ('blend-reference-lifetime', 'jxl-encoder/src/api/animate.rs',
+     'plan[i] |= RESERVE_COLOR_SLOT_THREE;', 'plan[i] |= 0;',
+     'frame_header_contract', 'color_source_three_survives_an_intervening_dictionary'),
+    ('blend-patch-slot', 'jxl-encoder/src/vardct/bitstream.rs',
+     ' && !frame_options.may_reference_color_slot(3)', '',
+     'frame_header_contract', 'color_source_three_policies'),
+    ('blend-lossless-crop','jxl-encoder/src/api/animate.rs','__BLEND_LOSSLESS_CROP__','', 'frame_header_contract','explicit_add_uses_the_full_canvas'),
+    ('blend-lossy-crop','jxl-encoder/src/api/animate.rs','__BLEND_LOSSY_CROP__','', 'frame_header_contract','explicit_add_uses_the_full_canvas'),
+    ('blend-lossless-domain','jxl-encoder/src/modular/frame.rs','fh.save_before_ct = !self.options.reference_only_after_ct;','fh.save_before_ct = true;', 'frame_header_contract','reference_only_color_add'),
+    ('blend-lossy-domain','jxl-encoder/src/vardct/bitstream.rs','fh.save_before_ct = !opts.reference_only_after_ct;','fh.save_before_ct = true;', 'frame_header_contract','reference_only_color_add'),
+    ('blend-reference-plan','jxl-encoder/src/api/animate.rs','plan[i] = u8::from(needed[slot]);','plan[i] = 0;', 'frame_header_contract','reference_only_color_add'),
     ('source-white-d65-only', 'jxl-encoder/src/vardct/xyb.rs',
      '__D65_ONLY__', '', 'source_color_contract', 'linear_p3_white_point'),
     ('source-white-custom-d65', 'jxl-encoder/src/vardct/xyb.rs',
@@ -84,6 +101,12 @@ else:
 for name, source, before, after, target, selection in cases:
     path = root / source
     original = path.read_text()
+    if before in ('__BLEND_LOSSLESS_CROP__','__BLEND_LOSSY_CROP__'):
+        function='encode_animation_lossless' if before=='__BLEND_LOSSLESS_CROP__' else 'encode_animation_lossy'
+        start=original.index('        let crop = if frame.reference_only || frame.blend_mode.is_some() {',original.index('fn '+function+'('))
+        end=original.index('        };',start)+len('        };')
+        before=original[start:end]
+        after=before.replace(' || frame.blend_mode.is_some()','')
     if before == '__D65_ONLY__':
         start = original.index('    if ce.white_point != WhitePoint::D65 {')
         end = original.index('    match ce.primaries {', start)
@@ -137,6 +160,19 @@ for name, source, before, after, target, selection in cases:
                    '--source', 'jxl-encoder/src/vardct/progressive_ac_v012.tsv',
                    '--source', 'jxl-encoder/src/vardct/alpha_squeeze_thin_v012.tsv',
                    '--source', 'jxl-encoder/src/vardct/progressive_brackets_v012.tsv']
+        if name.startswith('blend-'):
+            command += ['--source','jxl-encoder/src/api/animate.rs','--source','jxl-encoder/src/headers/frame_header.rs',
+                        '--source','jxl-encoder/src/api/animation.rs','--source','jxl-encoder/tests/frame_header_contract/blends.rs']
+        if name.startswith('blend-icc-'):
+            command += ['--features', '__expert,parallel,corpus-tests',
+                        '--source', 'jxl-encoder/tests/frame_header_contract/icc_blends.rs',
+                        '--source', 'scripts/libjxl_original_profile.cc']
+        if name in ('blend-patch-slot', 'blend-reference-lifetime'):
+            command += ['--features', '__expert,parallel,corpus-tests',
+                        '--source', 'jxl-encoder/tests/frame_header_contract/patch_slots.rs',
+                        '--source', 'scripts/check_explicit_blend_headers.py',
+                        '--source', 'scripts/jxl_bitstream_diff.py',
+                        '--source', 'scripts/jxl_container.py']
         if name.startswith('rate-'):
             command += ['--features', '__expert,parallel,rate-control']
         if name.startswith(('rate-', 'source-white-')):

@@ -14,7 +14,7 @@ import re
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('output', type=Path)
 p.add_argument('--pair', action='append', nargs=2, required=True)
-p.add_argument('--scope', choices=['alpha', 'progressive', 'partition', 'admission', 'ac', 'source-white', 'source-metric', 'rate-color'], default='alpha')
+p.add_argument('--scope', choices=['alpha', 'progressive', 'partition', 'admission', 'ac', 'source-white', 'source-metric', 'rate-color', 'blend-plan', 'blend-reservation'], default='alpha')
 a = p.parse_args()
 if a.output.exists():
     p.error('refusing existing result')
@@ -58,6 +58,10 @@ elif a.scope == 'source-metric':
     functions = {'jxl-encoder/src/vardct/encoder.rs': ['prepare_metric_reference']}
 elif a.scope == 'rate-color':
     functions = {'jxl-encoder/src/vardct/rate_control.rs': ['metric_reference', 'decode_jxl_to_linear']}
+if a.scope == 'blend-plan':
+    functions = {'jxl-encoder/src/api/animate.rs': ['animation_reference_plan']}
+if a.scope == 'blend-reservation':
+    functions = {'jxl-encoder/src/headers/frame_header.rs': ['may_reference_color_slot']}
 rows = []
 for relative, names in functions.items():
     for name in names:

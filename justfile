@@ -1830,12 +1830,8 @@ source-color-final-evidence manifest artifacts coverage_env oracle llvm:
     just source-color-metric-budget-evidence {{quote(manifest)}} {{quote(artifacts + "/source-color-budget-final")}} {{quote(coverage_env)}}
     python3 scripts/source_color_coverage.py {{quote(llvm)}} {{quote(artifacts + "/source-color-region-report")}} --source-white {{quote(artifacts + "/source-color-native-final")}} {{quote(artifacts + "/source-color-public-final")}} {{quote(artifacts + "/source-color-engine-zero")}} {{quote(artifacts + "/source-color-neutral")}} --source-metric {{quote(artifacts + "/source-color-engine-zero")}} {{quote(artifacts + "/source-color-metric-final")}} {{quote(artifacts + "/source-color-budget-final")}} --rate-color {{quote(artifacts + "/source-color-rate-domain-final")}} {{quote(artifacts + "/source-color-engine-zero")}}
 
-source-color-regions-final llvm artifacts:
-    python3 scripts/source_color_coverage.py {{quote(llvm)}} {{quote(artifacts + "/source-color-region-report-final")}} --source-white {{quote(artifacts + "/source-color-native-final")}} {{quote(artifacts + "/source-color-public-final")}} {{quote(artifacts + "/source-color-engine-zero")}} {{quote(artifacts + "/source-color-neutral")}} --source-metric {{quote(artifacts + "/source-color-engine-zero")}} {{quote(artifacts + "/source-color-metric-final")}} {{quote(artifacts + "/source-color-budget-final")}} --rate-color {{quote(artifacts + "/source-color-rate-domain-final")}} {{quote(artifacts + "/source-color-engine-zero")}}
-
-source-color-last-regions manifest artifacts coverage_env llvm:
-    just source-color-native-vectors-evidence {{quote(manifest)}} {{quote(artifacts + "/source-color-native-d65-controls")}} {{quote(coverage_env)}}
-    python3 scripts/source_color_coverage.py {{quote(llvm)}} {{quote(artifacts + "/source-color-region-report-complete")}} --source-white {{quote(artifacts + "/source-color-native-d65-controls")}} {{quote(artifacts + "/source-color-public-final")}} {{quote(artifacts + "/source-color-engine-zero")}} {{quote(artifacts + "/source-color-neutral")}} {{quote(artifacts + "/source-color-rate-domain-final")}} --source-metric {{quote(artifacts + "/source-color-engine-zero")}} {{quote(artifacts + "/source-color-metric-final")}} {{quote(artifacts + "/source-color-budget-final")}} {{quote(artifacts + "/source-color-rate-domain-final")}} --rate-color {{quote(artifacts + "/source-color-rate-domain-final")}} {{quote(artifacts + "/source-color-engine-zero")}}
+explicit-blend-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" blends:: --test-target frame_header_contract --features __expert,parallel --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/headers/frame_header.rs --source jxl-encoder/src/modular/frame.rs --source jxl-encoder/src/vardct/bitstream.rs --source jxl-encoder/tests/frame_header_contract/blends.rs --source scripts/check_explicit_blend_headers.py --source scripts/jxl_bitstream_diff.py --source scripts/jxl_container.py' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
 
 animation-blend-native source build output:
     python3 scripts/frame_header_oracle.py --component animation_blend {{quote(source)}} {{quote(build)}} {{quote(output)}}
@@ -1843,6 +1839,118 @@ animation-blend-native source build output:
 animation-blend-native-check log djxl output:
     python3 scripts/check_animation_blend_native.py {{quote(log)}} {{quote(djxl)}} {{quote(output)}}
 
+source-color-regions-final llvm artifacts:
+    python3 scripts/source_color_coverage.py {{quote(llvm)}} {{quote(artifacts + "/source-color-region-report-final")}} --source-white {{quote(artifacts + "/source-color-native-final")}} {{quote(artifacts + "/source-color-public-final")}} {{quote(artifacts + "/source-color-engine-zero")}} {{quote(artifacts + "/source-color-neutral")}} --source-metric {{quote(artifacts + "/source-color-engine-zero")}} {{quote(artifacts + "/source-color-metric-final")}} {{quote(artifacts + "/source-color-budget-final")}} --rate-color {{quote(artifacts + "/source-color-rate-domain-final")}} {{quote(artifacts + "/source-color-engine-zero")}}
+
+source-color-last-regions manifest artifacts coverage_env llvm:
+    just source-color-native-vectors-evidence {{quote(manifest)}} {{quote(artifacts + "/source-color-native-d65-controls")}} {{quote(coverage_env)}}
+    python3 scripts/source_color_coverage.py {{quote(llvm)}} {{quote(artifacts + "/source-color-region-report-complete")}} --source-white {{quote(artifacts + "/source-color-native-d65-controls")}} {{quote(artifacts + "/source-color-public-final")}} {{quote(artifacts + "/source-color-engine-zero")}} {{quote(artifacts + "/source-color-neutral")}} {{quote(artifacts + "/source-color-rate-domain-final")}} --source-metric {{quote(artifacts + "/source-color-engine-zero")}} {{quote(artifacts + "/source-color-metric-final")}} {{quote(artifacts + "/source-color-budget-final")}} {{quote(artifacts + "/source-color-rate-domain-final")}} --rate-color {{quote(artifacts + "/source-color-rate-domain-final")}} {{quote(artifacts + "/source-color-engine-zero")}}
+
+explicit-blend-layout-evidence manifest output coverage_env oracle:
+    LIBJXL_ORIGINAL_PROFILE_ORACLE={{quote(oracle)}} bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" accepted_blend_layouts --test-target frame_header_contract --features __expert,parallel,corpus-tests --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/headers/frame_header.rs --source jxl-encoder/src/modular/frame.rs --source jxl-encoder/src/vardct/bitstream.rs --source jxl-encoder/tests/frame_header_contract/blends.rs --source scripts/libjxl_original_profile.cc' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
 original-float-oracle-check cjxl oracle output:
     python3 scripts/check_original_float_oracle.py {{quote(cjxl)}} {{quote(oracle)}} {{quote(output)}}
 
+explicit-blend-plan-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" animation_reference_ --features __expert,parallel --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/headers/frame_header.rs --source jxl-encoder/src/modular/frame.rs --source jxl-encoder/src/vardct/bitstream.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+explicit-blend-existing-reference-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" test_animation_reference_only_lossless_jxlrs --test-target it --features __expert,parallel --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/headers/frame_header.rs --source jxl-encoder/src/modular/frame.rs --source jxl-encoder/src/vardct/bitstream.rs --source jxl-encoder/tests/it/animation.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+explicit-blend-faults manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/test_alpha_squeeze_mutation.py "$2" "$3" --case blend-lossless-crop --case blend-lossy-crop --case blend-lossless-domain --case blend-lossy-domain --case blend-reference-plan' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+explicit-blend-validation manifest artifacts coverage_env:
+    just explicit-blend-existing-reference-evidence {{quote(manifest)}} {{quote(artifacts + "/explicit-blend-existing-reference")}} {{quote(coverage_env)}}
+    just explicit-blend-plan-evidence {{quote(manifest)}} {{quote(artifacts + "/explicit-blend-plan")}} {{quote(coverage_env)}}
+    just explicit-blend-faults {{quote(manifest)}} {{quote(artifacts + "/explicit-blend-faults")}} {{quote(coverage_env)}}
+    just alpha-squeeze-broad-baseline {{quote(manifest)}}
+
+explicit-blend-final-layouts manifest artifacts coverage_env oracle cjxl:
+    just original-float-oracle-check {{quote(cjxl)}} {{quote(oracle)}} {{quote(artifacts + "/source-fields-float-alpha-controls")}}
+    just explicit-blend-layout-evidence {{quote(manifest)}} {{quote(artifacts + "/explicit-blend-typed-alpha-profiles")}} {{quote(coverage_env)}} {{quote(oracle)}}
+
+explicit-blend-final-matrix manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" "" --test-target frame_header_contract --features __expert,parallel --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/headers/frame_header.rs --source jxl-encoder/src/modular/frame.rs --source jxl-encoder/src/vardct/bitstream.rs --source jxl-encoder/tests/frame_header_contract/blends.rs --source scripts/check_explicit_blend_headers.py --source scripts/jxl_bitstream_diff.py --source scripts/jxl_container.py' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+explicit-blend-minimal-evidence manifest output coverage_env oracle:
+    LIBJXL_ORIGINAL_PROFILE_ORACLE={{quote(oracle)}} bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" blends:: --test-target frame_header_contract --no-default-features --features std,convenience,__expert,corpus-tests --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/headers/frame_header.rs --source jxl-encoder/src/modular/frame.rs --source jxl-encoder/src/vardct/bitstream.rs --source jxl-encoder/tests/frame_header_contract/blends.rs --source scripts/check_explicit_blend_headers.py --source scripts/jxl_bitstream_diff.py --source scripts/jxl_container.py --source scripts/libjxl_original_profile.cc' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+explicit-blend-last-validation manifest artifacts coverage_env oracle lint_home lint_target:
+    just explicit-blend-final-matrix {{quote(manifest)}} {{quote(artifacts + "/explicit-blend-final-wrappers")}} {{quote(coverage_env)}}
+    just explicit-blend-plan-evidence {{quote(manifest)}} {{quote(artifacts + "/explicit-blend-plan-cancellation")}} {{quote(coverage_env)}}
+    just explicit-blend-minimal-evidence {{quote(manifest)}} {{quote(artifacts + "/explicit-blend-minimal")}} {{quote(coverage_env)}} {{quote(oracle)}}
+    env CARGO_HOME={{quote(lint_home)}} CARGO_TARGET_DIR={{quote(lint_target)}} cargo +1.100.0 clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,corpus-tests --lib --test frame_header_contract -- -D warnings
+    env CARGO_HOME={{quote(lint_home)}} CARGO_TARGET_DIR={{quote(lint_target)}} cargo +1.100.0 clippy --locked --manifest-path {{quote(manifest)}} --workspace --all-targets -- -D warnings
+    cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+
+explicit-blend-regions llvm artifacts:
+    python3 scripts/animation_blend_coverage.py {{quote(llvm)}} {{quote(artifacts + "/explicit-blend-region-report")}} {{quote(artifacts + "/explicit-blend-final-wrappers")}} {{quote(artifacts + "/explicit-blend-plan-cancellation")}} {{quote(artifacts + "/explicit-blend-minimal")}} {{quote(artifacts + "/explicit-blend-typed-alpha-profiles")}}
+
+explicit-blend-final-lint manifest lint_home lint_target:
+    env CARGO_HOME={{quote(lint_home)}} CARGO_TARGET_DIR={{quote(lint_target)}} cargo +1.100.0 clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,corpus-tests --lib --test frame_header_contract -- -D warnings
+    env CARGO_HOME={{quote(lint_home)}} CARGO_TARGET_DIR={{quote(lint_target)}} cargo +1.100.0 clippy --locked --manifest-path {{quote(manifest)}} --workspace --all-targets -- -D warnings
+    cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+
+explicit-blend-final-reports manifest artifacts coverage_env llvm lint_home lint_target:
+    just explicit-blend-final-lint {{quote(manifest)}} {{quote(lint_home)}} {{quote(lint_target)}}
+    just explicit-blend-regions {{quote(llvm)}} {{quote(artifacts)}}
+
+explicit-blend-final-code-check manifest artifacts coverage_env oracle llvm lint_home lint_target:
+    just explicit-blend-plan-evidence {{quote(manifest)}} {{quote(artifacts + "/explicit-blend-plan-zero-duration")}} {{quote(coverage_env)}}
+    just explicit-blend-layout-evidence {{quote(manifest)}} {{quote(artifacts + "/explicit-blend-lossless-source-codes")}} {{quote(coverage_env)}} {{quote(oracle)}}
+    just explicit-blend-final-lint {{quote(manifest)}} {{quote(lint_home)}} {{quote(lint_target)}}
+    python3 scripts/animation_blend_coverage.py {{quote(llvm)}} {{quote(artifacts + "/explicit-blend-region-report-final")}} {{quote(artifacts + "/explicit-blend-final-wrappers")}} {{quote(artifacts + "/explicit-blend-plan-zero-duration")}} {{quote(artifacts + "/explicit-blend-minimal")}} {{quote(artifacts + "/explicit-blend-lossless-source-codes")}}
+
+explicit-blend-patch-slot-evidence manifest output coverage_env corpus:
+    CODEC_CORPUS_DIR={{quote(corpus)}} bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" color_source_three --test-target frame_header_contract --features __expert,parallel,corpus-tests --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/headers/frame_header.rs --source jxl-encoder/src/modular/frame.rs --source jxl-encoder/src/vardct/bitstream.rs --source jxl-encoder/src/vardct/patches.rs --source jxl-encoder/tests/frame_header_contract/blends.rs --source jxl-encoder/tests/frame_header_contract/patch_slots.rs --source scripts/check_explicit_blend_headers.py --source scripts/jxl_bitstream_diff.py --source scripts/jxl_container.py' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+explicit-blend-patch-policy-evidence manifest output coverage_env corpus:
+    CODEC_CORPUS_DIR={{quote(corpus)}} bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" color_source_three_policies --test-target frame_header_contract --features __expert,parallel,corpus-tests --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/headers/frame_header.rs --source jxl-encoder/src/modular/frame.rs --source jxl-encoder/src/vardct/bitstream.rs --source jxl-encoder/src/vardct/patches.rs --source jxl-encoder/tests/frame_header_contract/blends.rs --source jxl-encoder/tests/frame_header_contract/patch_slots.rs --source scripts/check_explicit_blend_headers.py --source scripts/jxl_bitstream_diff.py --source scripts/jxl_container.py' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+explicit-blend-reservation-check manifest artifacts coverage_env corpus:
+    CODEC_CORPUS_DIR={{quote(corpus)}} bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3/explicit-blend-patch-minimal" color_source_three_policies --test-target frame_header_contract --no-default-features --features std,convenience,__expert,corpus-tests --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/headers/frame_header.rs --source jxl-encoder/src/modular/frame.rs --source jxl-encoder/src/vardct/bitstream.rs --source jxl-encoder/tests/frame_header_contract/blends.rs --source jxl-encoder/tests/frame_header_contract/patch_slots.rs --source scripts/check_explicit_blend_headers.py --source scripts/jxl_bitstream_diff.py --source scripts/jxl_container.py; python3 scripts/test_alpha_squeeze_mutation.py "$2" "$3/explicit-blend-patch-fault" --case blend-patch-slot; python3 scripts/run_selected_test_evidence.py "$2" "$3/explicit-blend-default-slots" reference_only_default_and_boundary_slots --test-target frame_header_contract --features __expert,parallel --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/headers/frame_header.rs --source jxl-encoder/src/modular/frame.rs --source jxl-encoder/src/vardct/bitstream.rs --source jxl-encoder/tests/frame_header_contract/blends.rs; python3 scripts/run_selected_test_evidence.py "$2" "$3/explicit-blend-reservation-unit" color_slot_reservation --features __expert,parallel --source jxl-encoder/src/headers/frame_header.rs --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/modular/frame.rs --source jxl-encoder/src/vardct/bitstream.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    just alpha-squeeze-broad-baseline {{quote(manifest)}}
+
+explicit-blend-intervening-evidence manifest output coverage_env corpus:
+    CODEC_CORPUS_DIR={{quote(corpus)}} bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" color_source_three_survives_an_intervening_dictionary --test-target frame_header_contract --features __expert,parallel,corpus-tests --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/headers/frame_header.rs --source jxl-encoder/src/modular/frame.rs --source jxl-encoder/src/vardct/bitstream.rs --source jxl-encoder/tests/frame_header_contract/blends.rs --source jxl-encoder/tests/frame_header_contract/patch_slots.rs --source scripts/check_explicit_blend_headers.py --source scripts/jxl_bitstream_diff.py --source scripts/jxl_container.py' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+explicit-blend-lifetime-evidence manifest artifacts coverage_env corpus oracle:
+    just explicit-blend-final-matrix {{quote(manifest)}} {{quote(artifacts + "/explicit-blend-lifetime-matrix")}} {{quote(coverage_env)}}
+    just explicit-blend-layout-evidence {{quote(manifest)}} {{quote(artifacts + "/explicit-blend-lifetime-typed")}} {{quote(coverage_env)}} {{quote(oracle)}}
+    just explicit-blend-plan-evidence {{quote(manifest)}} {{quote(artifacts + "/explicit-blend-lifetime-plan-check")}} {{quote(coverage_env)}}
+    CODEC_CORPUS_DIR={{quote(corpus)}} bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3/explicit-blend-lifetime-unit" color_slot_reservation --features __expert,parallel --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/headers/frame_header.rs --source jxl-encoder/src/modular/frame.rs --source jxl-encoder/src/vardct/bitstream.rs; python3 scripts/run_selected_test_evidence.py "$2" "$3/explicit-blend-lifetime-minimal" explicit_blend_policy_mode_and_entry_matrix --test-target frame_header_contract --no-default-features --features std,convenience,__expert,corpus-tests --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/headers/frame_header.rs --source jxl-encoder/src/modular/frame.rs --source jxl-encoder/src/vardct/bitstream.rs --source jxl-encoder/tests/frame_header_contract/blends.rs --source scripts/check_explicit_blend_headers.py --source scripts/jxl_bitstream_diff.py --source scripts/jxl_container.py' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    just explicit-blend-patch-policy-evidence {{quote(manifest)}} {{quote(artifacts + "/explicit-blend-lifetime-patch")}} {{quote(coverage_env)}} {{quote(corpus)}}
+
+explicit-blend-lifetime-faults manifest output coverage_env corpus:
+    CODEC_CORPUS_DIR={{quote(corpus)}} bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/test_alpha_squeeze_mutation.py "$2" "$3" --case blend-lossless-crop --case blend-lossy-crop --case blend-lossless-domain --case blend-lossy-domain --case blend-reference-plan --case blend-patch-slot --case blend-reference-lifetime' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+explicit-blend-lifetime-regions llvm artifacts:
+    python3 scripts/animation_blend_coverage.py {{quote(llvm)}} {{quote(artifacts + "/explicit-blend-lifetime-regions")}} {{quote(artifacts + "/explicit-blend-lifetime-matrix")}} {{quote(artifacts + "/explicit-blend-lifetime-typed")}} {{quote(artifacts + "/explicit-blend-lifetime-plan-check")}} {{quote(artifacts + "/explicit-blend-lifetime-minimal")}} --reservation {{quote(artifacts + "/explicit-blend-lifetime-unit")}} --reservation {{quote(artifacts + "/explicit-blend-lifetime-patch")}} --reservation {{quote(artifacts + "/explicit-blend-intervening-fix")}}
+
+explicit-blend-lifetime-final manifest artifacts coverage_env corpus llvm lint_home lint_target:
+    CODEC_CORPUS_DIR={{quote(corpus)}} bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3/explicit-blend-lifetime-intervening-minimal" color_source_three_survives_an_intervening_dictionary --test-target frame_header_contract --no-default-features --features std,convenience,__expert,corpus-tests --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/headers/frame_header.rs --source jxl-encoder/src/modular/frame.rs --source jxl-encoder/src/vardct/bitstream.rs --source jxl-encoder/tests/frame_header_contract/blends.rs --source jxl-encoder/tests/frame_header_contract/patch_slots.rs --source scripts/check_explicit_blend_headers.py --source scripts/jxl_bitstream_diff.py --source scripts/jxl_container.py' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    just explicit-blend-lifetime-faults {{quote(manifest)}} {{quote(artifacts + "/explicit-blend-lifetime-faults")}} {{quote(coverage_env)}} {{quote(corpus)}}
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3/explicit-blend-lifetime-existing-animations" animation:: --test-target it --features __expert,parallel --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/headers/frame_header.rs --source jxl-encoder/src/modular/frame.rs --source jxl-encoder/src/vardct/bitstream.rs --source jxl-encoder/tests/it/animation.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    just alpha-squeeze-broad-baseline {{quote(manifest)}}
+    just explicit-blend-final-lint {{quote(manifest)}} {{quote(lint_home)}} {{quote(lint_target)}}
+    just explicit-blend-lifetime-regions {{quote(llvm)}} {{quote(artifacts)}}
+
+explicit-blend-lifetime-continue manifest artifacts coverage_env corpus:
+    just explicit-blend-plan-evidence {{quote(manifest)}} {{quote(artifacts + "/explicit-blend-lifetime-plan-check")}} {{quote(coverage_env)}}
+    CODEC_CORPUS_DIR={{quote(corpus)}} bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3/explicit-blend-lifetime-unit" color_slot_reservation --features __expert,parallel --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/headers/frame_header.rs --source jxl-encoder/src/modular/frame.rs --source jxl-encoder/src/vardct/bitstream.rs; python3 scripts/run_selected_test_evidence.py "$2" "$3/explicit-blend-lifetime-minimal" explicit_blend_policy_mode_and_entry_matrix --test-target frame_header_contract --no-default-features --features std,convenience,__expert,corpus-tests --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/headers/frame_header.rs --source jxl-encoder/src/modular/frame.rs --source jxl-encoder/src/vardct/bitstream.rs --source jxl-encoder/tests/frame_header_contract/blends.rs --source scripts/check_explicit_blend_headers.py --source scripts/jxl_bitstream_diff.py --source scripts/jxl_container.py' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    just explicit-blend-patch-policy-evidence {{quote(manifest)}} {{quote(artifacts + "/explicit-blend-lifetime-patch")}} {{quote(coverage_env)}} {{quote(corpus)}}
+
+explicit-blend-icc-evidence manifest output coverage_env oracle:
+    LIBJXL_ORIGINAL_PROFILE_ORACLE={{quote(oracle)}} bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" original_icc_addition --test-target frame_header_contract --features __expert,parallel,corpus-tests --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/headers/frame_header.rs --source jxl-encoder/src/modular/frame.rs --source jxl-encoder/src/vardct/bitstream.rs --source jxl-encoder/tests/frame_header_contract/blends.rs --source jxl-encoder/tests/frame_header_contract/icc_blends.rs --source scripts/libjxl_original_profile.cc' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+explicit-blend-icc-faults manifest output coverage_env oracle:
+    LIBJXL_ORIGINAL_PROFILE_ORACLE={{quote(oracle)}} bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/test_alpha_squeeze_mutation.py "$2" "$3" --case blend-icc-lossless-domain --case blend-icc-lossy-domain' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+explicit-blend-icc-final manifest artifacts coverage_env oracle llvm lint_home lint_target:
+    just explicit-blend-icc-faults {{quote(manifest)}} {{quote(artifacts + "/explicit-blend-icc-faults")}} {{quote(coverage_env)}} {{quote(oracle)}}
+    just explicit-blend-final-lint {{quote(manifest)}} {{quote(lint_home)}} {{quote(lint_target)}}
+    just explicit-blend-lifetime-regions {{quote(llvm)}} {{quote(artifacts)}}
