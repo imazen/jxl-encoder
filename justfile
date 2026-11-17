@@ -1605,3 +1605,64 @@ alpha-squeeze-elongated-minimal-evidence manifest output coverage_env:
 
 alpha-squeeze-elongated-worker-evidence manifest output coverage_env:
     bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" elongated_alpha_two_worker --test-target alpha_squeeze_matrix --features __expert,__internals,__pre_quantized,parallel --source jxl-encoder/src/vardct/bitstream.rs --source jxl-encoder/src/vardct/extras.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+progressive-ac-unit-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" progressive_sparse_ac_tokens --source jxl-encoder/src/vardct/bitstream.rs --source jxl-encoder/src/vardct/ac_group.rs --source jxl-encoder/src/vardct/ac_strategy.rs --source jxl-encoder/src/vardct/ac_context.rs --source jxl-encoder/src/vardct/coeff_order.rs --source jxl-encoder/src/vardct/common.rs --source jxl-encoder/src/vardct/progressive_ac_token_tests.rs --source jxl-encoder/src/vardct/progressive_ac_v012.tsv --source jxl-encoder/src/vardct/alpha_squeeze_thin_v012.tsv --source jxl-encoder/src/vardct/progressive_brackets_v012.tsv' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+progressive-ac-real-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" progressive_real_pixels --test-target progressive_ac_contract --features __expert,parallel --source jxl-encoder/src/vardct/bitstream.rs --source jxl-encoder/src/vardct/ac_group.rs --source jxl-encoder/src/vardct/ac_strategy.rs --source jxl-encoder/src/vardct/ac_context.rs --source jxl-encoder/src/vardct/coeff_order.rs --source jxl-encoder/src/vardct/common.rs --source jxl-encoder/src/vardct/progressive_ac_v012.tsv --source jxl-encoder/tests/images/frymire.png' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+progressive-ac-caller-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" progressive --test-target progressive_ac_contract --features __expert,parallel --source jxl-encoder/src/vardct/bitstream.rs --source jxl-encoder/src/vardct/ac_group.rs --source jxl-encoder/src/vardct/ac_strategy.rs --source jxl-encoder/src/vardct/ac_context.rs --source jxl-encoder/src/vardct/coeff_order.rs --source jxl-encoder/src/vardct/common.rs --source jxl-encoder/src/vardct/progressive_ac_v012.tsv --source jxl-encoder/tests/images/frymire.png' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+progressive-ac-focused-lint manifest:
+    cargo +1.100.0 clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --lib --test progressive_ac_contract -- -D warnings
+
+progressive-ac-animation-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" progressive_animation --test-target progressive_ac_contract --features __expert,parallel --source jxl-encoder/src/vardct/bitstream.rs --source jxl-encoder/src/vardct/ac_group.rs --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/vardct/progressive_ac_v012.tsv --source jxl-encoder/tests/images/frymire.png' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+progressive-ac-engine-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" progressive_prepared --test-target progressive_ac_contract --features __expert,__internals,__pre_quantized,parallel --source jxl-encoder/src/vardct/bitstream.rs --source jxl-encoder/src/vardct/ac_group.rs --source jxl-encoder/src/vardct/encoder.rs --source jxl-encoder/src/vardct/progressive_ac_v012.tsv --source jxl-encoder/tests/images/frymire.png' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+progressive-ac-cli-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" cli_progressive --package jxl-encoder-cli --test-target progressive_ac --features parallel --source jxl-encoder-cli/src/main.rs --source jxl-encoder/src/vardct/bitstream.rs --source jxl-encoder/src/vardct/ac_group.rs --source jxl-encoder/tests/images/frymire.png' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+progressive-ac-options-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" progressive_producer_options --test-target progressive_ac_contract --features __expert,parallel --source jxl-encoder/src/vardct/bitstream.rs --source jxl-encoder/src/vardct/ac_group.rs --source jxl-encoder/src/vardct/encoder.rs --source jxl-encoder/src/vardct/progressive_ac_v012.tsv --source jxl-encoder/tests/images/frymire.png' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+progressive-ac-region-export llvm archive output:
+    python3 scripts/coverage_from_archive.py {{quote(llvm)}} {{quote(archive)}} {{quote(output)}}
+
+progressive-ac-core-regions llvm artifact_root:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for name in progressive-ac-unit-first-fix progressive-ac-callers-first-fix progressive-ac-animation-corrected progressive-ac-engines-typed; do
+        python3 scripts/coverage_from_archive.py {{quote(llvm)}} {{quote(artifact_root)}}/"$name" {{quote(artifact_root)}}/"$name"-ac-regions
+    done
+    python3 scripts/alpha_squeeze_coverage_summary.py {{quote(artifact_root)}}/progressive-ac-regions.json --scope ac --pair {{quote(artifact_root)}}/progressive-ac-unit-first-fix {{quote(artifact_root)}}/progressive-ac-unit-first-fix-ac-regions/selected.json --pair {{quote(artifact_root)}}/progressive-ac-callers-first-fix {{quote(artifact_root)}}/progressive-ac-callers-first-fix-ac-regions/selected.json --pair {{quote(artifact_root)}}/progressive-ac-animation-corrected {{quote(artifact_root)}}/progressive-ac-animation-corrected-ac-regions/selected.json --pair {{quote(artifact_root)}}/progressive-ac-engines-typed {{quote(artifact_root)}}/progressive-ac-engines-typed-ac-regions/selected.json
+
+progressive-ac-minimal-check manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert --test progressive_ac_contract progressive_real_pixels -- --test-threads=1
+
+progressive-ac-complete-lint manifest:
+    cargo +1.100.0 clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel --lib --test progressive_ac_contract -- -D warnings
+    cargo +1.100.0 clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder-cli --test progressive_ac -- -D warnings
+
+progressive-ac-original-count-replay manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/test_alpha_squeeze_mutation.py "$2" "$3" --case ac-flat-prefix' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+progressive-ac-minimal-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" progressive --test-target progressive_ac_contract --no-default-features --features std,convenience,__expert --source jxl-encoder/src/vardct/bitstream.rs --source jxl-encoder/src/vardct/ac_group.rs --source jxl-encoder/src/vardct/encoder.rs --source jxl-encoder/src/vardct/progressive_ac_v012.tsv --source jxl-encoder/tests/images/frymire.png' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+progressive-ac-cmyk-check manifest profile output:
+    cargo run --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --example progressive_ac_cmyk -- {{quote(profile)}} {{quote(output)}}
+
+progressive-dispatch-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" requested_progressive --test-target progressive_dispatch --features __expert,parallel --source jxl-encoder/src/vardct/encoder.rs --source jxl-encoder/src/vardct/bitstream.rs --source jxl-encoder/src/vardct/ac_group.rs --source jxl-encoder/tests/images/frymire.png' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+progressive-dispatch-lint manifest:
+    cargo +1.100.0 clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel --lib --test progressive_ac_contract --test progressive_dispatch --example progressive_ac_cmyk -- -D warnings
+
+progressive-dispatch-original-replay manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/test_alpha_squeeze_mutation.py "$2" "$3" --case static-progressive' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+

@@ -15,6 +15,7 @@ p.add_argument('manifest', type=Path)
 p.add_argument('output', type=Path)
 p.add_argument('filter')
 p.add_argument('--test-target')
+p.add_argument('--package', default='jxl-encoder', choices=['jxl-encoder', 'jxl-encoder-cli'])
 p.add_argument('--features', default='__expert')
 p.add_argument('--no-default-features', action='store_true')
 p.add_argument('--source', action='append', default=[], type=Path,
@@ -34,9 +35,9 @@ if a.test_target:
         if name not in names:
             names.append(name)
     os.environ[key] = ','.join(names)
-    os.utime(root / 'jxl-encoder/tests' / (a.test_target + '.rs'), None)
+    os.utime(root / a.package / 'tests' / (a.test_target + '.rs'), None)
 command = ['cargo', 'test', '--locked', '--manifest-path', str(a.manifest),
-           '-p', 'jxl-encoder', '--features', a.features, '--no-run', '--message-format=json']
+           '-p', a.package, '--features', a.features, '--no-run', '--message-format=json']
 if a.no_default_features:
     command.append('--no-default-features')
 command += ['--test', a.test_target] if a.test_target else ['--lib']
@@ -56,7 +57,7 @@ for relative in a.source:
         p.error('required relative source file missing: ' + str(relative))
     source_paths.append(root / relative)
 if a.test_target:
-    source_paths += [root / 'jxl-encoder/tests' / (a.test_target + '.rs')]
+    source_paths += [root / a.package / 'tests' / (a.test_target + '.rs')]
     source_paths += list((root / 'jxl-encoder/tests/support').glob('*.rs'))
 for source in sorted(source_paths):
     dest = a.output / 'source' / source.relative_to(root)
@@ -65,6 +66,19 @@ for source in sorted(source_paths):
     digest = hashlib.sha256(source.read_bytes()).hexdigest()
     assert hashlib.sha256(dest.read_bytes()).hexdigest() == digest
     source_rows.append(dict(path=str(source.relative_to(root)), sha256=digest))
+# Retain executable subprocesses built with CLI integration tests as separate
+# identities. Their coverage is not silently merged into the parent test.
+subprocess_objects = []
+for artifact in artifacts:
+    other = artifact.get('executable')
+    if not other or Path(other) == executable:
+        continue
+    original = Path(other)
+    target = a.output / ('subprocess-' + original.name)
+    shutil.copy2(original, target)
+    subprocess_objects.append(dict(original=str(original), staged=str(target),
+        sha256=hashlib.sha256(target.read_bytes()).hexdigest()))
+(a.output / 'subprocess-objects.json').write_text(json.dumps(subprocess_objects, indent=2))
 retained = a.output / 'test-binary'
 shutil.copy2(executable, retained)
 digest = hashlib.sha256(retained.read_bytes()).hexdigest()

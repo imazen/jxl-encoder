@@ -14,7 +14,7 @@ import re
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('output', type=Path)
 p.add_argument('--pair', action='append', nargs=2, required=True)
-p.add_argument('--scope', choices=['alpha', 'progressive', 'partition', 'admission'], default='alpha')
+p.add_argument('--scope', choices=['alpha', 'progressive', 'partition', 'admission', 'ac'], default='alpha')
 a = p.parse_args()
 if a.output.exists():
     p.error('refusing existing result')
@@ -43,6 +43,11 @@ if a.scope == 'admission':
     functions = {
         'jxl-encoder/src/vardct/extras.rs': ['build_alpha_squeeze_pipeline'],
         'jxl-encoder/src/modular/squeeze.rs': ['default_squeeze_params_for_groups'],
+    }
+if a.scope == 'ac':
+    functions = {
+        'jxl-encoder/src/vardct/ac_group.rs': ['count_nonzero_except_llf', 'num_nonzero_except_llf'],
+        'jxl-encoder/src/vardct/bitstream.rs': ['tokenize_ac_group', 'split_coefficients_into_passes'],
     }
 rows = []
 for relative, names in functions.items():

@@ -3408,3 +3408,7 @@ required-features = ["std", "__expert"]
 [[example]]
 name = "shifted_extra_cmyk"
 required-features = ["__expert"]
+
+[[example]]
+name = "progressive_ac_cmyk"
+required-features = ["__expert"]

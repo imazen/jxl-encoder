@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Replay alpha-squeeze section and partition faults against retained regressions."""
+"""Replay selected modular/AC writer faults against retained regressions."""
 import argparse
 import hashlib
 import json
@@ -18,6 +18,13 @@ if (root / '.git').exists() or not (root.parent.parent / 'provenance.json').is_f
     p.error('requires an owned clean-source export')
 a.output.mkdir(exist_ok=False)
 cases = [
+    ('static-progressive', 'jxl-encoder/src/vardct/encoder.rs',
+     '            && self.progressive == crate::api::ProgressiveMode::Single\n', '',
+     'progressive_dispatch', 'requested_progressive'),
+    ('ac-flat-prefix', 'jxl-encoder/src/vardct/bitstream.rs',
+     '__RESTORE_FLAT_AC_COUNT__',
+     '                        let pass_nz: u16 = pass_coeffs[covered_blocks..].iter().filter(|&&v| v != 0).count() as u16;',
+     None, 'progressive_sparse_ac_tokens'),
     ('survivor-multiplier', 'jxl-encoder/src/vardct/bitstream.rs',
      '__RESTORE_PLACEHOLDERS__',
      '        // Restore the original noncompacted local tree/channel sequence.\n        let section_channels: alloc::vec::Vec<_> = local_indices.iter().map(|&index| {\n            let channel = &pipeline.sub_channels[index].channel;\n            match crop_region {\n                None => channel.clone(),\n                Some(crop) => channel.extract_grid_cell(crop.grid_x, crop.grid_y, crop.group_dim)\n                    .unwrap_or_else(crate::modular::channel::Channel::new_zero_sized),\n            }\n        }).collect();\n        let per_sub_q: alloc::vec::Vec<_> = local_indices.iter()\n            .map(|&index| pipeline.sub_channels[index].q.max(1)).collect();\n        if !declare_squeeze && section_channels.is_empty() {\n            return Ok(());\n        }\n\n',
@@ -41,9 +48,16 @@ if set(a.case) - {case[0] for case in cases}:
     p.error('unknown fault selection')
 if a.case:
     cases = [case for case in cases if case[0] in a.case]
+else:
+    # Preserve the established alpha-only default selection.
+    cases = [case for case in cases if case[0] not in ('ac-flat-prefix', 'static-progressive')]
 for name, source, before, after, target, selection in cases:
     path = root / source
     original = path.read_text()
+    if before == '__RESTORE_FLAT_AC_COUNT__':
+        start = original.index('                        let pass_nz = super::ac_group::count_nonzero_except_llf(')
+        end = original.index('                        );', start) + len('                        );')
+        before = original[start:end]
     if before == '__RESTORE_PLACEHOLDERS__':
         start = original.index('        // DecodeGroup compacts')
         end = original.index('        // ── GroupHeader', start)
@@ -61,6 +75,10 @@ for name, source, before, after, target, selection in cases:
         command = [sys.executable, str(Path(__file__).with_name('run_selected_test_evidence.py')),
                    str(a.manifest), str(a.output / name), selection,
                    '--source', source, '--source', 'jxl-encoder/src/vardct/bitstream.rs',
+                   '--source', 'jxl-encoder/tests/images/frymire.png',
+                   '--source', 'jxl-encoder/src/vardct/ac_group.rs',
+                   '--source', 'jxl-encoder/src/vardct/progressive_ac_token_tests.rs',
+                   '--source', 'jxl-encoder/src/vardct/progressive_ac_v012.tsv',
                    '--source', 'jxl-encoder/src/vardct/alpha_squeeze_thin_v012.tsv',
                    '--source', 'jxl-encoder/src/vardct/progressive_brackets_v012.tsv']
         if target:
