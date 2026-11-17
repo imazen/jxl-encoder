@@ -860,4 +860,3 @@ mod numeric;
 
 #[path = "source_color_contract/icc_source.rs"]
 mod icc_source;
-
