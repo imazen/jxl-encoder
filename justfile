@@ -2357,3 +2357,7 @@ animation-crop-patch-continuation manifest output coverage_env corpus oracle lin
     LIBJXL_ORIGINAL_PROFILE_ORACLE={{quote(oracle)}} CODEC_CORPUS_DIR={{quote(corpus)}} bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" color_source_three_policies_and_partial_crops --test-target frame_header_contract --features __expert,parallel,corpus-tests --source jxl-encoder/src/api/animate.rs --source jxl-encoder/tests/frame_header_contract/patch_slots.rs --source scripts/check_explicit_blend_headers.py --source scripts/jxl_bitstream_diff.py --source scripts/jxl_container.py' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
     env CARGO_HOME={{quote(lint_home)}} CARGO_TARGET_DIR={{quote(lint_target)}} cargo +1.100.0 clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,corpus-tests --lib --test frame_header_contract -- -D warnings
     cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+
+animation-zero-area-native source build oracle output:
+    python3 scripts/frame_header_oracle.py --component zero_area {{quote(source)}} {{quote(build)}} {{quote(oracle)}}
+    python3 scripts/run_zero_area_native.py {{quote(oracle)}} {{quote(output)}}
