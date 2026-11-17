@@ -3412,3 +3412,7 @@ required-features = ["__expert"]
 [[example]]
 name = "progressive_ac_cmyk"
 required-features = ["__expert"]
+
+[[example]]
+name = "color_gamma_decode"
+required-features = ["__expert"]

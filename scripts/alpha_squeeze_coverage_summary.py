@@ -52,7 +52,8 @@ if a.scope == 'ac':
 if a.scope == 'source-white':
     functions = {
         'jxl-encoder/src/vardct/xyb.rs': ['primaries_to_srgb_matrix'],
-        'jxl-encoder/src/vardct/source_white.rs': ['to_srgb', 'rgb_to_xyz', 'bradford_adapt', 'mul_mv', 'mul_3x3', 'invert_3x3', 'solve_3x3'],
+        'jxl-encoder/src/vardct/source_white.rs': ['to_srgb'],
+        'jxl-encoder/src/color_math.rs': ['white_xyz', 'determinant', 'inverse', 'mul', 'product', 'raw_primaries', 'rgb_to_xyz', 'adaptation', 'source_to_srgb'],
     }
 elif a.scope == 'source-metric':
     functions = {'jxl-encoder/src/vardct/encoder.rs': ['prepare_metric_reference']}

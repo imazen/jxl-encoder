@@ -18,6 +18,61 @@ if (root / '.git').exists() or not (root.parent.parent / 'provenance.json').is_f
     p.error('requires an owned clean-source export')
 a.output.mkdir(exist_ok=False)
 cases = [
+    ('color-icc-source-gamma', 'jxl-encoder/src/api/validate.rs',
+     '&& (!gamma.is_finite() || gamma <= 0.0)', '&& false',
+     'source_color_contract', 'attached_icc_does_not_admit_'),
+    ('color-icc-source-matrix', 'jxl-encoder/src/api/validate.rs',
+     '    crate::vardct::xyb::primaries_to_srgb_matrix(color).map_err(at_from)?;\n', '',
+     'source_color_contract', 'attached_icc_does_not_admit_'),
+    ('color-icc-source-precedence', 'jxl-encoder/src/api/validate.rs',
+     '        && source_gamma.is_none()', '        && true',
+     'source_color_contract', 'attached_icc_preserves_'),
+    ('color-icc-source-float', 'jxl-encoder/src/api/validate.rs',
+     '    if !layout.is_f32()', '    if true',
+     'source_color_contract', 'attached_icc_preserves_'),
+    ('color-icc-source-stream', 'jxl-encoder/src/api.rs', '__ICC_SOURCE_STREAM_CHECK__', '',
+     'source_color_contract', 'attached_icc_does_not_admit_'),
+    ('color-gamma-power', 'jxl-encoder/src/api/ingest.rs',
+     '    sample.powf(inv_gamma)', '    jxl_simd::fast_powf(sample, inv_gamma)', None, 'gamma_input_'),
+    ('color-whole-header', 'jxl-encoder/src/headers/file_header.rs',
+     '        meta.color_encoding.validate_parametric()?;\n', '', None, 'color_admission_file_header'),
+    ('color-source-gamma-lossy-setter', 'jxl-encoder/src/api.rs', '__SOURCE_GAMMA_LOSSY_SETTER__', '',
+     'source_color_contract', 'source_gamma_streaming_admission'),
+    ('color-source-gamma-lossless-setter', 'jxl-encoder/src/api.rs', '__SOURCE_GAMMA_LOSSLESS_SETTER__', '',
+     'source_color_contract', 'source_gamma_streaming_admission'),
+    ('color-source-gamma-lossy-check', 'jxl-encoder/src/api.rs', '__SOURCE_GAMMA_LOSSY_CHECK__', '',
+     'source_color_contract', 'source_gamma_streaming_admission'),
+    ('color-source-gamma-lossless-check', 'jxl-encoder/src/api.rs', '__SOURCE_GAMMA_LOSSLESS_CHECK__', '',
+     'source_color_contract', 'source_gamma_streaming_admission'),
+    ('color-width-scan', 'jxl-encoder/src/vardct/bitstream.rs',
+     '        Self::note_dc_modular_width(&self.force_modular_32bit, &transform_out.quant_dc);\n', '',
+     'source_color_contract', 'color_admission_gamma_white_animation'),
+    ('color-width-transfer', 'jxl-encoder/src/api/animate.rs', '__COLOR_WIDTH_TRANSFER__',
+     '    file_header.metadata.force_modular_32bit = false;', 'source_color_contract', 'color_admission_animation_width'),
+    ('color-width-level', 'jxl-encoder/src/api/ingest.rs',
+     '        encoded.metadata.modular_16bit_buffer_sufficient(),', '        true,',
+     'source_color_contract', 'color_admission_animation_width'),
+    ('color-determinant-boundary', 'jxl-encoder/src/headers/color_encoding.rs',
+     'if det.unsigned_abs() < 100 {', 'if det.unsigned_abs() < 99 {', None, 'color_admission_exact_wire_determinant'),
+    ('color-gamma-boundary', 'jxl-encoder/src/headers/color_encoding.rs',
+     '!(1221.0..=10_000_000.0).contains(&wire)', '!(1220.0..=10_000_000.0).contains(&wire)', None, 'color_admission_gamma_wire_rounding'),
+    ('color-d65-zero-y', 'jxl-encoder/src/vardct/xyb.rs',
+     'return crate::color_math::source_to_srgb((r, g, b), (wx, wy));', 'return None;',
+     'source_color_contract', 'valid_imaginary_primaries'),
+    ('color-nond65-zero-y', 'jxl-encoder/src/vardct/source_white.rs',
+     'crate::color_math::source_to_srgb(chrom, white)',
+     'if chrom.0.1 == 0.0 || chrom.1.1 == 0.0 || chrom.2.1 == 0.0 { None } else { crate::color_math::source_to_srgb(chrom, white) }',
+     'source_color_contract', 'valid_imaginary_primaries'),
+    ('color-icc-conversion', 'jxl-encoder/src/vardct/xyb.rs',
+     '    ce.validate_parametric()?;', '    ce.validate_parametric()?; if ce.want_icc { return Ok(None); }',
+     'source_color_contract', 'color_admission_icc_flag'),
+    ('color-fixed-range', 'jxl-encoder/src/headers/color_encoding.rs',
+     'let fixed = |v: f64| v.is_finite() && (-32768.0..=32767.9999847412109375).contains(&v);',
+     'let fixed = |v: f64| v.is_finite();', 'source_color_contract', 'invalid_parametric_color'),
+    ('color-stream-lossy-setter', 'jxl-encoder/src/api.rs', '__COLOR_STREAM_LOSSY_SETTER__', '',
+     'source_color_contract', 'streaming_color_admission'),
+    ('color-stream-lossless-setter', 'jxl-encoder/src/api.rs', '__COLOR_STREAM_LOSSLESS_SETTER__', '',
+     'source_color_contract', 'streaming_color_admission'),
     ('blend-icc-lossless-domain', 'jxl-encoder/src/modular/frame.rs',
      'fh.save_before_ct = !self.options.reference_only_after_ct;', 'fh.save_before_ct = true;',
      'frame_header_contract', 'original_icc_addition'),
@@ -107,9 +162,51 @@ for name, source, before, after, target, selection in cases:
         end=original.index('        };',start)+len('        };')
         before=original[start:end]
         after=before.replace(' || frame.blend_mode.is_some()','')
+    if before in ('__COLOR_STREAM_LOSSY_SETTER__', '__COLOR_STREAM_LOSSLESS_SETTER__'):
+        starts = []
+        offset = 0
+        while True:
+            start = original.find('    pub fn with_color_encoding(', offset)
+            if start < 0: break
+            end = original.index('\n    }', start) + len('\n    }')
+            block = original[start:end]
+            if 'self.input_admitted = false;' in block: starts.append((start, end))
+            offset = end
+        assert len(starts) == 2
+        lossy = before == '__COLOR_STREAM_LOSSY_SETTER__'
+        start, end = starts[0 if lossy else 1]
+        owner = 'impl LossyEncoder {' if lossy else 'impl LosslessEncoder {'
+        start = original.rindex(owner, 0, start)
+        before = original[start:end]
+        offset = before.rindex('        self.input_admitted = false;\n')
+        after = before[:offset] + before[offset:].replace('        self.input_admitted = false;\n', '', 1)
+    if before == '__ICC_SOURCE_STREAM_CHECK__':
+        start = original.index('impl LossyEncoder {')
+        method_start = original.index('    fn check_input_limits(', start)
+        end = original.index('\n    }', method_start) + len('\n    }')
+        before = original[start:end]
+        block_start = before.index('        validate_lossy_source_encoding(')
+        block_end = before.index('        )?;', block_start) + len('        )?;\n')
+        after = before[:block_start] + before[block_end:]
+    if before.startswith('__SOURCE_GAMMA_'):
+        lossy = '_LOSSY_' in before
+        setter = before.endswith('_SETTER__')
+        owner = 'impl LossyEncoder {' if lossy else 'impl LosslessEncoder {'
+        start = original.index(owner)
+        method = 'with_source_gamma' if setter else 'check_input_limits'
+        method_start = original.index('    '+('pub ' if setter else '')+'fn '+method+'(', start)
+        end = original.index('\n    }', method_start) + len('\n    }')
+        before = original[start:end]
+        mutation_text = '        self.input_admitted = false;\n' if setter else '        validate_source_gamma(self.source_gamma)?;\n'
+        offset = before.rindex(mutation_text)
+        after = before[:offset] + before[offset:].replace(mutation_text, '', 1)
+    if before == '__COLOR_WIDTH_TRANSFER__':
+        start = original.index('    file_header.metadata.force_modular_32bit = enc')
+        end = original.index('Ordering::Relaxed);', start) + len('Ordering::Relaxed);')
+        before = original[start:end]
     if before == '__D65_ONLY__':
         start = original.index('    if ce.white_point != WhitePoint::D65 {')
-        end = original.index('    match ce.primaries {', start)
+        end = original.index('    match primaries {', start)
         before = original[start:end]
     if before == '__RATE_LINEAR_PROFILE__':
         start = original.index('    let linear_profile =')
@@ -160,6 +257,22 @@ for name, source, before, after, target, selection in cases:
                    '--source', 'jxl-encoder/src/vardct/progressive_ac_v012.tsv',
                    '--source', 'jxl-encoder/src/vardct/alpha_squeeze_thin_v012.tsv',
                    '--source', 'jxl-encoder/src/vardct/progressive_brackets_v012.tsv']
+        if name.startswith('color-width-'):
+            command += ['--features', '__expert,parallel,corpus-tests',
+                        '--source', 'jxl-encoder/src/api/animate.rs',
+                        '--source', 'scripts/check_animation_width_headers.py',
+                        '--source', 'scripts/jxl_bitstream_diff.py',
+                        '--source', 'scripts/jxl_container.py']
+        if name.startswith('color-icc-source-'):
+            command += ['--source', 'jxl-encoder/src/api/validate.rs',
+                        '--source', 'jxl-encoder/tests/source_color_contract/icc_source.rs']
+        if name.startswith('color-'):
+            command += ['--source', 'jxl-encoder/src/api/ingest.rs', '--source', 'jxl-encoder/src/headers/file_header.rs', '--source', 'jxl-encoder/src/headers/color_encoding.rs',
+                        '--source', 'jxl-encoder/src/color_math.rs',
+                        '--source', 'jxl-encoder/src/vardct/xyb.rs',
+                        '--source', 'jxl-encoder/src/vardct/source_white.rs',
+                        '--source', 'jxl-encoder/tests/source_color_contract/admission.rs',
+                        '--source', 'jxl-encoder/src/vardct/color_admission_v012.tsv']
         if name.startswith('blend-'):
             command += ['--source','jxl-encoder/src/api/animate.rs','--source','jxl-encoder/src/headers/frame_header.rs',
                         '--source','jxl-encoder/src/api/animation.rs','--source','jxl-encoder/tests/frame_header_contract/blends.rs']

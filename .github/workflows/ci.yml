@@ -188,7 +188,7 @@ jobs:
         run: >-
           cargo test --locked --release -p jxl-encoder
           --features __expert,parallel,corpus-tests
-          --test source_color_contract source_white_animation -- --test-threads=1
+          --test source_color_contract -- source_white_animation color_admission_xyz_animation color_admission_gamma_white_animation color_admission_animation_width --test-threads=1
 
       - name: Verify explicit blends in original source profiles
         if: matrix.name == 'Linux'
@@ -434,6 +434,7 @@ jobs:
       - name: Test source-white prepared and rate-control callers
         run: |
           cargo test --locked --release -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel,rate-control --test source_color_contract source_white_prepared -- --test-threads=1
+          cargo test --locked --release -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel,rate-control --test source_color_contract color_admission_prepared -- --test-threads=1
           cargo test --locked --release -p jxl-encoder --features __expert,parallel,rate-control --lib rate_control_color_ -- --test-threads=1
       - name: Test source-white metric callback domain
         run: >-
