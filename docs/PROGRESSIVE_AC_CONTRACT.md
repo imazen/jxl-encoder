@@ -163,3 +163,32 @@ minimum available 20,732 MiB). Physical CMYK interpretation remains H10.
 Already-downsampled output,
 winning patches and truly sectioned multi-DC-group buffering remain additional
 caller checks. V1 remains open while these paths are resolved.
+
+
+## Reference-only frame schedule interaction
+
+A real-image animation sequence with reference-only frames before and between
+two displayed frames, followed by an actual crop, fails both decoders when
+progressive coding is requested. Single controls render. Primary Rust reports
+`NonZeroPadding`; native failures are retained with each stream.
+The before object is SHA256
+`cb8c7328ddd3a583eec299e7782de4e8f7626afe14630a7a65ea31a45d3de29e`,
+actual PID 2069907, recorded test exit 101.
+
+The unmodified native FrameHeader writer produces identical ReferenceOnly
+header bytes for requested pass counts 1/2/3, with and without alpha. Regular
+header controls differ. Part 1 F.2 implies one pass for ReferenceOnly.
+[Native observations](../jxl-encoder/src/headers/reference_passes_v012.tsv)
+come from `scripts/reference_passes_oracle.cc`, not a grammar transcription.
+Reproduce with `just reference-progressive-native-oracle <v012-source>
+<v012-build> <new-executable>`. The successful component log and executable
+identities are retained in `native-reference-and-color-controls`.
+
+The current local candidate selects Single before each reference-only frame's
+helpers and restores the request for each regular frame. This also makes
+modular stream numbering use the effective count. Its full selected policy,
+layout, size and animation-entry matrix passes (first-fix log rc0, 99 seconds;
+peak RSS 1.06 GiB, minimum available 20,679 MiB). Separate assertions that
+regular frames restore two/three passes pass in `progressive-ac-reference-regular-fields`.
+Minimal, mutation and broad gates remain in progress; this section does not
+claim the candidate has landed or close the wider V1 audit.
