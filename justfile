@@ -1954,3 +1954,6 @@ explicit-blend-icc-final manifest artifacts coverage_env oracle llvm lint_home l
     just explicit-blend-icc-faults {{quote(manifest)}} {{quote(artifacts + "/explicit-blend-icc-faults")}} {{quote(coverage_env)}} {{quote(oracle)}}
     just explicit-blend-final-lint {{quote(manifest)}} {{quote(lint_home)}} {{quote(lint_target)}}
     just explicit-blend-lifetime-regions {{quote(llvm)}} {{quote(artifacts)}}
+
+color-admission-native source build output:
+    python3 scripts/frame_header_oracle.py --component color_admission {{quote(source)}} {{quote(build)}} {{quote(output)}}

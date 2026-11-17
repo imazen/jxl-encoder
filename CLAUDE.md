@@ -1768,6 +1768,17 @@ misclassify that CLI limitation as an invalid stream or strip the ICC to hide it
 
 ## Known Bugs (ACTIVE)
 
+### 2026-11-17: parametric color admission and valid XYZ-basis samples
+
+H4 runtime controls at `4572d184` accept invalid white/primary/gamma headers;
+singular lossy primaries and gamma2.0 panic. Legal XYZ-basis primaries panic
+under D65. Under D50 they produce observed maximum errors0.50379306 in Rust
+source samples and1.1509478 against native linear-sRGB CMS output. Native
+setter success and final-encoding success differ for invalid inputs; raw CMS
+matrices support zero-coordinate primaries refused by its public setter.
+[Before evidence and controls](docs/COLOR_METADATA_CONTRACT.md#h4-before-evidence-and-native-controls).
+No production repair or complete affected-entry coverage is claimed yet.
+
 ### RESOLVED 2026-11-17: explicit blend cropping and pre-transform color references
 
 Strict before controls leave most explicit Add pixels at 64 instead of 128 and

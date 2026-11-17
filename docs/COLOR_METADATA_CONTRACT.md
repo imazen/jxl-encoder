@@ -318,3 +318,33 @@ export and restores source files after each fault. `just icc-model-coverage
 <manifest> <new-json>` emits the selected LLVM report. CLI tests reuse the
 existing primary-decoder helper at the already-pinned jxl 0.4.3 version;
 adding that test dependency changes no resolved package version.
+
+## H4 before evidence and native controls
+
+At `4572d184`, strict still requests serialize invalid white points, degenerate
+primary matrices and forbidden direct gamma values. A singular lossy matrix
+panics; gamma2.0 reaches a24-bit writer panic. The legal XYZ-basis primary
+set separately panics under D65. Under custom D50 it encodes, but current Rust
+has maximum original-sample error0.50379306 and native linear-sRGB output
+differs from unmodified v0.12 CMS by1.1509478. The failing streams and exact
+source/object/profile are retained in `color-admission-before-pixels`; these
+are actual decoded observations, not predicted magnitudes. Production repair
+and expanded affected-entry coverage are still pending.
+
+`scripts/color_admission_oracle.cc` keeps three observations separate: public
+`SetColorEncoding` status, actual AddImageFrame/ProcessOutput status, and the
+unmodified CMS matrix/vector routines. Several invalid fields pass the setter
+but fail final encoding. Both XYZ-basis whites have finite native matrix/vector
+results even though the public setter refuses their zero primary coordinates.
+The reference therefore cannot supply a blanket input-admission rule.
+
+`color-admission-native-production.log` passes (rc0/1 second, peak0.13 GiB,
+minimum21652 MiB). `color_admission_v012.tsv` retains the two observed XYZ
+vector results. Reproduce using `just color-admission-native <v0.12-source>
+<v0.12-build> <new-oracle-path>`. The helper refuses a non-v0.12 build and an
+existing executable. The initial new Rust harness compile failure is retained;
+its corrected runtime and pixel controls both fail before any production change.
+
+The [ICC specification](https://www.color.org/ICC1-V41.pdf) defines the PCS
+white separately from the source-to-source white adaptation. These physical
+spaces and their numerical bounds must not be conflated during the repair.

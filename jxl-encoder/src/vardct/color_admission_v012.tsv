@@ -1,0 +1,4 @@
+# Unmodified libjxl v0.12.0 a7a9c78 CMS Mul3x3Vector observations.
+# scripts/color_admission_oracle.cc; input linear RGB=(0.5,0.2,0.1).
+pixel	xyz-basis-d65	1.1784210205078125	-0.080892577767372131	0.10075186938047409
+pixel	xyz-basis-d50	1.147154688835144	-0.085913844406604767	0.10485680401325226
