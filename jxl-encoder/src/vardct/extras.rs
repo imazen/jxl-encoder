@@ -191,8 +191,9 @@ pub(crate) struct AlphaSqueezePipeline {
 /// pipeline. Mirrors libjxl's decoder-side shift bracket classification
 /// (`dec_modular.cc:331-373`):
 ///
-/// - **Global** (`w ≤ group_dim AND h ≤ group_dim`): both width and height of the
-///   sub-channel fit in the LfGlobal modular sub-bitstream.
+/// - **Global**: the ordered prefix with both dimensions at most `group_dim`.
+///   The first larger channel ends this prefix permanently; later small bands
+///   still belong to grouped streams.
 /// - **LfGroup** (`min(hshift, vshift) ≥ 3`): the sub-channel is large
 ///   *and* deep enough in the squeeze hierarchy that it belongs to the
 ///   DC-group sections.
@@ -218,9 +219,9 @@ impl AlphaSqueezePipeline {
     ///
     /// Decoder loop (`dec_modular.cc:331-373`):
     /// ```text
-    /// for each full_image.channel beyond nb_meta_channels:
-    ///   if fc.w > group_dim OR fc.h > group_dim:
-    ///     # not in LfGlobal — assigned to {LfGroup, HfGroup} by shift
+    /// first_grouped = first channel larger than group_dim on either axis
+    /// for fc in full_image.channel[first_grouped..]:
+    ///     # not in LfGlobal, including any later small channel
     ///     shift = min(fc.hshift, fc.vshift)
     ///     if minShift <= shift <= maxShift: emit per-section
     /// ```
@@ -231,9 +232,13 @@ impl AlphaSqueezePipeline {
     /// shallowest squeeze residuals).
     pub(crate) fn partition(&self, group_dim: usize) -> AlphaSqueezePartition {
         let mut p = AlphaSqueezePartition::default();
+        let mut global_prefix = true;
         for (idx, sc) in self.sub_channels.iter().enumerate() {
             let w = sc.channel.width();
             let h = sc.channel.height();
+            if w > group_dim || h > group_dim {
+                global_prefix = false;
+            }
             if w == 0 || h == 0 {
                 // Empty sub-channels are skipped entirely (decoder
                 // also skips zero-sized channels — see
@@ -241,7 +246,7 @@ impl AlphaSqueezePipeline {
                 // `encoding.cc:579`).
                 continue;
             }
-            if w <= group_dim && h <= group_dim {
+            if global_prefix {
                 p.global_indices.push(idx);
             } else {
                 let min_shift = sc.channel.hshift.min(sc.channel.vshift);
@@ -393,6 +398,52 @@ mod squeeze_pipeline_tests {
             ec_type: ExtraChannelType::Alpha,
             bit_depth,
             ..default_info
+        }
+    }
+
+    #[test]
+    fn thin_alpha_global_partition_is_one_ordered_prefix() {
+        for (width, height) in [(1025, 17), (17, 1025)] {
+            let info = alpha_info(8);
+            let pixels: Vec<u8> = (0..width * height).map(|i| (i % 251) as u8).collect();
+            let extra = VardctExtra {
+                info: &info,
+                data: VardctExtraBuf::U8(&pixels),
+            };
+            let pipeline =
+                build_alpha_squeeze_pipeline(&extra, width, height, 1, |_| 1, None).unwrap();
+            let bands: Vec<_> = pipeline
+                .sub_channels
+                .iter()
+                .map(|sub| {
+                    let c = &sub.channel;
+                    (c.width(), c.height(), c.hshift, c.vshift)
+                })
+                .collect();
+            let rows: Vec<Vec<usize>> = include_str!("alpha_squeeze_thin_v012.tsv")
+                .lines()
+                .filter(|line| !line.starts_with('#') && !line.is_empty())
+                .map(|line| line.split('\t').map(|v| v.parse().unwrap()).collect())
+                .filter(|row: &Vec<usize>| row[0] == width && row[1] == height)
+                .collect();
+            let expected: Vec<_> = rows
+                .iter()
+                .map(|row| (row[4], row[5], row[6] as u32, row[7] as u32))
+                .collect();
+            assert_eq!(
+                bands, expected,
+                "actual native forward-squeeze band metadata"
+            );
+            let global: Vec<_> = rows
+                .iter()
+                .filter(|row| row[8] != 0)
+                .map(|row| row[3])
+                .collect();
+            assert_eq!(
+                pipeline.partition(256).global_indices,
+                global,
+                "global prefix at {width}x{height}; actual ordered bands {bands:?}"
+            );
         }
     }
 

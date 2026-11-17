@@ -1766,6 +1766,39 @@ misclassify that CLI limitation as an invalid stream or strip the ICC to hide it
 
 ## Known Bugs (ACTIVE)
 
+### RESOLVED 2026-11-17: thin squeezed-alpha global prefix (issue 144 V3 follow-up)
+
+The extended 1025x17/17x1025 controls fail complete rendering even in Single
+mode. Actual native forward-squeeze metadata places a 256x9 band after a
+257x4 band (and transposed equivalents). DecodeGlobal ends its global prefix
+at the first larger band; the alpha partition instead moved the later small
+band back into LfGlobal. A retained direct regression observes global indices
+0..6 plus 8 where the ordered prefix is only 0..6. Native production reference
+alpha renders successfully. Original executable/profile/source, failing streams
+and native metadata are retained. The prefix repair passes full/minimal runtime,
+source-native alpha, effort/LF, unchanged-byte and strict lint controls. Selected
+partition coverage is 36/37 regions; the defensive zero-sized-band continuation
+is unobserved. See [the contract](docs/ALPHA_SQUEEZE_CONTRACT.md).
+
+### RESOLVED 2026-11-17: progressive squeezed-alpha pass placement (issue 144 V2)
+
+With DCT8 isolating color coefficients, 1024-square and 1025x1024 two-pass
+alpha streams fail complete rendering in Rust and djxl v0.12; the odd-edge
+three-pass case also fails. Single-pass and single-group controls preserve
+every selected alpha code. Native responsive controls recover the source
+0/210 codes exactly. The retained original object/profile/source and streams
+are under `~/tmp/jxl144/archive-mount/alpha-squeeze-progressive-before` and
+the corresponding `live-tests/alpha-squeeze-progressive/run-0` directory.
+
+HF bands now follow the header's actual modular shift brackets, checked with
+unmodified native `GetDownsamplingBracket` controls for every offered preset.
+Original behavior emitted all HF bands in the last pass. Full/minimal caller,
+layout, policy, precision 1–16, effort/LF and actual-worker controls pass in both
+decoders. Existing byte expectations and ignores are unchanged. Selected routing
+regions and un-injected error/cancellation paths are recorded in
+[the contract](docs/ALPHA_SQUEEZE_CONTRACT.md). V1's color coefficients and
+animation alpha-configuration forwarding remain separate.
+
 ### RESOLVED 2026-11-17: alpha squeeze local indices and entropy context maps (issue 144 V3)
 
 The original 1025x1024/1026x1024 alpha-band streams return edge codes 56/154

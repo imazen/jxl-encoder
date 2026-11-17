@@ -1,7 +1,7 @@
 //! Alpha-band samples against independently encoded pinned libjxl controls.
 #![cfg(feature = "__expert")]
 use jxl_encoder::api::{EncoderMode, EncoderStrategy};
-use jxl_encoder::{Buffering, LossyConfig, PixelLayout};
+use jxl_encoder::{Buffering, LossyConfig, PixelLayout, ProgressiveMode};
 use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
@@ -48,11 +48,17 @@ struct Cell {
     buffering: Buffering,
     threads: usize,
     associated: bool,
+    progressive: ProgressiveMode,
+    ans: Option<bool>,
+    canonicalize: bool,
+    effort: u8,
+    progressive_dc: u8,
+    bits: Option<u32>,
 }
 impl Cell {
     fn label(&self) -> String {
         format!(
-            "{}-{:?}-{:?}-{}x{}-ad{}-{}-{:?}-t{}-assoc{}",
+            "{}-{:?}-{:?}-{}x{}-ad{}-{}-{:?}-t{}-assoc{}-{:?}-ans{:?}-canon{}-e{}-pdc{}-bits{:?}",
             self.policy,
             self.mode,
             self.layout,
@@ -62,7 +68,13 @@ impl Cell {
             self.entry,
             self.buffering,
             self.threads,
-            self.associated
+            self.associated,
+            self.progressive,
+            self.ans,
+            self.canonicalize,
+            self.effort,
+            self.progressive_dc,
+            self.bits
         )
     }
 }
@@ -79,6 +91,12 @@ fn strict(width: usize, height: usize) -> Cell {
         buffering: Buffering::FullBuffered,
         threads: 1,
         associated: false,
+        progressive: ProgressiveMode::Single,
+        ans: None,
+        canonicalize: false,
+        effort: 3,
+        progressive_dc: 0,
+        bits: None,
     }
 }
 fn input(cell: &Cell) -> (Vec<u8>, Vec<u16>, u16) {
@@ -86,7 +104,9 @@ fn input(cell: &Cell) -> (Vec<u8>, Vec<u16>, u16) {
         .unwrap()
         .to_rgb8();
     let float = cell.layout.is_f32() || cell.layout.is_f16();
-    let max = if cell.layout.is_16bit() || float {
+    let max = if cell.layout.is_16bit() {
+        ((1_u32 << cell.bits.unwrap_or(16)) - 1) as u16
+    } else if float {
         65535
     } else {
         255
@@ -103,12 +123,19 @@ fn input(cell: &Cell) -> (Vec<u8>, Vec<u16>, u16) {
                 [0, 32768, 65535][selector * 3 / 256]
             } else if max == 65535 {
                 (selector * 257 + (x + y) % 257).min(65535) as u16
+            } else if cell.layout.is_16bit() {
+                ((selector * usize::from(max) + 127) / 255
+                    + (x + y) % (usize::from(max) / 255).max(1))
+                .min(usize::from(max)) as u16
             } else {
                 selector as u16
             };
             alpha.push(alpha_code);
             let channels = if cell.layout.is_grayscale() { 1 } else { 3 };
             let mut color = rgb[..channels].to_vec();
+            if cell.canonicalize {
+                color.fill(rgb[0]);
+            }
             if cell.associated {
                 for value in &mut color {
                     *value = ((u32::from(*value) * u32::from(alpha_code) + u32::from(max) / 2)
@@ -139,9 +166,10 @@ fn input(cell: &Cell) -> (Vec<u8>, Vec<u16>, u16) {
                     _ => 1.0,
                 };
                 pixels.extend(value.to_ne_bytes());
-            } else if max == 65535 {
+            } else if cell.layout.is_16bit() {
                 for value in color {
-                    pixels.extend((u16::from(value) * 257).to_ne_bytes());
+                    let value = ((u32::from(value) * u32::from(max) + 127) / 255) as u16;
+                    pixels.extend(value.to_ne_bytes());
                 }
                 pixels.extend(alpha_code.to_ne_bytes());
             } else {
@@ -165,12 +193,17 @@ fn reference(
     )
     .into_bytes();
     for &a in alpha {
-        if max == 255 {
-            pam.extend([64, 128, 192, a as u8]);
+        if max <= 255 {
+            for value in [64_u32, 128, 192] {
+                pam.push(((value * u32::from(max) + 127) / 255) as u8);
+            }
+            pam.push(a as u8);
         } else {
-            for value in [16448_u16, 32896, 49344, a] {
+            for value in [64_u32, 128, 192] {
+                let value = ((value * u32::from(max) + 127) / 255) as u16;
                 pam.extend(value.to_be_bytes());
             }
+            pam.extend(a.to_be_bytes());
         }
     }
     let key = format!("{}-{:08x}", digest(&pam), cell.distance.to_bits());
@@ -180,6 +213,51 @@ fn reference(
     let out = root.join("native").join(&key);
     std::fs::create_dir_all(&out).unwrap();
     std::fs::write(out.join("input.pam"), pam).unwrap();
+    if cell.bits.is_some() {
+        // Verify the independent PAM adapter's significant-bit interpretation
+        // with lossless alpha before using its lossy quantization as an oracle.
+        let control = std::process::Command::new(jxl_encoder::test_helpers::cjxl_path())
+            .arg(out.join("input.pam"))
+            .arg(out.join("source-control.jxl"))
+            .args([
+                "-d",
+                "1",
+                "-e",
+                "3",
+                "--responsive=1",
+                "--alpha_distance=0",
+                "--num_threads=1",
+            ])
+            .output()
+            .unwrap();
+        std::fs::write(out.join("source-control-encode.log"), &control.stderr).unwrap();
+        assert!(control.status.success(), "native precision source encode");
+        let control = std::process::Command::new(jxl_encoder::test_helpers::djxl_path())
+            .arg(out.join("source-control.jxl"))
+            .arg(out.join("source-control.pfm"))
+            .args(["--output_extra_channels", "--num_threads=1"])
+            .output()
+            .unwrap();
+        std::fs::write(out.join("source-control-decode.log"), &control.stderr).unwrap();
+        assert!(
+            control.status.success(),
+            "native precision source rendering"
+        );
+        let control = pfm::read_pfm_samples(
+            &out.join("source-control.pfm-ec1.pfm"),
+            (cell.width, cell.height),
+        );
+        assert_eq!(control.len(), alpha.len());
+        for (sample, &expected) in control.iter().zip(alpha) {
+            assert!(sample.is_finite());
+            assert_eq!(
+                (sample * f32::from(max)).round() as i64,
+                i64::from(expected),
+                "native PAM source precision: {}",
+                cell.label()
+            );
+        }
+    }
     let result = std::process::Command::new(jxl_encoder::test_helpers::cjxl_path())
         .arg(out.join("input.pam"))
         .arg(out.join("reference.jxl"))
@@ -223,19 +301,29 @@ fn check(root: &Path, cell: &Cell, cache: &mut BTreeMap<String, Vec<i64>>) -> St
     std::fs::write(out.join("input.bin"), &pixels).unwrap();
     std::fs::write(out.join("source.sha256"), digest(&pixels)).unwrap();
     let expected = reference(root, cell, &alpha, max, cache);
-    let config = LossyConfig::new(1.0)
-        .with_effort(3)
+    let mut config = LossyConfig::new(1.0)
+        .with_effort(cell.effort)
         .with_threads(cell.threads)
         .with_mode(cell.mode)
         .with_strategy(cell.strategy.clone())
         .with_force_strategy(Some(0))
+        .with_progressive(cell.progressive)
+        .with_progressive_dc(cell.progressive_dc)
         .with_alpha_squeeze(true)
         .with_alpha_distance(Some(cell.distance))
         .with_buffering(cell.buffering);
+    config = config.with_canonicalize_input(cell.canonicalize);
+    if let Some(ans) = cell.ans {
+        config = config.with_ans(ans);
+    }
     let request = || {
-        config
+        let mut request = config
             .encode_request(cell.width as u32, cell.height as u32, cell.layout)
-            .with_premultiplied_alpha(cell.associated)
+            .with_premultiplied_alpha(cell.associated);
+        if let Some(bits) = cell.bits {
+            request = request.with_bits_per_sample(bits);
+        }
+        request
     };
     let bytes = match cell.entry {
         "request" => {
@@ -275,6 +363,10 @@ fn check(root: &Path, cell: &Cell, cache: &mut BTreeMap<String, Vec<i64>>) -> St
         }
         "legacy" => {
             assert!(!cell.associated);
+            assert!(
+                cell.bits.is_none(),
+                "precision override belongs to request/streaming"
+            );
             let bytes = config
                 .encode(&pixels, cell.width as u32, cell.height as u32, cell.layout)
                 .unwrap();
@@ -291,6 +383,9 @@ fn check(root: &Path, cell: &Cell, cache: &mut BTreeMap<String, Vec<i64>>) -> St
                 .encoder(cell.width as u32, cell.height as u32, cell.layout)
                 .unwrap()
                 .with_premultiplied_alpha(cell.associated);
+            if let Some(bits) = cell.bits {
+                encoder = encoder.with_bits_per_sample(bits);
+            }
             for rows in pixels.chunks(row * 7) {
                 encoder.push_rows(rows, (rows.len() / row) as u32).unwrap();
             }
@@ -312,11 +407,13 @@ fn check(root: &Path, cell: &Cell, cache: &mut BTreeMap<String, Vec<i64>>) -> St
             let mut encoder = VarDctEncoder::new(1.0);
             encoder.profile = config.resolved_profile();
             encoder.encoder_mode = cell.mode;
-            encoder.effort = 3;
+            encoder.effort = cell.effort;
+            encoder.use_ans = config.ans();
             encoder.force_strategy = Some(0);
             encoder.enable_patches = false;
             encoder.alpha_squeeze = true;
             encoder.alpha_distance = Some(cell.distance);
+            encoder.progressive = cell.progressive;
             let linear: Vec<_> = pixels
                 .as_chunks::<4>()
                 .0
@@ -371,6 +468,29 @@ fn check(root: &Path, cell: &Cell, cache: &mut BTreeMap<String, Vec<i64>>) -> St
         }
         _ => panic!("unknown entry"),
     };
+    if cell.canonicalize {
+        assert_eq!(cell.layout, PixelLayout::Rgba8);
+        let reduced: Vec<u8> = pixels
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .flat_map(|pixel| [pixel[0], pixel[3]])
+            .collect();
+        let explicit = config
+            .clone()
+            .with_canonicalize_input(false)
+            .encode(
+                &reduced,
+                cell.width as u32,
+                cell.height as u32,
+                PixelLayout::GrayAlpha8,
+            )
+            .unwrap();
+        assert_eq!(
+            bytes, explicit,
+            "canonicalization must actually select GrayAlpha8: {label}"
+        );
+    }
     std::fs::write(out.join("input.jxl"), &bytes).unwrap();
     let hash = digest(&bytes);
     std::fs::write(out.join("input.sha256"), &hash).unwrap();
@@ -407,7 +527,17 @@ fn run(cells: Vec<Cell>) {
     let mut journal = std::fs::File::create(root.join("completed.tsv")).unwrap();
     writeln!(journal, "label\tstatus\tstream_sha256_or_error").unwrap();
     let mut failures = Vec::new();
-    for cell in cells {
+    for cell in cells.into_iter().flat_map(|cell| {
+        [
+            ProgressiveMode::Single,
+            ProgressiveMode::QuantizedAcFullAc,
+            ProgressiveMode::DcVlfLfAc,
+        ]
+        .map(|progressive| Cell {
+            progressive,
+            ..cell.clone()
+        })
+    }) {
         let label = cell.label();
         match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             check(&root, &cell, &mut cache)
@@ -559,6 +689,150 @@ fn alpha_band_writers_use_two_requested_workers() {
             threads: 2,
             ..strict(1025, 1024)
         });
+    }
+    run(cells);
+}
+
+#[test]
+fn raw_lossless_alpha_stays_in_the_final_modular_pass() {
+    let mut cells = Vec::new();
+    for layout in [
+        PixelLayout::Rgba8,
+        PixelLayout::Bgra8,
+        PixelLayout::GrayAlpha8,
+        PixelLayout::Rgba16,
+        PixelLayout::GrayAlpha16,
+    ] {
+        for entry in ["request", "stream"] {
+            for (width, height) in [(128, 64), (257, 257), (1025, 1024)] {
+                cells.push(Cell {
+                    layout,
+                    entry,
+                    distance: 0.0,
+                    ..strict(width, height)
+                });
+            }
+        }
+    }
+    run(cells);
+}
+
+#[test]
+fn progressive_alpha_preserves_explicit_entropy_selection() {
+    let mut cells = Vec::new();
+    for ans in [false, true] {
+        for (policy, strategy, mode) in [
+            (
+                "strict-entropy",
+                EncoderStrategy::Libjxl,
+                EncoderMode::Reference,
+            ),
+            (
+                "zen-entropy",
+                EncoderStrategy::Zenjxl,
+                EncoderMode::Experimental,
+            ),
+        ] {
+            for entry in ["request", "writer", "stream"] {
+                for (width, height) in [(257, 257), (1025, 1024)] {
+                    cells.push(Cell {
+                        ans: Some(ans),
+                        policy: policy.into(),
+                        strategy: strategy.clone(),
+                        mode,
+                        entry,
+                        ..strict(width, height)
+                    });
+                }
+            }
+        }
+    }
+    run(cells);
+}
+
+#[test]
+fn canonicalized_gray_alpha_traverses_each_progressive_bracket() {
+    let mut cells = Vec::new();
+    for entry in ["request", "strided", "writer", "legacy"] {
+        for (width, height) in [(128, 64), (257, 257), (1025, 1024)] {
+            cells.push(Cell {
+                canonicalize: true,
+                entry,
+                ..strict(width, height)
+            });
+        }
+    }
+    run(cells);
+}
+
+#[test]
+fn progressive_alpha_effort_or_lf_boundaries_keep_native_bands() {
+    let mut cells = Vec::new();
+    for effort in [1, 2, 4, 7, 8, 9] {
+        for (policy, strategy, mode) in [
+            (
+                "strict-effort",
+                EncoderStrategy::Libjxl,
+                EncoderMode::Reference,
+            ),
+            (
+                "zen-effort",
+                EncoderStrategy::Zenjxl,
+                EncoderMode::Experimental,
+            ),
+        ] {
+            for (width, height) in [(1025, 17), (17, 1025)] {
+                cells.push(Cell {
+                    effort,
+                    policy: policy.into(),
+                    strategy: strategy.clone(),
+                    mode,
+                    ..strict(width, height)
+                });
+            }
+        }
+    }
+    for progressive_dc in [1, 2] {
+        for layout in [PixelLayout::Rgba8, PixelLayout::GrayAlpha16] {
+            for entry in ["request", "stream"] {
+                for (width, height) in [(128, 64), (1025, 17)] {
+                    for (policy, strategy, mode) in [
+                        ("strict-lf", EncoderStrategy::Libjxl, EncoderMode::Reference),
+                        ("zen-lf", EncoderStrategy::Zenjxl, EncoderMode::Experimental),
+                    ] {
+                        cells.push(Cell {
+                            progressive_dc,
+                            layout,
+                            entry,
+                            policy: policy.into(),
+                            strategy,
+                            mode,
+                            ..strict(width, height)
+                        });
+                    }
+                }
+            }
+        }
+    }
+    run(cells);
+}
+
+#[test]
+fn progressive_alpha_reduced_integer_precision_keeps_native_codes() {
+    let mut cells = Vec::new();
+    for bits in 1..=16 {
+        for layout in [PixelLayout::Rgba16, PixelLayout::GrayAlpha16] {
+            for entry in ["request", "strided", "writer", "stream"] {
+                for (width, height) in [(128, 64), (1025, 17)] {
+                    cells.push(Cell {
+                        bits: Some(bits),
+                        layout,
+                        entry,
+                        ..strict(width, height)
+                    });
+                }
+            }
+        }
     }
     run(cells);
 }

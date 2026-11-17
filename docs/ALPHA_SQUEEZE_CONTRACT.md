@@ -3,6 +3,10 @@
 Issue [144](https://github.com/imazen/jxl-encoder/issues/144), V3. This record
 covers the existing lossy alpha-squeeze writer, not general JPEG XL conformance.
 
+The original local-section repairs are recorded at `dc90b122`. The thin-image
+global-prefix follow-up and progressive routing are described below; their
+final verification is still in progress.
+
 The progressive pass placement defect (V2) remains separate. Animation currently
 does not forward `alpha_distance` or `alpha_squeeze` to its frame encoder; it
 therefore does not exercise this writer. The optional subsampled RGB8 writer
@@ -127,3 +131,92 @@ retained minimal object remain available. The report script initially missed
 Rust v0 identifiers; correcting that matcher changed reporting only, not the
 profiles or production source. V2, animation configuration forwarding and their
 own subsequent affected-path checks remain open.
+
+## Progressive routing and thin-image follow-up
+
+With DCT8 isolating V1's separate color-coefficient issue, the original
+1024-square/1025x1024 two-pass streams and the odd-edge three-pass stream fail
+full Rust and djxl rendering. Single-pass and single-group controls preserve
+every selected alpha code. The candidate routes HF bands by their actual
+header bracket, retaining original channel order before empty-crop compaction.
+Raw unsqueezed extras retain their existing last-pass predicate and writer.
+
+The observed header controls distinguish the existing three-pass precision
+policy from native v0.12 CLI frequency splitting:
+
+| Mode | Encoder pass shifts / downsampling hints | Native CLI control |
+|---|---|---|
+| Single | No extra passes or hints | Same |
+| QuantizedAcFullAc | 1/0; 2x hint after pass 0 | Same with `--qprogressive_ac` |
+| DcVlfLfAc | 2/0/0; 8x/4x hints | `--progressive_ac`: 0/0/0, frequency subsets, 4x/2x hints |
+
+`check_progressive_alpha_headers.py` observes these actual fields and requires
+complete section-size accounting in each retained stream. The unmodified native
+bracket component separately observes the brackets for this encoder's supplied
+header configurations. Neither control asserts full preset or per-pass byte
+parity. The existing nearest precision rounding also differs from native
+v0.12's truncation toward zero; this repair does not change that policy.
+
+The additional thin controls independently exposed a global-partition defect
+even in Single mode. Native FwdSqueeze produces a 257x4 band followed by 256x9,
+and the transposed pair, at 1025x17/17x1025. Global coding ends at the first
+oversized band. The original partition instead selected indices 0..6 plus 8;
+the ordered global prefix is only 0..6. The candidate closes the prefix
+permanently at the first oversized channel. The committed metadata fixture's
+dimensions/shifts are measured from native FwdSqueeze; its prefix marker is
+wrapper-derived from the global-prefix contract, not native decoder output.
+
+The corrected combined source passes the full caller/layout/policy matrix in
+all three progressive modes, the thin effort/LF controls, independent actual
+gray canonicalization, entropy permission selections and ordinary lossless
+alpha. Both full and minimal feature controls recover the selected native
+alpha codes. Source-native alpha controls remain separate from lossy color
+quality; these checks force DCT8 and do not settle V1.
+
+Public request/strided/writer/legacy/streaming and the two engine entries share
+the section producer described above. The CLI has no alpha-squeeze switch and
+cannot select this producer. JPEG coefficient encoding has no layout alpha.
+Animation forwards progressive mode but still omits alpha-distance/squeeze,
+so its configuration repair remains a separate pending caller task. Float
+layouts with positive alpha distance are converted to integer alpha before
+squeeze; their private binary32-alpha constructor is used for lossless alpha
+and does not select this pipeline.
+
+The restored-source library and unchanged normal/strict/drift baseline pass
+after the prefix correction, together with the selected minimal matrices and
+no-default check (`alpha-squeeze-prefix-final-validation.log`, rc0, 1976 s;
+run-heavy peak 1.71 GiB, minimum available 20,251 MiB). Strict Rust 1.100 lint
+also passes the corrected prefix source and effort/LF controls
+(`thin-alpha-prefix-fixed-controls.log`, rc0, 129 s, peak 1.70 GiB, minimum
+available 20,215 MiB). Four V3 fault replays and both V2 pass/boundary faults
+are detected. The subsequent declared-precision controls pass for every integer
+precision 1–16 in RGBA16 and GrayAlpha16, with request/strided/writer/streaming
+entries at 128x64 and 1025x17 in all three modes, full and minimal features.
+A separate native lossless-alpha encode first calibrates each source precision
+before the lossy-alpha reference is compared; PAM reads honor MAXVAL and its
+one/two-byte sample width. No legacy precision override or arbitrary binary32
+payload recovery is inferred. Strict Rust 1.100 workspace/focused lint passes
+with these controls (`progressive-alpha-precision-final.log`, rc0, 140 s,
+peak 1.03 GiB, minimum available 19,815 MiB). Remote CI remains separate.
+
+The final exact-function union combines the retained full/minimal matrix,
+full/minimal precision and original core-control objects/profiles. It observes
+23/23 regions in `modular_shift_range`, 52/55 in `encode_ac_group_section`,
+120/123 in `encode_dc_group`, and 9/9 in the HF alpha wrapper. The AC producer's
+three missing regions propagate token/alpha/raw-extra writer errors. The DC
+producer's three missing regions propagate LF writer failure, cancellation
+inside its group worker, and the worker result error. Those failures were not
+injected in this matrix; these fractions do not establish whole-pipeline
+cancellation coverage. The separate prefix union adds its direct regression
+and observes 36/37 partition regions. Its missing `continue` handles a
+zero-sized sub-channel; the one-alpha default producer starts nonempty and
+only squeezes an axis while it has more than eight samples, so its generated
+bands are nonempty. No fault injection of a synthetic empty band is claimed.
+
+Reports are `progressive-alpha-prefix-final-matrix-coverage-final/`
+`progressive-scope.json` and `partition-scope.json` under the artifact root.
+The extraction/union command completes without mapping diagnostics
+(`progressive-alpha-final-coverage.log`, rc0, 5 s; peak 0.28 GiB,
+minimum available 21,431 MiB). The tools compare function bodies exactly
+and normalize only offsets before declarations. Coverage does not qualify
+V1, animation forwarding, early-preview color quality or every option product.

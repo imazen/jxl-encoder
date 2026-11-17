@@ -2,9 +2,14 @@
 
 ## [Unreleased]
 
+- Route squeezed alpha bands through their declared progressive pass brackets
+  and keep global alpha coding to one ordered channel prefix, including thin
+  images whose later bands fit globally again. Preserve existing precision
+  rounding and preset policies.
+
 - Compact cropped squeezed-alpha channels and their quantizers together, omit
   empty per-group payloads, and emit the required multi-context entropy map
-  in the non-LZ77 path. Progressive alpha placement remains a separate issue.
+  in the non-LZ77 path.
 
 - Validate explicit squeeze descriptor fields, use matching implicit defaults
   for larger channel sets, and preserve positive remaining-group tile extents

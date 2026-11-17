@@ -112,7 +112,9 @@ impl ProgressivePassConfig {
             },
             ProgressiveMode::DcVlfLfAc => Self {
                 // 3-pass: very coarse (shift=2) → medium (shift=0) → final (shift=0)
-                // Matches libjxl's kDcVlfLfAc preset
+                // Existing precision-split preset. Native v0.12's CLI
+                // progressive preset instead splits coefficient frequencies
+                // with downsampling brackets 4/2; do not claim preset parity.
                 num_passes: 3,
                 shifts: vec![2, 0],
                 num_ds: 2,
@@ -133,9 +135,31 @@ impl ProgressivePassConfig {
             0
         }
     }
+
+    /// Modular channel shifts carried by this pass (upper bound exclusive).
+    /// The final downsample-one bracket is implicit in the frame header.
+    fn modular_shift_range(&self, pass: usize) -> core::ops::Range<u32> {
+        debug_assert!(pass < self.num_passes as usize);
+        let mut minimum = 3;
+        let mut maximum = 3;
+        for current in 0..=pass {
+            maximum = minimum;
+            for (&downsample, &last_pass) in self.ds_downsample.iter().zip(&self.ds_last_pass) {
+                if current == last_pass as usize {
+                    minimum = downsample.ilog2();
+                }
+            }
+            if current + 1 == self.num_passes as usize {
+                minimum = 0;
+            }
+        }
+        minimum..maximum
+    }
 }
 
-/// Right-shift with symmetric rounding (libjxl convention).
+/// Right-shift with symmetric nearest rounding (the existing precision policy).
+/// Native v0.12's progressive splitter truncates toward zero; this helper does
+/// not establish per-pass byte parity with that splitter.
 /// The encoder right-shifts before encoding; the decoder left-shifts on decode.
 fn shift_right_round(v: i32, shift: u32) -> i32 {
     if shift == 0 {
@@ -867,8 +891,8 @@ fn encode_ac_group_section(
     ac_tokens: &[Token],
     ac_built_code: &BuiltEntropyCode<'_>,
     ac_lz77_params: Option<&crate::entropy_coding::lz77::Lz77Params>,
-    // Extra channels (alpha + any non-alpha extras), travel as one
-    // modular sub-bitstream per HF group in the LAST pass.
+    // Raw extras travel in the last pass; squeezed extras follow the
+    // signaled modular channel-shift brackets.
     extras: &[super::extras::VardctExtra<'_>],
     is_last_pass: bool,
     group_idx: usize,
@@ -880,31 +904,27 @@ fn encode_ac_group_section(
     // empty-extras path ignores this slice.
     extras_quantizers: &[u32],
     // Chunk-2.b alpha-squeeze override: when `Some`, the HF group
-    // emits the squeeze HF band (`min_shift < 3` sub-channels, cropped
-    // to GROUP_DIM) instead of calling the raw-pixel extras writer.
+    // emits only this pass's selected HF band indices, cropped to GROUP_DIM,
+    // instead of calling the raw-pixel extras writer.
     // The decoder reads exactly one modular sub-bitstream per HF group
     // — same wire-slot, different content.
-    modular_hf_extras: Option<(
-        &super::extras::AlphaSqueezePipeline,
-        &super::extras::AlphaSqueezePartition,
-    )>,
+    modular_hf_extras: Option<(&super::extras::AlphaSqueezePipeline, &[usize])>,
 ) -> Result<Vec<u8>> {
     let blocks_per_ac_group = (256 / 8) * (256 / 8);
     let mut ac_group_writer = BitWriter::with_capacity(blocks_per_ac_group * 100);
     ac_built_code.write_tokens(ac_tokens, ac_lz77_params, &mut ac_group_writer)?;
-    // Multi-group extras: write modular HF sub-bitstream only in LAST pass.
-    if is_last_pass && !extras.is_empty() {
+    if !extras.is_empty() {
         let group_x = group_idx % xsize_groups;
         let group_y = group_idx / xsize_groups;
-        if let Some((pipeline, partition)) = modular_hf_extras {
+        if let Some((pipeline, indices)) = modular_hf_extras {
             VarDctEncoder::write_modular_extras_alpha_squeezed_hf_group(
                 pipeline,
-                partition,
+                indices,
                 group_x,
                 group_y,
                 &mut ac_group_writer,
             )?;
-        } else {
+        } else if is_last_pass {
             let x0 = group_x * GROUP_DIM;
             let y0 = group_y * GROUP_DIM;
             let gw = GROUP_DIM.min(width - x0);
@@ -1050,8 +1070,26 @@ pub(crate) fn encode_dc_group(
     let hf_rows = hf_y_end.saturating_sub(hf_y_start);
     let hf_cols = hf_x_end.saturating_sub(hf_x_start);
     let n_hf = hf_rows * hf_cols;
+    let pass_config = ProgressivePassConfig::from_mode(enc.progressive);
     for pass in 0..num_passes {
         let is_last_pass = pass == num_passes - 1;
+        // Select once per pass/DC group, preserving the original channel
+        // order before each HF group's empty-crop compaction.
+        let pass_hf_indices = modular_hf_extras.map(|(pipeline, partition)| {
+            let shifts = pass_config.modular_shift_range(pass);
+            partition
+                .hf_group_indices
+                .iter()
+                .copied()
+                .filter(|&index| {
+                    let channel = &pipeline.sub_channels[index].channel;
+                    shifts.contains(&channel.hshift.min(channel.vshift))
+                })
+                .collect::<Vec<_>>()
+        });
+        let pass_modular_hf_extras = modular_hf_extras
+            .zip(pass_hf_indices.as_deref())
+            .map(|((pipeline, _), indices)| (pipeline, indices));
         let pass_sections: Vec<Vec<u8>> = crate::parallel::parallel_map_result(n_hf, |i| {
             crate::error::check_stop(stop)?;
             let hf_gy = hf_y_start + i / hf_cols;
@@ -1068,7 +1106,7 @@ pub(crate) fn encode_dc_group(
                 width,
                 height,
                 extras_quantizers,
-                modular_hf_extras,
+                pass_modular_hf_extras,
             )
         })?;
         ac_sections_per_pass.push(pass_sections);
@@ -5882,9 +5920,9 @@ impl VarDctEncoder {
     ///
     /// Emits the kSqueeze transform descriptor (so the decoder's
     /// `FullModularImage::Decode` learns the post-transform channel
-    /// layout before reading any group sections) plus the data for any
-    /// sub-channels that fit fully in LfGlobal (`w ≤ group_dim AND
-    /// h ≤ group_dim`). The tree carried here is sized to the
+    /// layout before reading any group sections) plus the ordered prefix
+    /// of sub-channels that fit fully in LfGlobal (`w ≤ group_dim AND
+    /// h ≤ group_dim`), stopping at the first larger band. The tree is sized to the
     /// **global** sub-channel subset; each per-group section
     /// (LfGroup/HfGroup) emits its own GroupHeader + tree dispatching
     /// on the LOCAL channel indices of its own filtered subset, since
@@ -5936,10 +5974,11 @@ impl VarDctEncoder {
 
     /// Per-HfGroup entry point for the multi-group alpha squeeze.
     /// `gx, gy` are this HF group's coordinates; channel data is
-    /// cropped to `GROUP_DIM` (= 256).
+    /// cropped to `GROUP_DIM` (= 256). `indices` is the ordered subset
+    /// selected by this pass's modular shift bracket.
     pub(crate) fn write_modular_extras_alpha_squeezed_hf_group(
         pipeline: &super::extras::AlphaSqueezePipeline,
-        partition: &super::extras::AlphaSqueezePartition,
+        indices: &[usize],
         gx: usize,
         gy: usize,
         writer: &mut BitWriter,
@@ -5951,7 +5990,7 @@ impl VarDctEncoder {
         };
         Self::write_modular_extras_alpha_squeezed_section(
             pipeline,
-            &partition.hf_group_indices,
+            indices,
             /* declare_squeeze */ false,
             Some(crop),
             writer,
@@ -6503,6 +6542,30 @@ mod alpha_squeeze_section_tests {
     use super::*;
     use crate::modular::channel::Channel;
     use crate::vardct::extras::{AlphaSqueezePipeline, AlphaSqueezeSubChannel};
+
+    #[test]
+    fn progressive_modular_brackets_match_unmodified_v012() {
+        let modes = [
+            ProgressiveMode::Single,
+            ProgressiveMode::QuantizedAcFullAc,
+            ProgressiveMode::DcVlfLfAc,
+        ];
+        let mut observed = 0;
+        for line in include_str!("progressive_brackets_v012.tsv").lines() {
+            if line.starts_with('#') || line.is_empty() {
+                continue;
+            }
+            let values: Vec<u32> = line.split('\t').map(|v| v.parse().unwrap()).collect();
+            assert_eq!(values.len(), 4);
+            let config = ProgressivePassConfig::from_mode(modes[values[0] as usize]);
+            assert_eq!(
+                config.modular_shift_range(values[1] as usize),
+                values[2]..values[3] + 1
+            );
+            observed += 1;
+        }
+        assert_eq!(observed, 6);
+    }
 
     #[test]
     fn empty_group_alpha_section_preserves_the_writer() {

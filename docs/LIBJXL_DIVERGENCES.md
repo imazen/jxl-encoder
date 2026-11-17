@@ -2649,3 +2649,35 @@ pass. Selected coverage observes all four wrappers, 352/382 shared-section and
 33/40 adapter regions; serializer-error and unreachable-region gaps are retained
 in [the contract](ALPHA_SQUEEZE_CONTRACT.md). Progressive placement remains V2.
 No new strategy gate or public API is introduced.
+
+The original local-index/context repairs above do not settle the newly observed
+thin-image global partition: 1025x17/17x1025 alpha bands can become small again
+after the first grouped band. The alpha global set must remain one ordered
+prefix, matching Part 1 G.1.3 and v0.12 DecodeGlobal. The repair ends global
+admission permanently when `width > group_dim OR height > group_dim` first
+holds. Native forward band metadata is observed; the fixture's global marker
+is wrapper-derived from this prefix rule. Full/minimal runtime, native alpha,
+effort/LF, unchanged-byte and strict lint controls pass. The partition observes
+36/37 selected regions; the non-generated empty-band continuation is retained
+as a gap in the contract.
+
+### Issue 144: progressive alpha-band placement (I144-V2, resolved)
+
+HF alpha bands must follow the per-pass channel-shift bracket in the frame
+header (Part 1 G.4.2). The repair selects the ordered HF subset for
+each pass before group cropping; raw unsqueezed extras keep their existing
+last-pass placement. Native v0.12 `GetDownsamplingBracket` controls cover the
+three offered progressive presets. The actual original two-pass and odd-edge
+three-pass alpha streams fail both decoders. Full/minimal public/engine,
+layout/policy, precision 1–16, effort/LF and worker controls pass with unchanged
+normal/strict/drift expectations. Selected routing regions are 23/23, 52/55,
+120/123 and 9/9; un-injected writer/cancellation returns remain documented
+in the contract. No strategy gate, tuning constant or public API is introduced.
+
+The existing `DcVlfLfAc` preset has shifts 2/0/0 and preview hints 8/4.
+Native v0.12 CLI `--progressive_ac` instead partitions coefficient frequencies
+with zero shifts and preview hints 4/2 (`SetProgressiveMode`). This repair
+preserves the existing policy and corrects the prior preset-parity comment;
+the native component controls observe our actual header configurations.
+Final native progressive-alpha samples are separate controls, not proof of
+matching coefficient schedules or early previews.
