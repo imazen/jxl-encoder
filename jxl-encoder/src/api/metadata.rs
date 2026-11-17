@@ -63,9 +63,12 @@ impl<'a> ImageMetadata<'a> {
 
     /// Attach raw ICC profile bytes.
     ///
-    /// Accepted bytes are preserved exactly. The encoder checks selector/model
-    /// consistency and codec bounds, but does not validate complete ICC content.
-    /// The caller supplies a profile that describes the intended image colors.
+    /// The ICC codec preserves accepted bytes exactly. The encoder checks
+    /// selector/model consistency and codec bounds, but does not validate
+    /// complete ICC content. The caller supplies a profile that describes the
+    /// intended image colors. Explicit
+    /// [`crate::LossyConfig::with_canonicalize_input`] may replace or remove the
+    /// profile alongside a pixel-format reduction.
     pub fn with_icc_profile(mut self, data: &'a [u8]) -> Self {
         self.icc_profile = Some(data);
         self

@@ -158,6 +158,12 @@ difference from that public setter. Valid prediction behavior follows the
 reference; unsafe command counts retain the independently required opaque
 coding. `icc-raw-policy-oracle2.log` retains the direct public/internal observations.
 
+Raw coding applies after resolving the source/profile pair. Explicit lossy
+input canonicalization can replace or remove the original profile alongside
+its pixel-format reduction; the derived request then codes the selected
+profile. This existing conversion policy is separate from ICC-content
+validation and raw predictor/inverse preservation.
+
 The first 8x8 RGB8 lossless strict regression, with a 132-byte payload declaring
 one tag, is 84 bytes / SHA256
 `6b55342c8a668961f29530056e39bfbcf80918fd7198c10defae9aedeed03afb`
