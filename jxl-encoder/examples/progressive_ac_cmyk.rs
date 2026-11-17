@@ -49,6 +49,13 @@ fn main() {
     let mut args = std::env::args_os().skip(1);
     let profile = std::fs::read(args.next().expect("CMYK ICC path")).unwrap();
     let out = PathBuf::from(args.next().expect("new evidence directory"));
+    let animation_probe = args
+        .next()
+        .map(|v| {
+            assert_eq!(v, "--animation");
+            true
+        })
+        .unwrap_or(false);
     assert!(args.next().is_none());
     assert_eq!(profile.get(16..20), Some(b"CMYK".as_slice()));
     std::fs::create_dir(&out).unwrap();
@@ -60,6 +67,9 @@ fn main() {
     )
     .unwrap();
     let metadata = ImageMetadata::new().with_icc_profile(&profile);
+    if animation_probe {
+        return probe_animation(&out, &metadata);
+    }
     let fixture = image::load_from_memory(include_bytes!("../tests/images/frymire.png"))
         .unwrap()
         .to_rgb8();
@@ -120,4 +130,116 @@ fn main() {
             }
         }
     }
+}
+
+fn probe_animation(out: &Path, metadata: &ImageMetadata<'_>) {
+    use jxl_encoder::{AnimationFrame, AnimationParams};
+    let (width, height) = (32_usize, 17_usize);
+    let mut journal = std::fs::File::create(out.join("animation.tsv")).unwrap();
+    writeln!(journal, "policy\tlayout\tprogressive\tstage\tresult").unwrap();
+    let mut failures = Vec::new();
+    for layout in [PixelLayout::Cmyk8, PixelLayout::Cmyk16] {
+        let pixels: Vec<u8> = (0..width * height)
+            .flat_map(|i| {
+                [64_u8, 128, 192, (i % 251) as u8]
+                    .into_iter()
+                    .flat_map(move |v| {
+                        if layout.is_16bit() {
+                            (u16::from(v) * 257).to_ne_bytes().to_vec()
+                        } else {
+                            vec![v]
+                        }
+                    })
+            })
+            .collect();
+        // Prove that this selected profile is accepted and renders on the
+        // existing still path before interpreting animation outcomes.
+        let control = LossyConfig::new(1.0)
+            .with_effort(3)
+            .with_threads(1)
+            .with_strategy(jxl_encoder::api::EncoderStrategy::Libjxl)
+            .encode_request(width as u32, height as u32, layout)
+            .with_metadata(metadata)
+            .encode(&pixels)
+            .unwrap();
+        render(out, &format!("still-{layout:?}"), &control, (width, height));
+        for (policy, strategy, mode) in encoder_policies::policies() {
+            for progressive in [
+                ProgressiveMode::Single,
+                ProgressiveMode::QuantizedAcFullAc,
+                ProgressiveMode::DcVlfLfAc,
+            ] {
+                let case = out.join(format!("animation-{layout:?}-{policy}-{progressive:?}"));
+                std::fs::create_dir(&case).unwrap();
+                std::fs::write(case.join("input.bin"), &pixels).unwrap();
+                let config = LossyConfig::new(1.0)
+                    .with_effort(3)
+                    .with_threads(1)
+                    .with_strategy(strategy.clone())
+                    .with_mode(mode)
+                    .with_progressive(progressive)
+                    .with_auto_delta_frames(false);
+                let frames = [
+                    AnimationFrame::new(&pixels, 10),
+                    AnimationFrame::new(&pixels, 20),
+                ];
+                let bytes = match config
+                    .encode_request(width as u32, height as u32, layout)
+                    .with_metadata(metadata)
+                    .encode_animation(&AnimationParams::default(), &frames)
+                {
+                    Ok(bytes) => bytes,
+                    Err(error) => {
+                        writeln!(
+                            journal,
+                            "{policy}\t{layout:?}\t{progressive:?}\tencode\t{error:?}"
+                        )
+                        .unwrap();
+                        journal.flush().unwrap();
+                        failures.push(format!("{}: {error:?}", case.display()));
+                        continue;
+                    }
+                };
+                std::fs::write(case.join("animation.jxl"), &bytes).unwrap();
+                let primary = std::panic::catch_unwind(|| {
+                    decoded_extras::decode_current_frames(&bytes, &policy)
+                });
+                let native = std::process::Command::new(jxl_encoder::test_helpers::djxl_path())
+                    .arg(case.join("animation.jxl"))
+                    .arg(case.join("animation.pfm"))
+                    .args([
+                        "--output_frames",
+                        "--output_extra_channels",
+                        "--num_threads=1",
+                    ])
+                    .output()
+                    .unwrap();
+                std::fs::write(case.join("native.log"), &native.stderr).unwrap();
+                let primary_good = primary.as_ref().is_ok_and(|frames| {
+                    frames.len() == 2 && frames.iter().all(|(_, extras)| extras.len() == 1)
+                });
+                writeln!(
+                    journal,
+                    "{policy}\t{layout:?}\t{progressive:?}\tprimary\t{primary_good}"
+                )
+                .unwrap();
+                writeln!(
+                    journal,
+                    "{policy}\t{layout:?}\t{progressive:?}\tnative\t{}",
+                    native.status
+                )
+                .unwrap();
+                journal.flush().unwrap();
+                if !primary_good || !native.status.success() {
+                    failures.push(format!(
+                        "{}: primary Black/render {primary_good}, native {}",
+                        case.display(),
+                        native.status
+                    ));
+                }
+            }
+        }
+    }
+    std::fs::write(out.join("animation-failures.txt"), failures.join("\n")).unwrap();
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }

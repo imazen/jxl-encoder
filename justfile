@@ -1767,6 +1767,12 @@ animation-alpha-final-evidence manifest artifacts coverage_env llvm lint_home li
 source-color-before-evidence manifest output coverage_env:
     bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" linear_p3_white_point --test-target source_color_contract --features __expert,parallel --source jxl-encoder/src/vardct/xyb.rs --source jxl-encoder/src/vardct/precomputed.rs --source jxl-encoder/src/vardct/encoder.rs --source jxl-encoder/src/api.rs --source jxl-encoder/src/headers/color_encoding.rs --source jxl-encoder/src/vardct/color_matrices_v012.tsv' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
 
+progressive-ac-cmyk-animation-check manifest profile output:
+    cargo run --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --example progressive_ac_cmyk -- {{quote(profile)}} {{quote(output)}} --animation
+
+cmyk-animation-evidence manifest profile output:
+    python3 scripts/run_cmyk_animation_evidence.py {{quote(manifest)}} {{quote(profile)}} {{quote(output)}}
+
 source-color-native-vectors-evidence manifest output coverage_env:
     bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" all_native_color_matrix_vectors_match --source jxl-encoder/src/vardct/xyb.rs --source jxl-encoder/src/vardct/source_white.rs --source jxl-encoder/src/vardct/color_matrices_v012.tsv' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
 
