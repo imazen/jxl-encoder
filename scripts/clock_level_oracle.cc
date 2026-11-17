@@ -1,12 +1,15 @@
 // Copyright (c) Imazen LLC and the JPEG XL Project Authors.
 // Licensed under AGPL-3.0-or-later. Commercial licenses at https://www.imazen.io/pricing
 // Public unmodified v0.12 controls for clocks and already-downsampled geometry.
+#include <cstdlib>
+#include <iterator>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <string>
 #include <vector>
 #include "jxl/encode.h"
+#include "jxl/decode.h"
 #include "jxl/color_encoding.h"
 
 bool Encode(const std::filesystem::path& output, uint32_t width,
@@ -50,6 +53,50 @@ bool Encode(const std::filesystem::path& output, uint32_t width,
   JxlEncoderDestroy(encoder);
   return bool(stream);
 }
+bool Inspect(const std::filesystem::path& input, uint32_t width,
+             bool animation, uint32_t second_timecode, bool lossless) {
+  std::ifstream stream(input, std::ios::binary);
+  std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(stream)), {});
+  JxlDecoder* decoder=JxlDecoderCreate(nullptr);
+  JxlDecoderSubscribeEvents(decoder,JXL_DEC_BASIC_INFO|JXL_DEC_FRAME|JXL_DEC_FULL_IMAGE);
+  JxlDecoderSetInput(decoder,bytes.data(),bytes.size());
+  JxlDecoderCloseInput(decoder);
+  JxlPixelFormat format{3,JXL_TYPE_UINT16,JXL_NATIVE_ENDIAN,0};
+  std::vector<uint16_t> pixels;
+  size_t frame=0;
+  bool success=false;
+  for(;;) {
+    const auto status=JxlDecoderProcessInput(decoder);
+    if(status==JXL_DEC_SUCCESS) { success=frame==(animation?2u:1u);break; }
+    if(status==JXL_DEC_BASIC_INFO) {
+      JxlBasicInfo info;
+      if(JxlDecoderGetBasicInfo(decoder,&info)!=JXL_DEC_SUCCESS ||
+         info.xsize!=(animation?64:width*8) || info.ysize!=(animation?32:8)) break;
+    } else if(status==JXL_DEC_FRAME) {
+      JxlFrameHeader header;
+      if(JxlDecoderGetFrameHeader(decoder,&header)!=JXL_DEC_SUCCESS) break;
+      std::cout<<input.filename().string()<<"\tframe="<<frame<<"\tclock="
+               <<header.timecode<<"\tduration="<<header.duration<<'\n';
+      if(animation && (header.timecode!=(frame?second_timecode:2) || header.duration!=10)) break;
+    } else if(status==JXL_DEC_NEED_IMAGE_OUT_BUFFER) {
+      size_t size=0;
+      if(JxlDecoderImageOutBufferSize(decoder,&format,&size)!=JXL_DEC_SUCCESS || size%2) break;
+      pixels.resize(size/2);
+      if(JxlDecoderSetImageOutBuffer(decoder,&format,pixels.data(),size)!=JXL_DEC_SUCCESS) break;
+    } else if(status==JXL_DEC_FULL_IMAGE) {
+      const int expected=frame?65535:0;
+      bool valid=true;
+      for(auto value:pixels) {
+        const int error=std::abs(int(value)-expected);
+        if(error>(lossless?0:328)) {valid=false;break;}
+      }
+      if(!valid) break;
+      ++frame;
+    } else break;
+  }
+  JxlDecoderDestroy(decoder);
+  return success;
+}
 int main(int argc,char** argv) {
   if(JxlEncoderVersion()!=12000) return 2;
   if(argc==1) return 0;
@@ -57,10 +104,18 @@ int main(int argc,char** argv) {
   const std::filesystem::path directory(argv[1]);
   for(auto width:{32768u,32769u}) {
     const auto label="width-"+std::to_string(width);
-    std::cout<<label<<'\t'<<Encode(directory/(label+".jxl"),width,false,0,false)<<'\n';
+    const auto path=directory/(label+".jxl");
+    const bool encoded=Encode(path,width,false,0,false);
+    const bool rendered=encoded && Inspect(path,width,false,0,false);
+    std::cout<<label<<"\tencoded="<<encoded<<"\trendered="<<rendered<<'\n';
+    if(!encoded || !rendered) return 4;
   }
   for(auto second:{1u,2u,3u}) for(bool lossless:{false,true}) {
     const auto label="clock-2-"+std::to_string(second)+(lossless?"-lossless":"-lossy");
-    std::cout<<label<<'\t'<<Encode(directory/(label+".jxl"),0,true,second,lossless)<<'\n';
+    const auto path=directory/(label+".jxl");
+    const bool encoded=Encode(path,0,true,second,lossless);
+    const bool rendered=encoded && Inspect(path,0,true,second,lossless);
+    std::cout<<label<<"\tencoded="<<encoded<<"\trendered="<<rendered<<'\n';
+    if(!encoded || !rendered) return 5;
   }
 }
