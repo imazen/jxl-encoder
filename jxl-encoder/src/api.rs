@@ -5848,31 +5848,78 @@ enum AlphaPlane {
     F32(Vec<f32>),
 }
 
+/// One wire representation shared by every frame in an animation.
+#[derive(Clone, Copy)]
+enum AlphaCoding {
+    U16,
+    F16,
+    F32,
+}
+
+impl AlphaCoding {
+    fn choose(values: impl Iterator<Item = f32>, lossy: bool) -> Self {
+        if lossy {
+            return Self::U16;
+        }
+        let (half, in_range) = values.fold((true, true), |(half, in_range), a| {
+            (
+                half && crate::f16::f32_to_f16_bits(a)
+                    .ok()
+                    .is_some_and(|bits| crate::f16::f16_bits_to_f32(bits).to_bits() == a.to_bits()),
+                in_range && (0.0..=1.0).contains(&a),
+            )
+        });
+        if half {
+            Self::F16
+        } else if in_range {
+            Self::F32
+        } else {
+            Self::U16
+        }
+    }
+
+    fn info(self, associated: bool) -> crate::headers::extra_channels::ExtraChannelInfo {
+        use crate::headers::file_header::BitDepth;
+        let mut info = crate::headers::extra_channels::ExtraChannelInfo::alpha();
+        info.alpha_associated = associated;
+        info.bit_depth = match self {
+            Self::U16 => BitDepth::uint16(),
+            Self::F16 => BitDepth {
+                float_sample: true,
+                bits_per_sample: 16,
+                exponent_bits: 5,
+            },
+            Self::F32 => BitDepth {
+                float_sample: true,
+                bits_per_sample: 32,
+                exponent_bits: 8,
+            },
+        };
+        info
+    }
+}
+
 impl AlphaPlane {
     fn choose(values: Vec<f32>, lossy_alpha: bool) -> Self {
-        let to_u16 = |v: &[f32]| {
-            v.iter()
-                .map(|&a| (a.clamp(0.0, 1.0) * 65535.0 + 0.5) as u16)
-                .collect()
-        };
-        if lossy_alpha {
-            return Self::U16(to_u16(&values));
-        }
-        let as_f16: Option<Vec<u16>> = values
-            .iter()
-            .map(|&a| {
-                crate::f16::f32_to_f16_bits(a)
-                    .ok()
-                    .filter(|&b| crate::f16::f16_bits_to_f32(b).to_bits() == a.to_bits())
-            })
-            .collect();
-        if let Some(bits) = as_f16 {
-            return Self::F16(bits);
-        }
-        if values.iter().all(|a| (0.0..=1.0).contains(a)) {
-            Self::F32(values)
-        } else {
-            Self::U16(to_u16(&values))
+        let coding = AlphaCoding::choose(values.iter().copied(), lossy_alpha);
+        Self::with_coding(values, coding)
+    }
+
+    fn with_coding(values: Vec<f32>, coding: AlphaCoding) -> Self {
+        match coding {
+            AlphaCoding::U16 => Self::U16(
+                values
+                    .iter()
+                    .map(|&a| (a.clamp(0.0, 1.0) * 65535.0 + 0.5) as u16)
+                    .collect(),
+            ),
+            AlphaCoding::F16 => Self::F16(
+                values
+                    .iter()
+                    .map(|&a| crate::f16::f32_to_f16_bits(a).expect("selected exact half alpha"))
+                    .collect(),
+            ),
+            AlphaCoding::F32 => Self::F32(values),
         }
     }
 }
@@ -8405,10 +8452,8 @@ impl<'a> EncodeRequest<'a> {
         // approximate pre-passes: invisible-pixel simplification,
         // resampling). 16-bit layouts keep all 16 bits; f16 layouts keep the
         // half-float bit patterns under a float16 extra-channel depth (exact,
-        // as lossless f16 does); f32 layouts do the same when every alpha is a
-        // half float, else code 16-bit alpha (exact f32 alpha would need a
-        // 32-bit extra-channel buffer, which `ExtraChannelBuf` does not
-        // have). All three used to code 8 bits.
+        // as lossless f16 does). Other in-range f32 values use binary32;
+        // lossy or out-of-range non-half values use the existing U16 fallback.
         let lossy_alpha = cfg.alpha_distance.is_some_and(|d| d > 0.0);
         let alpha_u16: Option<Vec<u16>> = match self.layout {
             PixelLayout::Rgba16 => Some(extract_alpha_u16_raw(pixels, 4, 3, self.stop)),

@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- Preserve floating animation alpha at its selected native precision across
+  frames, and use exact source visibility for small nonzero alpha.
+
 - Build the optional rate-control CLI through the existing prepared-encoder
   export and verify its progressive output in both decoders.
 

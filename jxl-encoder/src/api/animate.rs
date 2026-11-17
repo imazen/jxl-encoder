@@ -869,11 +869,27 @@ pub(crate) fn encode_animation_lossy(
     } else {
         8
     };
+    // Header bit depth is common to the entire animation. Choose over all
+    // supplied frames, so a later non-half alpha cannot inherit an f16 header.
+    // This scan borrows input; per-frame storage is prepared only when needed.
+    let float_alpha_coding = (has_alpha && (layout.is_f16() || layout.is_f32())).then(|| {
+        AlphaCoding::choose(
+            frames.iter().flat_map(|frame| {
+                ingest::float_alpha_values(layout, frame.pixels).expect("float alpha layout")
+            }),
+            false,
+        )
+    });
     let alpha_info_buf;
     let extras_info: &[crate::headers::extra_channels::ExtraChannelInfo] = if has_alpha {
-        let mut info = crate::headers::extra_channels::ExtraChannelInfo::alpha();
-        info.bit_depth.bits_per_sample = alpha_bits;
-        info.alpha_associated = enc.alpha_associated;
+        let info = if let Some(coding) = float_alpha_coding {
+            coding.info(enc.alpha_associated)
+        } else {
+            let mut info = crate::headers::extra_channels::ExtraChannelInfo::alpha();
+            info.bit_depth.bits_per_sample = alpha_bits;
+            info.alpha_associated = enc.alpha_associated;
+            info
+        };
         alpha_info_buf = [info];
         &alpha_info_buf
     } else {
@@ -1015,9 +1031,24 @@ pub(crate) fn encode_animation_lossy(
         // photos with mostly-opaque alpha pay only the cheap
         // `has_any_invisible_pixels` predicate (single linear scan with
         // early-exit on the first zero).
+        let alpha_u16: Option<Vec<u16>> = if has_alpha && layout.is_16bit() {
+            Some(
+                src_pixels
+                    .chunks_exact(bpp)
+                    .map(|pixel| u16::from_ne_bytes([pixel[bpp - 2], pixel[bpp - 1]]))
+                    .collect(),
+            )
+        } else {
+            None
+        };
+        let exact_visibility = if cfg.simplify_invisible {
+            exact_alpha_visibility(layout, src_pixels, alpha_u16.as_deref())
+        } else {
+            None
+        };
         if cfg.simplify_invisible
             && !animation.premultiplied_alpha
-            && let Some(ref alpha_buf) = alpha
+            && let Some(alpha_buf) = exact_visibility.as_ref().or(alpha.as_ref())
             && crate::vardct::simplify_invisible::has_any_invisible_pixels(alpha_buf)
         {
             crate::vardct::simplify_invisible::simplify_invisible_rgb(
@@ -1067,30 +1098,31 @@ pub(crate) fn encode_animation_lossy(
         // hand it to the encoder.
         // The color pre-pass uses an 8-bit coverage mask. Encode integer
         // alpha from the original samples so 10/12/16-bit coverage survives.
-        let alpha_u16: Option<Vec<u16>> = if has_alpha && layout.is_16bit() {
-            Some(
-                src_pixels
-                    .chunks_exact(bpp)
-                    .map(|pixel| u16::from_ne_bytes([pixel[bpp - 2], pixel[bpp - 1]]))
+        let alpha_float = float_alpha_coding.map(|coding| {
+            AlphaPlane::with_coding(
+                ingest::float_alpha_values(layout, src_pixels)
+                    .expect("float alpha layout")
                     .collect(),
+                coding,
             )
-        } else {
-            None
-        };
+        });
         let alpha_info_buf;
         let alpha_view_buf;
         let frame_extras: &[crate::vardct::extras::VardctExtra<'_>] = match alpha.as_deref() {
             None => &[],
             Some(buf) => {
-                let mut info = crate::headers::extra_channels::ExtraChannelInfo::alpha();
-                info.alpha_associated = enc.alpha_associated;
-                info.bit_depth.bits_per_sample = alpha_bits;
-                alpha_info_buf = info;
+                alpha_info_buf = extras_info[0].clone();
                 alpha_view_buf = [crate::vardct::extras::VardctExtra {
                     info: &alpha_info_buf,
-                    data: match alpha_u16.as_deref() {
-                        Some(samples) => crate::vardct::extras::VardctExtraBuf::U16(samples),
-                        None => crate::vardct::extras::VardctExtraBuf::U8(buf),
+                    data: match (&alpha_float, alpha_u16.as_deref()) {
+                        (Some(AlphaPlane::U16(samples) | AlphaPlane::F16(samples)), _) => {
+                            crate::vardct::extras::VardctExtraBuf::U16(samples)
+                        }
+                        (Some(AlphaPlane::F32(samples)), _) => {
+                            crate::vardct::extras::VardctExtraBuf::F32(samples)
+                        }
+                        (_, Some(samples)) => crate::vardct::extras::VardctExtraBuf::U16(samples),
+                        _ => crate::vardct::extras::VardctExtraBuf::U8(buf),
                     },
                 }];
                 &alpha_view_buf[..]

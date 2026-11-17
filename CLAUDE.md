@@ -1768,19 +1768,24 @@ misclassify that CLI limitation as an invalid stream or strip the ICC to hide it
 
 ## Known Bugs (ACTIVE)
 
-### 2026-11-17: accepted float animation narrows alpha to eight bits
+### RESOLVED 2026-11-17: animation alpha precision and exact visibility
 
-The actual typed animation probe accepts f16/f32/HDR layouts. On the first
-259x133 RGBA f16 displayed frame, pinned djxl returns 22,679 alpha samples
-different from the supplied binary16 values (34,447 total). First sample is
-0.9372549653053284 versus 0.9375; maximum absolute difference is
-0.0019608139991760254. These are observed native output samples, not an
-inference from header bits. `animation-float-alpha-observed.json` binds the
-input and PFM under typed run-24. Its source keeps only the u8 alpha copy in
-animation, while the still path has precision-preserving extra-channel
-preparation. A dedicated failing source-precision regression and repair remain
-required. Progressive-versus-Single equality does not establish source-alpha
-precision.
+Animation now codes floating alpha using one common representation selected
+from all input frames, sharing the still-image precision policy. Small nonzero
+integer/float alpha also uses exact visibility for SimplifyInvisible. The
+separate before regressions fail in both primary Rust and pinned djxl; unmodified
+v0.12 public encoder controls preserve the original float samples and nonzero
+visibility. Existing byte locks, tolerances and ignores remain unchanged.
+
+[Evidence and exact scope](docs/ANIMATION_ALPHA.md): accepted alpha layouts,
+all offered policies, both animation entries/association settings, selected
+aligned/odd/progressive/reference/crop cases and opt-in identical zero-delta
+alpha pass, along with minimal, established still precision and full library/
+lock/drift/strict lint controls. Selected source regions are 41/41, 25/25,
+34/35, 44/44, 36/36 and 36/36; the reader's defensive non-floating return is
+unreachable from its guarded animation callers. This is not full encoder or
+physical-color qualification. Animation alpha-setting forwarding and CMYK
+remain separate gaps.
 
 
 ### RESOLVED 2026-11-17: optional rate-control CLI private encoder import

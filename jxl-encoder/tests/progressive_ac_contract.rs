@@ -1313,3 +1313,345 @@ fn progressive_typed_animation_layout_inventory() {
         }
     }
 }
+
+#[test]
+fn animation_float_alpha_preserves_source_precision() {
+    check_animation_float_alpha(false);
+}
+
+#[test]
+fn animation_identical_delta_preserves_float_alpha() {
+    check_animation_float_alpha(true);
+}
+
+fn check_animation_float_alpha(auto_delta: bool) {
+    use jxl_encoder::{AnimationFrame, AnimationParams};
+    let root = directory();
+    let mut failures = Vec::new();
+    for layout in [
+        PixelLayout::RgbaLinearF16,
+        PixelLayout::GrayAlphaLinearF16,
+        PixelLayout::RgbaLinearF32,
+        PixelLayout::GrayAlphaLinearF32,
+    ] {
+        for (width, height) in [(16, 16), (259, 17)] {
+            let channels = if layout.is_grayscale() { 2 } else { 4 };
+            let mut expected = Vec::new();
+            let mut pixels = Vec::new();
+            for index in 0..width * height {
+                let alpha = [0.0_f32, 0.0625, 0.5, 0.9375, 1.0][index % 5];
+                expected.push(alpha);
+                for channel in 0..channels {
+                    let value = if channel == channels - 1 { alpha } else { 0.25 };
+                    if layout.is_f16() {
+                        let bits: u16 = match value {
+                            0.0 => 0,
+                            0.0625 => 0x2c00,
+                            0.25 => 0x3400,
+                            0.5 => 0x3800,
+                            0.9375 => 0x3b80,
+                            1.0 => 0x3c00,
+                            _ => unreachable!(),
+                        };
+                        pixels.extend_from_slice(&bits.to_ne_bytes());
+                    } else {
+                        pixels.extend_from_slice(&value.to_ne_bytes());
+                    }
+                }
+            }
+            for entry in ["legacy", "request"] {
+                let out = root.join(format!("{layout:?}-{width}x{height}-{entry}"));
+                std::fs::create_dir(&out).unwrap();
+                std::fs::write(out.join("input.bin"), &pixels).unwrap();
+                let config = LossyConfig::new(1.0)
+                    .with_effort(3)
+                    .with_threads(1)
+                    .with_strategy(EncoderStrategy::Libjxl)
+                    .with_auto_delta_frames(auto_delta);
+                let frames = [
+                    AnimationFrame::new(&pixels, 10),
+                    AnimationFrame::new(&pixels, 20),
+                ];
+                let params = AnimationParams::default();
+                let bytes = if entry == "legacy" {
+                    config.encode_animation(width as u32, height as u32, layout, &params, &frames)
+                } else {
+                    config
+                        .encode_request(width as u32, height as u32, layout)
+                        .encode_animation(&params, &frames)
+                }
+                .unwrap();
+                let actual = render_animation(&out, "source-alpha", &bytes, width, height, layout);
+                let offset = width * height * (channels - 1);
+                for (decoder, frames) in ["jxl-rs", "djxl"].into_iter().zip(actual) {
+                    for (frame, samples) in frames.iter().enumerate() {
+                        let wrong: Vec<_> = samples[offset..]
+                            .iter()
+                            .zip(&expected)
+                            .enumerate()
+                            .filter(|(_, (a, b))| a.to_bits() != b.to_bits())
+                            .collect();
+                        if !wrong.is_empty() {
+                            failures.push(format!(
+                                "{} {decoder} frame{frame}: {} wrong; first {:?}",
+                                out.display(),
+                                wrong.len(),
+                                wrong[0]
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    std::fs::write(root.join("source-alpha-failures.txt"), failures.join("\n")).unwrap();
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn animation_nonzero_alpha_is_visible_to_simplification() {
+    use jxl_encoder::{AnimationFrame, AnimationParams};
+    let root = directory();
+    let mut failures = Vec::new();
+    for layout in [
+        PixelLayout::Rgba16,
+        PixelLayout::RgbaLinearF16,
+        PixelLayout::RgbaLinearF32,
+    ] {
+        for (width, height) in [(16, 16), (259, 17)] {
+            let mut pixels = Vec::new();
+            for y in 0..height {
+                for x in 0..width {
+                    let center = x == width / 2 && y == height / 2;
+                    if layout == PixelLayout::Rgba16 {
+                        for value in if center {
+                            [65535_u16, 0, 0, 100]
+                        } else {
+                            [0, 0, 65535, 65535]
+                        } {
+                            pixels.extend_from_slice(&value.to_ne_bytes());
+                        }
+                    } else if layout.is_f16() {
+                        for bits in if center {
+                            [0x3c00_u16, 0, 0, 0x1400]
+                        } else {
+                            [0, 0, 0x3c00, 0x3c00]
+                        } {
+                            pixels.extend_from_slice(&bits.to_ne_bytes());
+                        }
+                    } else {
+                        for value in if center {
+                            [1_f32, 0.0, 0.0, 1.0 / 1024.0]
+                        } else {
+                            [0.0, 0.0, 1.0, 1.0]
+                        } {
+                            pixels.extend_from_slice(&value.to_ne_bytes());
+                        }
+                    }
+                }
+            }
+            for entry in ["legacy", "request"] {
+                let out = root.join(format!("visible-{layout:?}-{width}x{height}-{entry}"));
+                std::fs::create_dir(&out).unwrap();
+                std::fs::write(out.join("input.bin"), &pixels).unwrap();
+                let mut baseline = None;
+                for simplify in [false, true] {
+                    let config = LossyConfig::new(1.0)
+                        .with_effort(3)
+                        .with_threads(1)
+                        .with_strategy(EncoderStrategy::Libjxl)
+                        .with_auto_delta_frames(false)
+                        .with_simplify_invisible(simplify);
+                    let frames = [
+                        AnimationFrame::new(&pixels, 10),
+                        AnimationFrame::new(&pixels, 20),
+                    ];
+                    let params = AnimationParams::default();
+                    let bytes = if entry == "legacy" {
+                        config.encode_animation(
+                            width as u32,
+                            height as u32,
+                            layout,
+                            &params,
+                            &frames,
+                        )
+                    } else {
+                        config
+                            .encode_request(width as u32, height as u32, layout)
+                            .encode_animation(&params, &frames)
+                    }
+                    .unwrap();
+                    let actual = render_animation(
+                        &out,
+                        &format!("simplify-{simplify}"),
+                        &bytes,
+                        width,
+                        height,
+                        layout,
+                    );
+                    if let Some(expected) = &baseline {
+                        for (decoder, (a, b)) in ["jxl-rs", "djxl"]
+                            .into_iter()
+                            .zip(actual.iter().zip(expected))
+                        {
+                            if a != b {
+                                failures.push(format!(
+                                    "{} {decoder}: nonzero-alpha color changed",
+                                    out.display()
+                                ));
+                            }
+                        }
+                    } else {
+                        baseline = Some(actual);
+                    }
+                }
+            }
+        }
+    }
+    std::fs::write(root.join("visibility-failures.txt"), failures.join("\n")).unwrap();
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn animation_alpha_policy_precision_matrix() {
+    use jxl_encoder::{AnimationFrame, AnimationParams};
+    let root = directory();
+    let mut failures = Vec::new();
+    for (index, layout) in non_cmyk_lossy_layouts()
+        .into_iter()
+        .filter(|l| l.has_alpha())
+        .enumerate()
+    {
+        let (width, height) = if index % 2 == 0 { (16, 16) } else { (259, 17) };
+        for fallback in [false, true] {
+            if fallback && !layout.is_f32() {
+                continue;
+            }
+            let mut inputs = Vec::new();
+            let mut wanted = Vec::new();
+            for frame in 0..2 {
+                let mut pixels = Vec::new();
+                let mut alpha = Vec::new();
+                for i in 0..width * height {
+                    let slot = (i + frame) % 6;
+                    let value = if fallback && frame == 1 && slot == 0 {
+                        1.234567_f32
+                    } else if layout.is_f32() && frame == 1 && slot == 1 {
+                        0.1234567
+                    } else {
+                        [0.0, 1.0 / 1024.0, 0.0625, 0.5, 0.9375, 1.0][slot]
+                    };
+                    let half = [0_u16, 0x1400, 0x2c00, 0x3800, 0x3b80, 0x3c00][slot];
+                    let integer = [0_u16, 3, 100, 32768, 65534, 65535][slot];
+                    let channels = if layout.is_grayscale() { 2 } else { 4 };
+                    for channel in 0..channels {
+                        let is_alpha = channel == channels - 1;
+                        if layout.is_f16() {
+                            pixels.extend_from_slice(
+                                &(if is_alpha { half } else { 0_u16 }).to_ne_bytes(),
+                            );
+                        } else if layout.is_f32() {
+                            pixels.extend_from_slice(
+                                &(if is_alpha { value } else { 0_f32 }).to_ne_bytes(),
+                            );
+                        } else if layout.is_16bit() {
+                            pixels.extend_from_slice(
+                                &(if is_alpha { integer } else { 0_u16 }).to_ne_bytes(),
+                            );
+                        } else {
+                            pixels.push(if is_alpha { (integer >> 8) as u8 } else { 0 });
+                        }
+                    }
+                    alpha.push(if layout.is_f16() || layout.is_f32() {
+                        value
+                    } else if layout.is_16bit() {
+                        f32::from(integer)
+                    } else {
+                        f32::from(integer >> 8)
+                    });
+                }
+                inputs.push(pixels);
+                wanted.push(alpha);
+            }
+            for (policy, strategy, mode) in encoder_policies::policies() {
+                for associated in [false, true] {
+                    let entry = if associated { "request" } else { "legacy" };
+                    let out = root.join(format!("{layout:?}-{policy}-{entry}-fallback{fallback}"));
+                    std::fs::create_dir(&out).unwrap();
+                    for (i, pixels) in inputs.iter().enumerate() {
+                        std::fs::write(out.join(format!("input{i}.bin")), pixels).unwrap();
+                    }
+                    let progressive = [
+                        ProgressiveMode::Single,
+                        ProgressiveMode::QuantizedAcFullAc,
+                        ProgressiveMode::DcVlfLfAc,
+                    ][index % 3];
+                    let config = LossyConfig::new(1.0)
+                        .with_effort(3)
+                        .with_threads(1)
+                        .with_strategy(strategy.clone())
+                        .with_mode(mode)
+                        .with_progressive(progressive)
+                        .with_auto_delta_frames(false);
+                    let params = AnimationParams {
+                        premultiplied_alpha: associated,
+                        ..Default::default()
+                    };
+                    let frames = [
+                        AnimationFrame::new(&inputs[0], 0)
+                            .with_reference_only(true)
+                            .with_save_as_reference(2),
+                        AnimationFrame::new(&inputs[0], 10),
+                        AnimationFrame::new(&inputs[1], 20),
+                    ];
+                    let bytes = if entry == "legacy" {
+                        config.encode_animation(
+                            width as u32,
+                            height as u32,
+                            layout,
+                            &params,
+                            &frames,
+                        )
+                    } else {
+                        config
+                            .encode_request(width as u32, height as u32, layout)
+                            .encode_animation(&params, &frames)
+                    }
+                    .unwrap();
+                    let actual = render_animation(&out, "matrix", &bytes, width, height, layout);
+                    let offset = width * height * if layout.is_grayscale() { 1 } else { 3 };
+                    for (decoder, frames) in ["jxl-rs", "djxl"].into_iter().zip(actual) {
+                        for (frame, samples) in frames.iter().enumerate() {
+                            for (sample, (&a, &b)) in
+                                samples[offset..].iter().zip(&wanted[frame]).enumerate()
+                            {
+                                let exact = if fallback {
+                                    (a * 65535.0).round() as u16
+                                        == (b.clamp(0.0, 1.0) * 65535.0 + 0.5) as u16
+                                } else if layout.is_f16() || layout.is_f32() {
+                                    a.to_bits() == b.to_bits()
+                                } else {
+                                    (a * if layout.is_16bit() { 65535.0 } else { 255.0 }).round()
+                                        == b
+                                };
+                                if !exact {
+                                    failures.push(format!(
+                                        "{} {decoder} frame{frame} sample{sample}: {a} vs {b}",
+                                        out.display()
+                                    ));
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    std::fs::write(
+        root.join("precision-matrix-failures.txt"),
+        failures.join("\n"),
+    )
+    .unwrap();
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}

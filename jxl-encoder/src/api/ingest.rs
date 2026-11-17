@@ -724,6 +724,29 @@ pub(crate) fn gamma_gray_u16_to_linear_f32_rgb(
         .collect()
 }
 
+/// Read exact alpha values without allocating; animation uses this to select
+/// one common file-level representation before emitting any frame.
+pub(super) fn float_alpha_values(
+    layout: PixelLayout,
+    data: &[u8],
+) -> Option<impl Iterator<Item = f32> + '_> {
+    if !layout.has_alpha() || !(layout.is_f16() || layout.is_f32()) {
+        return None;
+    }
+    let lane = if layout.is_f16() { 2 } else { 4 };
+    Some(
+        data.chunks_exact(layout.bytes_per_pixel())
+            .map(move |pixel| {
+                let alpha = &pixel[pixel.len() - lane..];
+                if lane == 2 {
+                    crate::f16::f16_bits_to_f32(u16::from_ne_bytes(alpha.try_into().unwrap()))
+                } else {
+                    f32::from_ne_bytes(alpha.try_into().unwrap())
+                }
+            }),
+    )
+}
+
 /// Visibility mask (0 = alpha exactly 0, 255 = anything else) from a
 /// layout's exact alpha samples, for layouts whose 8-bit alpha copy rounds
 /// small nonzero alpha to 0. `None` for 8-bit layouts (their copy is exact)

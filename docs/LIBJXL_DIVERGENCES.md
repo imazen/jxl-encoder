@@ -2134,6 +2134,25 @@ lookup, descriptors, metadata or compact/non-compact decisions.
 
 ## G. RESOLVED divergences (historical)
 
+### Issue 144: animation alpha source precision and visibility (2026-11-17)
+
+The animation writer now prepares floating alpha using the same representation
+choice as still images: exact binary16 where every sample permits it, otherwise
+binary32 for values within [0,1], otherwise the documented clamped U16 fallback.
+Animation chooses the common representation over all input frames before
+writing its one file-level extra-channel description. The selection scan borrows
+the supplied buffers. The original eight-bit copy remains for approximate color
+preparation, while SimplifyInvisible receives the exact-zero visibility mask.
+The predicate remains `simplify_invisible && !premultiplied_alpha && any_zero`.
+Unmodified v0.12 public-API controls preserve native floating alpha and leave
+color under small nonzero alpha unchanged. This is source interpretation and
+sample preservation, not a new strategy gate or full bitstream parity claim.
+No registry permission or named policy changes. See
+[animation alpha evidence](ANIMATION_ALPHA.md) for before failures, completed
+source/policy/minimal/baseline/fault/region checks and explicit remaining scope.
+Animation alpha-distance/squeeze forwarding and CMYK remain separate items.
+
+
 ### Issue 144: bounded ICC tag-list prediction (I144-E4-tags, 2026-11-16)
 
 `icc::can_predict_tag_list` permits tag-list prediction exactly when
