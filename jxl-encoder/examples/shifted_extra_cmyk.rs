@@ -14,6 +14,14 @@ fn main() {
     let mut args = std::env::args_os().skip(1);
     let profile_path = PathBuf::from(args.next().expect("CMYK ICC path"));
     let out = PathBuf::from(args.next().expect("new evidence directory"));
+    let extra_count: usize = args
+        .next()
+        .map_or(1, |v| v.to_str().unwrap().parse().unwrap());
+    assert!((1..=18).contains(&extra_count));
+    let squeeze = args.next().is_some_and(|v| {
+        assert_eq!(v, "--squeeze");
+        true
+    });
     assert!(args.next().is_none(), "unexpected argument");
     std::fs::create_dir(&out).expect("new evidence directory");
     let profile = std::fs::read(&profile_path).expect("required CMYK ICC");
@@ -50,7 +58,7 @@ fn main() {
             } else {
                 PixelLayout::Cmyk8
             };
-            for shift in [1, 3] {
+            for &shift in if squeeze { &[0, 1, 3][..] } else { &[1, 3][..] } {
                 for (w, h) in [(17_usize, 9_usize), (259, 17)] {
                     for sectioned in [SectionedTrees::Off, SectionedTrees::On] {
                         let config = LosslessConfig::new()
@@ -58,8 +66,8 @@ fn main() {
                             .with_strategy(strategy.clone())
                             .with_mode(mode)
                             .with_threads(1)
-                            .with_modular_group_size(Some(1))
-                            .with_squeeze(false)
+                            .with_modular_group_size(Some(if squeeze { 0 } else { 1 }))
+                            .with_squeeze(squeeze)
                             .with_patches(false)
                             .with_tree_learning(true)
                             .with_ans(true)
@@ -68,12 +76,15 @@ fn main() {
                             .with_force_rct(Some(RctType(0)));
                         let native = vec![173; w.div_ceil(1 << shift) * h.div_ceil(1 << shift)];
                         let native16 = vec![0xad5f; native.len()];
-                        let extras = [if wide {
-                            ExtraChannel::depth_u16(&native16)
-                        } else {
-                            ExtraChannel::depth(&native)
-                        }
-                        .with_dim_shift(shift)];
+                        let extras = vec![
+                            if wide {
+                                ExtraChannel::depth_u16(&native16)
+                            } else {
+                                ExtraChannel::depth(&native)
+                            }
+                            .with_dim_shift(shift);
+                            extra_count
+                        ];
                         let pixels = vec![255; w * h * layout.bytes_per_pixel()];
                         let request = || {
                             config
@@ -98,7 +109,7 @@ fn main() {
                         let label = format!("{name}-wide{wide}-s{shift}-{w}x{h}-{sectioned:?}");
                         std::fs::write(out.join(format!("{label}.jxl")), &bytes).unwrap();
                         let (_, planes) = decoded_extras::decode_current_planes(&bytes, &label);
-                        assert_eq!(planes.len(), 2, "Black and Depth");
+                        assert_eq!(planes.len(), extra_count + 1, "Black and Depth");
                         let result =
                             std::process::Command::new(jxl_encoder::test_helpers::djxl_path())
                                 .arg(out.join(format!("{label}.jxl")))
@@ -113,17 +124,28 @@ fn main() {
                             "{label}: {}",
                             String::from_utf8_lossy(&result.stderr)
                         );
-                        let reference = pfm::read_pfm_samples(
-                            &out.join(format!("{label}.pfm-ec2.pfm")),
-                            (w, h),
-                        );
-                        for plane in [&planes[1], &reference] {
-                            assert_eq!(plane.len(), w * h);
-                            for v in plane {
-                                if wide {
-                                    assert_eq!((*v * 65535.0).round() as u16, 0xad5f, "{label}");
-                                } else {
-                                    assert_eq!((*v * 255.0).round() as u8, 173, "{label}");
+                        let digits = (extra_count + 1).to_string().len();
+                        for (index, decoded) in planes.iter().enumerate().skip(1) {
+                            let reference = pfm::read_pfm_samples(
+                                &out.join(format!("{label}.pfm-ec{:0digits$}.pfm", index + 1)),
+                                (w, h),
+                            );
+                            for plane in [decoded, &reference] {
+                                assert_eq!(plane.len(), w * h);
+                                for v in plane {
+                                    if wide {
+                                        assert_eq!(
+                                            (*v * 65535.0).round() as u16,
+                                            0xad5f,
+                                            "{label}: {index}"
+                                        );
+                                    } else {
+                                        assert_eq!(
+                                            (*v * 255.0).round() as u8,
+                                            173,
+                                            "{label}: {index}"
+                                        );
+                                    }
                                 }
                             }
                         }

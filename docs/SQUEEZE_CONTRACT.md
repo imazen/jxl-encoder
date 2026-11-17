@@ -2,7 +2,8 @@
 
 [Issue 144](https://github.com/imazen/jxl-encoder/issues/144) separates explicit
 field admission (E2), later-band geometry (E3) and numerical admission (E5).
-E2/E3 share the repair described below. E5 landed in `6579e397`, with boundary controls
+E2/E3 share repair `78cb89eb`; `07250ad2` keeps its wire-vector test
+lint-clean on Rust 1.100. E5 landed in `6579e397`, with boundary controls
 in `e7127fae`; see [its separate evidence](SQUEEZE_RCT_ADMISSION.md).
 
 ## Explicit fields and derived schedules
@@ -128,6 +129,14 @@ named policies and selected Custom combinations, not every unrelated gate
 combination. Global/local/Hybrid requests are distinguished from distinct
 active squeeze writers in the inventory above.
 
+The patched-host controls require an actual ReferenceOnly dictionary frame,
+then inspect the displayed host's group count. Strict and Experimental modes,
+8-bit 384-square and 16-bit 768-square repeated terminal crops, Huffman/ANS/
+learned coding, and single/multi-group hosts all recover every color/depth
+sample. Multi-group patched bytes equal the explicit squeeze-disabled control.
+The smaller 16-bit fixture did not select a dictionary; that failed fixture
+attempt is retained and supplies no affected-route evidence.
+
 Fault injection detects descriptor range/coding/default errors, invalid group
 admission, incompatible implicit fallback and a wrong last-oversized global
 cutoff. The first cutoff mutation escaped a fixture with one oversized band;
@@ -161,3 +170,13 @@ sample in the refreshed layout, animation and planar matrices, alongside
 pinned djxl. The external 0.8/legacy 0.4 decoders retain the localized panic.
 The initial oxide fallback also exposed a separate GrayF16 disagreement;
 that failed run is retained and no tolerance was added to accept it.
+
+The final unchecked/minimal wrapper passes (`squeeze-final-feature-check-3.log`,
+rc0, 588 seconds; run-heavy peak RSS 1.68 GiB, minimum available 14,038 MiB).
+It explicitly disables encoder package debug assertions and overflow checks,
+requires the build-only refusal marker, then checks all four production
+regressions. Minimal std/expert builds pass the core and LF contracts; the
+no-default-features library check passes. Matching Rust 1.100 strict workspace
+all-target and focused expert Clippy plus field-vector tests also pass. The
+first local matching-compiler attempt failed on incomplete extracted dependency
+sources; the isolated Cargo home leaves the shared cache unchanged.
