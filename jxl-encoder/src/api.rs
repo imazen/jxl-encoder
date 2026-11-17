@@ -4379,6 +4379,9 @@ impl LossyConfig {
     /// = `input_dims * N`). Without this flag, `with_resampling(N)`
     /// would downsample the input *again*.
     ///
+    /// Spatial resampling is supported by the Full444 still/streaming path.
+    /// Animation and optional subsampled coefficient paths reject factors above one.
+    ///
     /// No-op when `effective_resampling() == 1`. Pair with
     /// [`Self::with_resampling`]; pass the **already downsampled**
     /// dimensions to [`crate::api::EncodeRequest`] — the file header
@@ -6212,6 +6215,14 @@ impl<'a> EncodeRequest<'a> {
         {
             return Err(at!(EncodeError::InvalidConfig {
                 message: "chroma subsampling is not implemented for animation; use Full444".into(),
+            }));
+        }
+        if let ConfigRef::Lossy(config) = self.config
+            && config.effective_resampling() > 1
+        {
+            return Err(at!(EncodeError::InvalidConfig {
+                message: "spatial resampling is not implemented for animation; use factor one"
+                    .into(),
             }));
         }
         if !(1..=1 << 30).contains(&animation.tps_numerator)

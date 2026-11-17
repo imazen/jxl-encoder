@@ -2790,3 +2790,10 @@ Remaining layout inventory is tracked separately in the progressive contract.
 | Site | Diagnostic | libjxl v0.12 / format | Status |
 |---|---|---|---|
 | `scripts/jxl_bitstream_diff.py` animation FrameHeader walk | Read timecodes when advertised; reference eligibility requires `!is_last && (duration == 0 || save_as_reference != 0)` | Part 1 F.2 conditions, confirmed by two actual streams fully rendered in primary Rust and pinned djxl | RESOLVED diagnostic alignment; frozen full-stream regressions fail before repair and pass afterward. Encoder bytes and all strategy registry values/metadata remain unchanged. |
+
+
+## Issue 144 animation spatial-resampling admission
+
+| Site | Encoder | libjxl v0.12 / format | Status |
+|---|---|---|---|
+| Shared `EncodeRequest` animation admission | Reject `effective_resampling() > 1`; factor one remains supported, including the already-downsampled no-op | The format permits spatial upsampling, but both current animation writers omit the configuration. Actual before outputs remain 33×17 for factors 2/4/8. | RESOLVED ignored-setting path by explicit unsupported-combination refusal. Default/minimal and preset/Custom controls, complete rendering and guard fault pass. No new strategy gate or registry metadata changes. |

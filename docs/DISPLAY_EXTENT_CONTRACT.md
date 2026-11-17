@@ -49,7 +49,7 @@ It records the stream dimensions rather than inferring them from a request.
 | File-header writer | Legal absolute boundaries without pixel allocation; invalid geometry preserves existing writer bits |
 | Optional subsampled RGB8 | Three modes, explicit and automatic spatial factors, writer preservation and streaming admission refusals |
 | Lossless and JPEG | No already-downsampled input API; their shared header writer receives absolute bounds checks |
-| Animation | Config fields expose resampling, but both animation writers currently omit it. A separate failing/refusal control remains to be executed; no closure is claimed here. |
+| Animation | Both writers omit spatial resampling; the shared entry now rejects effective factors above one. Explicit/automatic factors, named/Custom permissions, factor-one no-op bytes and complete RGB8/RGBA16 rendering are checked. |
 | Raw/prepared VarDCT helpers | They expose codestreams rather than container levels; callers retain level selection responsibility. The shared header writer protects serialized absolute dimensions. |
 | CLI | No already-downsampled flag is offered |
 
@@ -104,3 +104,14 @@ window (9/10) and the internal lossy assignment (2/3) each have one unexecuted e
 the same immutable request already passed geometry admission before either
 site. Their exact counts are retained in the report. These selected regions
 do not establish whole-function, input-space or platform coverage.
+
+The animation follow-up now refuses effective factors above one through both
+legacy/request entries. Its actual before streams retain 33×17 at every
+requested spatial factor. Default and minimal factor-one controls retain full
+Rust/native pixels; preset and explicit Custom permission controls exercise
+both sides of the registered automatic-resampling rule. The new guard observes
+6/6 regions in the exact-source report and its removed-guard fault fails.
+The combined candidate's library/unchanged locks pass; corrected strict lint,
+no-default and formatting checks pass in `animation-state-last.log` (106 s;
+run-heavy peak RSS 1.06 GiB, minimum available 19,825 MiB). Other animation-state
+and cumulative-area findings remain separate.

@@ -1803,9 +1803,9 @@ RGB8 coefficient path now refuses spatial resampling, which it previously
 ignored. Factor-one controls retain full rendering.
 
 [Contract, exact evidence and gaps](docs/DISPLAY_EXTENT_CONTRACT.md). Existing
-library/byte-lock/drift expectations remain unchanged. Animation resampling
-settings still need an executed entry-path control; clock order and cumulative
-zero-duration area remain separate open work. No full-input/platform coverage
+library/byte-lock/drift expectations remain unchanged. Animation now refuses effective spatial factors above one, with explicit,
+automatic and registered Custom permission controls; factor-one inputs retain
+rendering. Clock order and cumulative zero-duration area remain separate work. No full-input/platform coverage
 claim follows from these selected geometry checks.
 
 

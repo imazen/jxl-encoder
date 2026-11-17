@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- Reject unimplemented spatial resampling in animation before frame work,
+  including automatic factors; preserve the factor-one no-op.
+
 - Classify already-downsampled output using its checked display dimensions,
   reject unrepresentable display extents before input work, and reject spatial
   resampling on the optional subsampled coefficient path.
