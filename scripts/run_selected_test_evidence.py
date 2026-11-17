@@ -16,6 +16,7 @@ p.add_argument('output', type=Path)
 p.add_argument('filter')
 p.add_argument('--test-target')
 p.add_argument('--features', default='__expert')
+p.add_argument('--no-default-features', action='store_true')
 p.add_argument('--source', action='append', default=[], type=Path,
                help='additional source file relative to the exported workspace')
 a = p.parse_args()
@@ -36,6 +37,8 @@ if a.test_target:
     os.utime(root / 'jxl-encoder/tests' / (a.test_target + '.rs'), None)
 command = ['cargo', 'test', '--locked', '--manifest-path', str(a.manifest),
            '-p', 'jxl-encoder', '--features', a.features, '--no-run', '--message-format=json']
+if a.no_default_features:
+    command.append('--no-default-features')
 command += ['--test', a.test_target] if a.test_target else ['--lib']
 with (a.output / 'build.jsonl').open('x') as out, (a.output / 'build.log').open('x') as err:
     subprocess.run(command, stdout=out, stderr=err, check=True)

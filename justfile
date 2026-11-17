@@ -1508,6 +1508,9 @@ alpha-squeeze-extra-callers manifest:
     cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder
     cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel --test alpha_squeeze_matrix --no-report -- precomputed_and alpha_shift_brackets alpha_band_writers --nocapture --test-threads=1
 
+alpha-squeeze-progressive-regression manifest:
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test alpha_squeeze_progressive --no-report -- --nocapture --test-threads=1
 
 alpha-squeeze-mutations manifest output coverage_env:
     bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/test_alpha_squeeze_mutation.py "$2" "$3"' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
@@ -1522,7 +1525,7 @@ alpha-squeeze-minimal-controls manifest:
 
 alpha-squeeze-rust1100-lint manifest:
     cargo +1.100.0 clippy --locked --manifest-path {{quote(manifest)}} --workspace --all-targets -- -D warnings
-    cargo +1.100.0 clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel --lib --test alpha_squeeze_contract --test alpha_squeeze_matrix -- -D warnings
+    cargo +1.100.0 clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel --lib --test alpha_squeeze_contract --test alpha_squeeze_matrix --test alpha_squeeze_progressive -- -D warnings
 
 alpha-squeeze-existing-controls manifest:
     cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test it --no-report -- alpha_squeeze --test-threads=1
@@ -1536,3 +1539,37 @@ alpha-squeeze-scope-summary output *pairs:
 alpha-squeeze-unit-evidence manifest output coverage_env:
     bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" empty_group_alpha_section --source jxl-encoder/src/vardct/bitstream.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
 
+progressive-alpha-matrix-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" alpha --test-target alpha_squeeze_matrix --features __expert,__internals,__pre_quantized,parallel --source jxl-encoder/src/vardct/bitstream.rs --source jxl-encoder/src/vardct/encoder.rs --source jxl-encoder/src/vardct/extras.rs --source jxl-encoder/src/vardct/progressive_brackets_v012.tsv' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+progressive-alpha-mutations manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/test_progressive_alpha_mutation.py "$2" "$3"' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+progressive-alpha-scope-summary output *pairs:
+    python3 scripts/alpha_squeeze_coverage_summary.py {{quote(output)}} --scope progressive {{pairs}}
+
+progressive-alpha-additional-evidence manifest matrix_output core_output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" progressive --test-target alpha_squeeze_matrix --features __expert,__internals,__pre_quantized,parallel --source jxl-encoder/src/vardct/bitstream.rs; python3 scripts/run_selected_test_evidence.py "$2" "$4" progressive --test-target alpha_squeeze_progressive --source jxl-encoder/src/vardct/bitstream.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(matrix_output)}} {{quote(core_output)}}
+
+progressive-alpha-minimal-controls manifest:
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert --test alpha_squeeze_contract --test alpha_squeeze_progressive --no-report -- --test-threads=1
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert --test alpha_squeeze_matrix --no-report -- alpha_layouts progressive canonicalized raw_lossless --test-threads=1
+    cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features
+
+progressive-alpha-header-controls controls output:
+    python3 scripts/check_progressive_alpha_headers.py {{quote(controls)}} {{quote(output)}}
+
+progressive-alpha-effort-evidence manifest full_output minimal_output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" progressive_alpha_effort --test-target alpha_squeeze_matrix --features __expert,__internals,__pre_quantized,parallel --source jxl-encoder/src/vardct/bitstream.rs; python3 scripts/run_selected_test_evidence.py "$2" "$4" progressive_alpha_effort --test-target alpha_squeeze_matrix --no-default-features --features std,convenience,__expert --source jxl-encoder/src/vardct/bitstream.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(full_output)}} {{quote(minimal_output)}}
+
+progressive-alpha-merged-extras-controls manifest:
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test it --no-report -- progressive_extras_preserve_alpha --test-threads=1
+
+thin-alpha-partition-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" thin_alpha_global_partition --source jxl-encoder/src/vardct/extras.rs --source jxl-encoder/src/vardct/bitstream.rs --source jxl-encoder/src/vardct/alpha_squeeze_thin_v012.tsv --source jxl-encoder/src/vardct/progressive_brackets_v012.tsv' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+alpha-partition-scope-summary output *pairs:
+    python3 scripts/alpha_squeeze_coverage_summary.py {{quote(output)}} --scope partition {{pairs}}
+
+progressive-alpha-precision-evidence manifest full_output minimal_output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" progressive_alpha_reduced --test-target alpha_squeeze_matrix --features __expert,__internals,__pre_quantized,parallel --source jxl-encoder/src/vardct/bitstream.rs --source jxl-encoder/src/vardct/extras.rs; python3 scripts/run_selected_test_evidence.py "$2" "$4" progressive_alpha_reduced --test-target alpha_squeeze_matrix --no-default-features --features std,convenience,__expert --source jxl-encoder/src/vardct/bitstream.rs --source jxl-encoder/src/vardct/extras.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(full_output)}} {{quote(minimal_output)}}

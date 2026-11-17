@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Replay three alpha-squeeze faults against retained production regressions."""
+"""Replay alpha-squeeze section and partition faults against retained regressions."""
 import argparse
 import hashlib
 import json
@@ -28,6 +28,9 @@ cases = [
     ('non-lz-context-map', 'jxl-encoder/src/modular/encode_primitives.rs',
      'if num_contexts > 1 {', 'if false && num_contexts > 1 {',
      'alpha_squeeze_matrix', 'alpha_layouts'),
+    ('global-prefix', 'jxl-encoder/src/vardct/extras.rs',
+     'if global_prefix {', 'if { let _ = global_prefix; w <= group_dim && h <= group_dim } {',
+     None, 'thin_alpha_global_partition'),
 ]
 for name, source, before, after, target, selection in cases:
     path = root / source
@@ -44,7 +47,9 @@ for name, source, before, after, target, selection in cases:
         path.write_text(mutated)
         command = [sys.executable, str(Path(__file__).with_name('run_selected_test_evidence.py')),
                    str(a.manifest), str(a.output / name), selection,
-                   '--source', source, '--source', 'jxl-encoder/src/vardct/bitstream.rs']
+                   '--source', source, '--source', 'jxl-encoder/src/vardct/bitstream.rs',
+                   '--source', 'jxl-encoder/src/vardct/alpha_squeeze_thin_v012.tsv',
+                   '--source', 'jxl-encoder/src/vardct/progressive_brackets_v012.tsv']
         if target:
             command += ['--test-target', target]
         with (a.output / (name + '.log')).open('x') as log:

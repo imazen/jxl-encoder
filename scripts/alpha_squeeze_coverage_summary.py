@@ -14,6 +14,7 @@ import re
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('output', type=Path)
 p.add_argument('--pair', action='append', nargs=2, required=True)
+p.add_argument('--scope', choices=['alpha', 'progressive', 'partition'], default='alpha')
 a = p.parse_args()
 if a.output.exists():
     p.error('refusing existing result')
@@ -31,6 +32,13 @@ functions = {
         'write_hybrid_data_histogram_with_contexts',
     ],
 }
+if a.scope == 'progressive':
+    functions = {'jxl-encoder/src/vardct/bitstream.rs': [
+        'modular_shift_range', 'encode_ac_group_section', 'encode_dc_group',
+        'write_modular_extras_alpha_squeezed_hf_group',
+    ]}
+elif a.scope == 'partition':
+    functions = {'jxl-encoder/src/vardct/extras.rs': ['partition']}
 rows = []
 for relative, names in functions.items():
     for name in names:

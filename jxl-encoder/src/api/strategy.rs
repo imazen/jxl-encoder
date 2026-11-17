@@ -110,10 +110,12 @@ pub enum ProgressiveMode {
     /// 3-pass progressive (DC/VLF → LF → Full AC).
     ///
     /// - Pass 0: All AC coefficients right-shifted by 2 bits (very coarse, 8x downsample hint)
-    /// - Pass 1: Residual right-shifted by 1 bit (medium, 4x downsample hint)
-    /// - Pass 2: Final residual at full precision
+    /// - Pass 1: Residual at full precision (4x downsample hint)
+    /// - Pass 2: Final pass (the color residual is already zero after pass 1;
+    ///   modular extra channels can still have remaining bands)
     ///
-    /// Provides staged refinement: blurry preview → sharper → final.
+    /// This is a precision-split preset. Libjxl v0.12's CLI three-pass preset
+    /// instead splits coefficient frequencies and uses 4x/2x preview hints.
     DcVlfLfAc,
 }
 

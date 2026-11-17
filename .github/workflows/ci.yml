@@ -382,8 +382,13 @@ jobs:
           --test squeeze_reference --test squeeze_f32_routes --test squeeze_contract
           --test squeeze_count_matrix --test squeeze_layouts --test squeeze_lf_count
           --test squeeze_group_geometry --test alpha_squeeze_contract
-          --test alpha_squeeze_matrix
+          --test alpha_squeeze_matrix --test alpha_squeeze_progressive
           -- --test-threads=1
+      - name: Check progressive alpha wire controls
+        run: >-
+          just progressive-alpha-header-controls
+          "${{ runner.temp }}/issue144-contracts/alpha-squeeze-progressive/run-0"
+          "${{ runner.temp }}/issue144-contracts/progressive-alpha-headers.json"
       - name: Test precomputed squeezed alpha callers
         env:
           JXL_ENCODER_OUTPUT_DIR: ${{ runner.temp }}/issue144-contracts
