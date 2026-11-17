@@ -348,3 +348,14 @@ its corrected runtime and pixel controls both fail before any production change.
 The [ICC specification](https://www.color.org/ICC1-V41.pdf) defines the PCS
 white separately from the source-to-source white adaptation. These physical
 spaces and their numerical bounds must not be conflated during the repair.
+
+The follow-up native boundary control (`color-admission-native-boundaries.log`,
+rc0/1 second, peak 0.18 GiB, minimum available 21,661 MiB) observes the
+unmodified Bundle writer for encoded gamma 1221 and 10,000,000. Both occupy
+35 bits; their exact padded bytes are retained beside the XYZ vectors.
+The public native setter accepts gamma in [1/8192, 1]. The existing
+`with_source_gamma` adapter deliberately retains its established stricter
+(1/255, 1] contract; direct `ColorEncoding.gamma` uses the encoded-field bound.
+The raw-small and wire-singular primary controls have finite bounded raw CMS
+matrices, isolating determinant admission and coordinate quantization from
+an unrelated derived-matrix overflow.

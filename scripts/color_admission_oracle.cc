@@ -9,6 +9,11 @@
 #include "jxl/encode.h"
 #include "jxl/color_encoding.h"
 #include "lib/jxl/cms/jxl_cms_internal.h"
+#include "lib/jxl/color_encoding_internal.h"
+#include "lib/jxl/enc_aux_out.h"
+#include "lib/jxl/enc_bit_writer.h"
+#include "lib/jxl/fields.h"
+#include "lib/jxl/memory_manager_internal.h"
 
 struct Case {
   const char* name;
@@ -17,8 +22,25 @@ struct Case {
   double rx=.64,ry=.33,gx=.30,gy=.60,bx=.15,by=.06;
   double gamma=0;
 };
+jxl::Status GammaFields() {
+  JxlMemoryManager memory;JXL_RETURN_IF_ERROR(jxl::MemoryManagerInit(&memory,nullptr));
+  for(uint32_t gamma:{1221u,10000000u}) {
+    jxl::ColorEncoding color;JXL_RETURN_IF_ERROR(color.SetSRGB(jxl::ColorSpace::kRGB));
+    color.SetRenderingIntent(jxl::RenderingIntent::kRelative);
+    color.Tf().have_gamma=true;color.Tf().gamma=gamma;
+    jxl::BitWriter writer(&memory);
+    JXL_RETURN_IF_ERROR(jxl::Bundle::Write(color,&writer,jxl::LayerType::Header,nullptr));
+    const auto bits=writer.BitsWritten();
+    JXL_RETURN_IF_ERROR(writer.WithMaxBits(8,jxl::LayerType::Header,nullptr,[&]()->jxl::Status {writer.ZeroPadToByte();return true;}));
+    std::cout<<"gamma-field\t"<<gamma<<'\t'<<bits<<'\t';
+    for(uint8_t byte:writer.GetSpan())std::cout<<std::hex<<std::setw(2)<<std::setfill('0')<<unsigned(byte);
+    std::cout<<std::dec<<'\n';
+  }
+  return true;
+}
 int main() {
   if (JxlEncoderVersion()!=12000) return 2;
+  if(!GammaFields())return 5;
   const Case cases[] = {
     {"srgb"},
     {"white-y-zero",false,.3,0},
@@ -29,8 +51,8 @@ int main() {
     {"white-chad-range",false,.3,.666961},
     {"gray-fixed-range",true,.3,.000001},
     {"primaries-singular",false,.3127,.3290,.3,.3,.3,.3,.3,.3},
-    {"primaries-raw-small",false,.3127,.3290,.1,.1,.100001,.1,.1,.100001},
-    {"primaries-wire-singular",false,.3127,.3290,.1,.1,.1000004,.1000004,.9,.1},
+    {"primaries-raw-small",false,.3127,.3290,.312699,.328999,.312701,.328999,.3127,.329001},
+    {"primaries-wire-singular",false,.3127,.3290,.3126997,.3289998,.3127001,.3290002,.9,.1},
     {"primaries-fixed-range",false,.3127,.3290,.1,.1,.100001,.1,.1,.1002},
     {"xyz-basis-d65",false,.3127,.3290,1,0,0,1,0,0},
     {"xyz-basis-d50",false,.3457,.3585,1,0,0,1,0,0},
