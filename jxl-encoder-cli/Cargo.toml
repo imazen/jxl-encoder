@@ -28,7 +28,7 @@ debug-ac-strategy = ["jxl_encoder/debug-ac-strategy"]
 debug-rect = ["jxl_encoder/debug-rect"]
 debug-dc = ["jxl_encoder/debug-dc"]
 # Enable iterative rate control for improved distance targeting
-rate-control = ["jxl_encoder/rate-control"]
+rate-control = ["jxl_encoder/rate-control", "jxl_encoder/__pre_quantized"]
 # Enable butteraugli quantization loop for per-block quality refinement
 butteraugli-loop = ["jxl_encoder/butteraugli-loop"]
 # Enable SSIM2 quantization loop (alternative to butteraugli)

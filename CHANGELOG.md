@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- Build the optional rate-control CLI through the existing prepared-encoder
+  export and verify its progressive output in both decoders.
+
 - Encode ReferenceOnly animation frames with their implicit single pass and
   restore the requested progressive schedule for each displayed frame.
 

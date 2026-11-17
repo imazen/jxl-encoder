@@ -1630,7 +1630,7 @@ fn main() {
         #[cfg(feature = "rate-control")]
         if args.rate_control {
             // Rate control needs the internal VarDctEncoder for multi-pass
-            use jxl_encoder::vardct::VarDctEncoder;
+            use jxl_encoder::__pre_quantized::VarDctEncoder;
             let mut tiny = VarDctEncoder::new(distance);
             tiny.effort = args.effort;
             // Rate control doesn't go through LossyConfig, so apply effort defaults manually

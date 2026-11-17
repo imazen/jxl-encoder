@@ -1766,14 +1766,20 @@ misclassify that CLI limitation as an invalid stream or strip the ICC to hide it
 
 ## Known Bugs (ACTIVE)
 
-### 2026-11-17: optional rate-control CLI private encoder import
+### RESOLVED 2026-11-17: optional rate-control CLI private encoder import
 
 `cargo check -p jxl-encoder-cli --features rate-control` fails E0603 at the
 private `vardct::VarDctEncoder` import, before runtime. The before log is
 `rate-control-cli-before.log` (rc101, 4 seconds; peak RSS 0.64 GiB, minimum
 available 21,213 MiB). The candidate consumes the existing prepared-encoder
 export and enables that existing feature in the CLI feature closure. No new
-public API or runtime policy is added; feature/runtime validation is pending.
+public API or runtime policy is added. The direct engine and CLI progressive
+controls pass, including observed whole-image/per-region preparation and a
+ten-DC-group input. `progressive-ac-rate-callers.log`: rc0, 54 seconds, peak RSS
+1.08 GiB, minimum available 20,312 MiB. Strict feature/all-target CLI lint and
+workspace lint also pass in `progressive-reference-final-baseline.log`.
+The CLI's historical direct-engine policy is preserved; this does not add
+named-strategy dispatch to that optional branch.
 
 
 ### RESOLVED 2026-11-17: progressive ReferenceOnly animation payloads

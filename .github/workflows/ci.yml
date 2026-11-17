@@ -404,6 +404,12 @@ jobs:
           cargo test --locked -p jxl-encoder --release
           --features "__expert,__internals,__pre_quantized,parallel"
           --test progressive_ac_contract progressive_prepared -- --test-threads=1
+      - name: Test progressive AC rate-control callers
+        env:
+          JXL_ENCODER_OUTPUT_DIR: ${{ runner.temp }}/issue144-contracts
+        run: |
+          cargo test --locked -p jxl-encoder --release --features "__expert,__pre_quantized,parallel,rate-control" --test progressive_ac_contract progressive_rate_control -- --test-threads=1
+          cargo test --locked -p jxl-encoder-cli --release --features rate-control --test progressive_ac cli_progressive_rate_control -- --test-threads=1
       - name: Retain failed issue 144 streams and diagnostics
         if: failure()
         uses: actions/upload-artifact@v7
@@ -442,6 +448,9 @@ jobs:
 
       - name: Clippy (default features)
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
+
+      - name: Check optional rate-control CLI
+        run: cargo check --locked -p jxl-encoder-cli --features rate-control --all-targets
 
       - name: Clippy (zensim-loop)
         run: cargo clippy --locked --workspace --all-targets --features zensim-loop -- -D warnings

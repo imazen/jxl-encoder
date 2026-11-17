@@ -122,3 +122,65 @@ fn cli_progressive_spellings_preserve_final_pixels() {
         }
     }
 }
+
+#[cfg(feature = "rate-control")]
+#[test]
+fn cli_progressive_rate_control_preserves_final_pixels() {
+    let root = fresh_directory();
+    let fixture =
+        image::load_from_memory(include_bytes!("../../jxl-encoder/tests/images/frymire.png"))
+            .unwrap()
+            .to_rgb8();
+    for (width, height) in [(64, 64), (259, 133)] {
+        let input = root.join(format!("input-{width}x{height}.png"));
+        image::imageops::crop_imm(&fixture, 0, 0, width, height)
+            .to_image()
+            .save(&input)
+            .unwrap();
+        let case = root.join(format!("{width}x{height}-rate-control"));
+        std::fs::create_dir(&case).unwrap();
+        let mut baseline = None;
+        for progressive in ["single", "qprogressive", "progressive"] {
+            let output = case.join(format!("{progressive}.jxl"));
+            let mut command = Command::new(env!("CARGO_BIN_EXE_cjxl-rs"));
+            command.arg(&input).arg(&output).args([
+                "--quiet",
+                "--effort",
+                "4",
+                "--distance",
+                "1",
+                "--force-strategy",
+                "3",
+                "--rate-control",
+                "--rc-iterations",
+                "1",
+            ]);
+            if progressive != "single" {
+                command.arg(format!("--{progressive}"));
+            }
+            command.env(
+                "LLVM_PROFILE_FILE",
+                case.join(format!("{progressive}-%p.profraw")),
+            );
+            std::fs::write(
+                output.with_extension("command.txt"),
+                format!("{command:?}\n"),
+            )
+            .unwrap();
+            let result = command.output().unwrap();
+            std::fs::write(output.with_extension("encode.log"), &result.stderr).unwrap();
+            assert!(
+                result.status.success(),
+                "{}: {}",
+                output.display(),
+                String::from_utf8_lossy(&result.stderr)
+            );
+            let actual = render(&output, width as usize, height as usize);
+            if let Some(expected) = &baseline {
+                assert_eq!(&actual, expected, "{}", output.display());
+            } else {
+                baseline = Some(actual);
+            }
+        }
+    }
+}
