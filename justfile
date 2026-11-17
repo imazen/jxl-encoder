@@ -2273,3 +2273,87 @@ resampled-display-final-continuation manifest artifacts coverage_env lint_home l
     bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3/canonicalized-minimal" already_downsampled_canonicalized --test-target animation_level_contract --no-default-features --features std,convenience,__expert --source jxl-encoder/src/api.rs --source jxl-encoder/src/headers/file_header.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
     bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3/lossless" display_extent_unscaled_lossless --test-target animation_level_contract --features __expert,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/headers/file_header.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
     just resampled-display-lint-continuation {{quote(manifest)}} {{quote(lint_home)}} {{quote(lint_target)}}
+
+animation-clock-before-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" animation_nonzero_timecodes --test-target animation_clock_contract --features __expert,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/headers/frame_header.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+animation-clock-after-evidence manifest artifacts coverage_env:
+    mkdir {{quote(artifacts)}}
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3/history" clock_order_tests --features __expert,parallel --source jxl-encoder/src/api/animate.rs; python3 scripts/run_selected_test_evidence.py "$2" "$3/public" "" --test-target animation_clock_contract --features __expert,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/api/animation.rs --source jxl-encoder/src/headers/frame_header.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+
+animation-clock-public-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" "" --test-target animation_clock_contract --features __expert,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/api/animation.rs --source jxl-encoder/src/headers/frame_header.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+animation-resampling-before-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" animation_spatial_resampling --test-target animation_resampling_contract --features __expert,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/animate.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+animation-native-inspect djxl input output frames:
+    python3 scripts/inspect_native_animation.py {{quote(djxl)}} {{quote(input)}} {{quote(output)}} --expected-frames {{frames}}
+
+animation-crop-reference-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" "" --test-target animation_crop_reference_contract --features __expert,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/modular/frame.rs --source jxl-encoder/src/vardct/bitstream.rs --source scripts/check_explicit_blend_headers.py --source scripts/jxl_bitstream_diff.py --source scripts/jxl_container.py' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+animation-resampling-after-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" "" --test-target animation_resampling_contract --features __expert,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/animate.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+animation-clock-crop-after manifest artifacts coverage_env:
+    mkdir {{quote(artifacts)}}
+    just animation-resampling-after-evidence {{quote(manifest)}} {{quote(artifacts + "/resampling")}} {{quote(coverage_env)}}
+    just animation-clock-public-evidence {{quote(manifest)}} {{quote(artifacts + "/clocks")}} {{quote(coverage_env)}}
+    just animation-crop-reference-evidence {{quote(manifest)}} {{quote(artifacts + "/references")}} {{quote(coverage_env)}}
+
+animation-state-faults manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/test_alpha_squeeze_mutation.py "$2" "$3" --case anim-resampling --case anim-clock-equality --case anim-clock-reference --case anim-clock-zero-reset --case anim-clock-hidden --case anim-clock-lossless-entry --case anim-clock-lossy-entry --case anim-crop-lossless-entry --case anim-crop-lossy-entry --case anim-crop-overwrite --case anim-crop-slot --case anim-crop-composed --case anim-crop-lossless-source --case anim-crop-lossy-source' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+animation-state-regions llvm output *archives:
+    python3 scripts/color_admission_coverage.py {{quote(llvm)}} {{quote(output)}} {{archives}} --animation-state
+
+animation-state-minimal manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3/references" "" --test-target animation_crop_reference_contract --no-default-features --features std,convenience,__expert --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/animate.rs --source scripts/check_explicit_blend_headers.py --source scripts/jxl_bitstream_diff.py --source scripts/jxl_container.py; python3 scripts/run_selected_test_evidence.py "$2" "$3/clocks" "" --test-target animation_clock_contract --no-default-features --features std,convenience,__expert --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/animate.rs; python3 scripts/run_selected_test_evidence.py "$2" "$3/resampling" "" --test-target animation_resampling_contract --no-default-features --features std,convenience,__expert --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/animate.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+animation-state-selected-and-faults manifest artifacts coverage_env:
+    mkdir {{quote(artifacts)}}
+    just animation-unsaved-reference-evidence {{quote(manifest)}} {{quote(artifacts + "/unsaved")}} {{quote(coverage_env)}}
+    mkdir {{quote(artifacts + "/minimal")}}
+    just animation-state-minimal {{quote(manifest)}} {{quote(artifacts + "/minimal")}} {{quote(coverage_env)}}
+    just animation-state-faults {{quote(manifest)}} {{quote(artifacts + "/faults")}} {{quote(coverage_env)}}
+
+animation-state-source-windows manifest artifacts coverage_env:
+    mkdir {{quote(artifacts)}}
+    just animation-clock-public-evidence {{quote(manifest)}} {{quote(artifacts + "/clocks")}} {{quote(coverage_env)}}
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3/references" "" --test-target animation_crop_reference_contract --features __expert,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/animate.rs --source scripts/check_explicit_blend_headers.py --source scripts/jxl_bitstream_diff.py --source scripts/jxl_container.py' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+
+animation-state-broad-validation manifest lint_home lint_target:
+    just alpha-squeeze-broad-baseline {{quote(manifest)}}
+    env CARGO_HOME={{quote(lint_home)}} CARGO_TARGET_DIR={{quote(lint_target)}} cargo +1.100.0 clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --lib --test animation_clock_contract --test animation_resampling_contract --test animation_crop_reference_contract -- -D warnings
+    env CARGO_HOME={{quote(lint_home)}} CARGO_TARGET_DIR={{quote(lint_target)}} cargo +1.100.0 clippy --locked --manifest-path {{quote(manifest)}} --workspace --all-targets -- -D warnings
+    cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder -p jxl-encoder-cli -p jxl-encoder-simd --check
+
+animation-state-final-validation manifest artifacts coverage_env llvm lint_home lint_target *prior_archives:
+    just animation-state-source-windows {{quote(manifest)}} {{quote(artifacts)}} {{quote(coverage_env)}}
+    just animation-state-regions {{quote(llvm)}} {{quote(artifacts + "/regions")}} {{prior_archives}} {{quote(artifacts + "/clocks")}} {{quote(artifacts + "/references")}}
+    just animation-state-broad-validation {{quote(manifest)}} {{quote(lint_home)}} {{quote(lint_target)}}
+
+animation-state-lint-continuation manifest lint_home lint_target:
+    env CARGO_HOME={{quote(lint_home)}} CARGO_TARGET_DIR={{quote(lint_target)}} cargo +1.100.0 clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --lib --test animation_clock_contract --test animation_resampling_contract --test animation_crop_reference_contract -- -D warnings
+    env CARGO_HOME={{quote(lint_home)}} CARGO_TARGET_DIR={{quote(lint_target)}} cargo +1.100.0 clippy --locked --manifest-path {{quote(manifest)}} --workspace --all-targets -- -D warnings
+    cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder -p jxl-encoder-cli -p jxl-encoder-simd --check
+
+animation-state-last-control manifest artifacts coverage_env lint_home lint_target:
+    mkdir {{quote(artifacts)}}
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3/preset-permissions" animation_resampling_default_policies --test-target animation_resampling_contract --features __expert,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/animate.rs; python3 scripts/run_selected_test_evidence.py "$2" "$3/reference-initial" nondefault_slot_lossless --test-target animation_crop_reference_contract --features __expert,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/animate.rs --source scripts/check_explicit_blend_headers.py --source scripts/jxl_bitstream_diff.py --source scripts/jxl_container.py; python3 scripts/run_selected_test_evidence.py "$2" "$3/clocks" "" --test-target animation_clock_contract --features __expert,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/animate.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    just animation-state-lint-continuation {{quote(manifest)}} {{quote(lint_home)}} {{quote(lint_target)}}
+
+animation-helper-wrapper-check manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" display_extent_unscaled_lossless --test-target animation_level_contract --features __expert,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/headers/file_header.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+animation-crop-existing-contracts manifest artifacts coverage_env corpus oracle:
+    mkdir {{quote(artifacts)}}
+    LIBJXL_ORIGINAL_PROFILE_ORACLE={{quote(oracle)}} CODEC_CORPUS_DIR={{quote(corpus)}} bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3/frame-header" "" --test-target frame_header_contract --features __expert,parallel,corpus-tests --source jxl-encoder/src/api/animate.rs --source scripts/check_explicit_blend_headers.py --source scripts/jxl_bitstream_diff.py --source scripts/jxl_container.py' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+
+animation-crop-patch-continuation manifest output coverage_env corpus oracle lint_home lint_target:
+    LIBJXL_ORIGINAL_PROFILE_ORACLE={{quote(oracle)}} CODEC_CORPUS_DIR={{quote(corpus)}} bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" color_source_three_policies_and_partial_crops --test-target frame_header_contract --features __expert,parallel,corpus-tests --source jxl-encoder/src/api/animate.rs --source jxl-encoder/tests/frame_header_contract/patch_slots.rs --source scripts/check_explicit_blend_headers.py --source scripts/jxl_bitstream_diff.py --source scripts/jxl_container.py' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+    env CARGO_HOME={{quote(lint_home)}} CARGO_TARGET_DIR={{quote(lint_target)}} cargo +1.100.0 clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,corpus-tests --lib --test frame_header_contract -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check

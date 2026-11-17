@@ -18,6 +18,38 @@ if (root / '.git').exists() or not (root.parent.parent / 'provenance.json').is_f
     p.error('requires an owned clean-source export')
 a.output.mkdir(exist_ok=False)
 cases = [
+    ('anim-resampling', 'jxl-encoder/src/api.rs', '__ANIM_RESAMPLING__', '',
+     'animation_resampling_contract', 'animation_spatial_resampling'),
+    ('anim-clock-equality', 'jxl-encoder/src/api/animate.rs',
+     'timecode <= last_displayed_timecode', 'timecode < last_displayed_timecode', None, 'clock_order_tests'),
+    ('anim-clock-reference', 'jxl-encoder/src/api/animate.rs',
+     '        if !frame.reference_only {', '        if true {', None, 'clock_order_tests'),
+    ('anim-clock-zero-reset', 'jxl-encoder/src/api/animate.rs',
+     'last_displayed_timecode = last_displayed_timecode.max(timecode);',
+     'last_displayed_timecode = timecode;', None, 'clock_order_tests'),
+    ('anim-clock-hidden', 'jxl-encoder/src/api/animate.rs',
+     '            if frame.duration != 0 {', '            if true {', None, 'clock_order_tests'),
+    ('anim-clock-lossless-entry', 'jxl-encoder/src/api/animate.rs', '__ANIM_CLOCK_LOSSLESS__', '',
+     'animation_clock_contract', 'animation_nonzero_timecodes'),
+    ('anim-clock-lossy-entry', 'jxl-encoder/src/api/animate.rs', '__ANIM_CLOCK_LOSSY__', '',
+     'animation_clock_contract', 'animation_nonzero_timecodes'),
+    ('anim-crop-lossless-entry', 'jxl-encoder/src/api/animate.rs', '__ANIM_ADVANCE_LOSSLESS__', '',
+     'animation_crop_reference_contract', 'nondefault_slot_lossless'),
+    ('anim-crop-lossy-entry', 'jxl-encoder/src/api/animate.rs', '__ANIM_ADVANCE_LOSSY__', '',
+     'animation_crop_reference_contract', 'nondefault_slot_lossy'),
+    ('anim-crop-overwrite', 'jxl-encoder/src/api/animate.rs',
+     'if slot == 1 { None } else { previous }', 'previous',
+     'animation_crop_reference_contract', 'overwritten_reference_'),
+    ('anim-crop-slot', 'jxl-encoder/src/api/animate.rs',
+     'else if slot == 1 && matches!', 'else if matches!',
+     'animation_crop_reference_contract', 'nondefault_slot_'),
+    ('anim-crop-composed', 'jxl-encoder/src/api/animate.rs',
+     'matches!(frame.blend_mode, None | Some(BlendMode::Replace))', 'true',
+     'animation_crop_reference_contract', 'composed_canvas_'),
+    ('anim-crop-lossless-source', 'jxl-encoder/src/api/animate.rs', '__ANIM_SOURCE_LOSSLESS__', '',
+     'animation_crop_reference_contract', 'different_source_lossless'),
+    ('anim-crop-lossy-source', 'jxl-encoder/src/api/animate.rs', '__ANIM_SOURCE_LOSSY__', '',
+     'animation_crop_reference_contract', 'different_source_lossy'),
     ('display-optional', 'jxl-encoder/src/api.rs',
      '            && config.effective_resampling() > 1', '            && false',
      'animation_level_contract', 'optional_subsampling_refuses'),
@@ -201,6 +233,29 @@ else:
 for name, source, before, after, target, selection in cases:
     path = root / source
     original = path.read_text()
+    if before == '__ANIM_RESAMPLING__':
+        start = original.index('    fn encode_animation_with_request_stop(')
+        end = original.index('&& config.effective_resampling() > 1', start) + len('&& config.effective_resampling() > 1')
+        before = original[start:end]
+        after = before.replace('&& config.effective_resampling() > 1', '&& false')
+    if before.startswith(('__ANIM_CLOCK_', '__ANIM_ADVANCE_', '__ANIM_SOURCE_')):
+        function = 'encode_animation_lossless' if 'LOSSLESS' in before else 'encode_animation_lossy'
+        start = original.index('pub(crate) fn ' + function + '(')
+        if before.startswith('__ANIM_CLOCK_'):
+            mutation = '    validate_animation_input(width, height, layout, frames)?;'
+            end = original.index(mutation, start) + len(mutation)
+            before = original[start:end]
+            after = before.replace(mutation, '')
+        elif before.startswith('__ANIM_ADVANCE_'):
+            mutation = '        prev_pixels = advance_crop_reference(prev_pixels, frame);'
+            end = original.index(mutation, start) + len(mutation)
+            before = original[start:end]
+            after = before.replace(mutation, '        if !frame.reference_only { prev_pixels = Some(frame.pixels); }')
+        else:
+            mutation = '            || frame.blend_source.is_some_and(|source| source != 1)'
+            end = original.index(mutation, start) + len(mutation)
+            before = original[start:end]
+            after = before.replace(mutation, '')
     if before.startswith('__EXTRA_'):
         function = {'__EXTRA_DIRECT__': 'encode_with_extras_stop_impl',
                     '__EXTRA_PREPARED__': 'encode_from_precomputed_with_extras',
@@ -310,6 +365,11 @@ for name, source, before, after, target, selection in cases:
                    '--source', 'jxl-encoder/src/vardct/progressive_ac_v012.tsv',
                    '--source', 'jxl-encoder/src/vardct/alpha_squeeze_thin_v012.tsv',
                    '--source', 'jxl-encoder/src/vardct/progressive_brackets_v012.tsv']
+        if name.startswith('anim-'):
+            command += ['--source', 'jxl-encoder/src/api/animate.rs',
+                        '--source', 'jxl-encoder/src/api/animation.rs',
+                        '--source', 'scripts/check_explicit_blend_headers.py',
+                        '--source', 'scripts/jxl_bitstream_diff.py', '--source', 'scripts/jxl_container.py']
         if name == 'display-optional':
             command += ['--features', '__expert,parallel,chroma-subsampling,jpeg-reencoding']
         if name.startswith('color-width-'):

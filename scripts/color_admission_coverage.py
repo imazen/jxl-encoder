@@ -18,6 +18,7 @@ p.add_argument('output', type=Path)
 p.add_argument('archives', nargs='+', type=Path)
 p.add_argument('--extra-metadata', action='store_true')
 p.add_argument('--display-extents', action='store_true')
+p.add_argument('--animation-state', action='store_true')
 a = p.parse_args()
 a.output.mkdir(exist_ok=False)
 reports = []
@@ -65,8 +66,9 @@ def observe(relative, name, occurrence=0, window=False):
         bodies.append(body)
         low, high = start, end
         if window:
-            marker, length = window
+            marker, length, *offset = window
             low = next(i for i in range(start, end) if marker in lines[i])
+            low += offset[0] if offset else 0
             high = low + length - 1
         spans.append((low + 1, high + 1))
         declarations.append((start + 1, end + 1))
@@ -87,6 +89,23 @@ def observe(relative, name, occurrence=0, window=False):
                      inputs=inputs, excluded_different_body=excluded, covered=sum(v > 0 for v in counts.values()), total=len(counts),
                      missing_relative_regions=[k for k, v in sorted(counts.items()) if not v]))
     print(json.dumps(rows[-1]))
+
+if a.animation_state:
+    observe('jxl-encoder/src/api/animate.rs', 'advance_crop_reference')
+    observe('jxl-encoder/src/api/animate.rs', 'validate_animation_input',
+            window=('if !frame.reference_only {', 14))
+    for name in ['encode_animation_lossless', 'encode_animation_lossy']:
+        observe('jxl-encoder/src/api/animate.rs', name,
+                window=('let crop = if frame.reference_only', 4))
+        observe('jxl-encoder/src/api/animate.rs', name,
+                window=('prev_pixels = advance_crop_reference(prev_pixels, frame);', 1))
+        observe('jxl-encoder/src/api/animate.rs', name,
+                window=('validate_animation_input(width, height, layout, frames)?;', 1))
+    observe('jxl-encoder/src/api.rs', 'encode_animation_with_request_stop',
+            window=('&& config.effective_resampling() > 1', 8, -1))
+    (a.output / 'regions.json').write_text(json.dumps(dict(inputs=identities, functions=rows,
+        source_comparison='Exact function bodies; code-region keys relative to each declaration'), indent=2))
+    raise SystemExit(0)
 
 if a.display_extents:
     observe('jxl-encoder/src/api.rs', 'display_dimensions')
