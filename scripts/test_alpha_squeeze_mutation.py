@@ -18,6 +18,12 @@ if (root / '.git').exists() or not (root.parent.parent / 'provenance.json').is_f
     p.error('requires an owned clean-source export')
 a.output.mkdir(exist_ok=False)
 cases = [
+    ('reference-requested-passes', 'jxl-encoder/src/api/animate.rs',
+     '__REFERENCE_PASS_SCHEDULE__', '        enc.progressive = cfg.progressive;',
+     'progressive_ac_contract', 'progressive_reference_only'),
+    ('reference-forget-regular', 'jxl-encoder/src/api/animate.rs',
+     '__REFERENCE_PASS_SCHEDULE__', '        enc.progressive = crate::api::ProgressiveMode::Single;',
+     'progressive_ac_contract', 'progressive_reference_only'),
     ('static-progressive', 'jxl-encoder/src/vardct/encoder.rs',
      '            && self.progressive == crate::api::ProgressiveMode::Single\n', '',
      'progressive_dispatch', 'requested_progressive'),
@@ -50,10 +56,14 @@ if a.case:
     cases = [case for case in cases if case[0] in a.case]
 else:
     # Preserve the established alpha-only default selection.
-    cases = [case for case in cases if case[0] not in ('ac-flat-prefix', 'static-progressive')]
+    cases = [case for case in cases if case[0] not in ('ac-flat-prefix', 'static-progressive', 'reference-requested-passes', 'reference-forget-regular')]
 for name, source, before, after, target, selection in cases:
     path = root / source
     original = path.read_text()
+    if before == '__REFERENCE_PASS_SCHEDULE__':
+        start = original.index('        enc.progressive = if frame.reference_only {')
+        end = original.index('        };', start) + len('        };')
+        before = original[start:end]
     if before == '__RESTORE_FLAT_AC_COUNT__':
         start = original.index('                        let pass_nz = super::ac_group::count_nonzero_except_llf(')
         end = original.index('                        );', start) + len('                        );')
