@@ -40,6 +40,7 @@ struct Cell<'a> {
     height: usize,
     style: &'a str,
     entry: &'a str,
+    magnitude: u32,
 }
 fn check(root: &Path, cell: Cell<'_>) -> String {
     let Cell {
@@ -51,8 +52,12 @@ fn check(root: &Path, cell: Cell<'_>) -> String {
         height,
         style,
         entry,
+        magnitude,
     } = cell;
-    let label = format!("{name}-{layout:?}-{width}x{height}-{style}-{entry}");
+    let mut label = format!("{name}-{layout:?}-{width}x{height}-{style}-{entry}");
+    if magnitude != 1 << 27 {
+        label.push_str(&format!("-m{magnitude}"));
+    }
     let out = root.join(&label);
     std::fs::create_dir(&out).unwrap();
     let mut colors = Vec::new();
@@ -62,9 +67,9 @@ fn check(root: &Path, cell: Cell<'_>) -> String {
         for x in 0..width {
             let low = if width >= height { x < 2 } else { y < 2 };
             let (a, b) = if low {
-                (0x0800_0000_u32, 0xf800_0000_u32)
+                (magnitude, (-i32::try_from(magnitude).unwrap()) as u32)
             } else {
-                (0xf800_0000, 0x0800_0000)
+                ((-i32::try_from(magnitude).unwrap()) as u32, magnitude)
             };
             let pixel = if layout.is_grayscale() {
                 vec![a]
@@ -204,6 +209,7 @@ fn every_binary32_layout_and_public_entry_preserves_all_sample_bits() {
                                     height,
                                     style,
                                     entry,
+                                    magnitude: 1 << 27,
                                 },
                             )
                         }));
@@ -328,6 +334,40 @@ fn planar_integer_rct_budget_boundaries_preserve_representable_codes() {
                                 &planes[count],
                             );
                         }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn source_squeeze_range_boundaries_preserve_binary32_sample_bits() {
+    let out = directory();
+    for (name, strategy, mode) in encoder_policies::policies() {
+        for layout in [
+            PixelLayout::RgbLinearF32,
+            PixelLayout::RgbaLinearF32,
+            PixelLayout::GrayLinearF32,
+            PixelLayout::GrayAlphaLinearF32,
+        ] {
+            for (width, height) in [(16, 1), (259, 17)] {
+                for style in ["huffman", "ans", "learned"] {
+                    for magnitude in [(1 << 27) - 1, 1 << 27, (1 << 27) + 1] {
+                        check(
+                            &out,
+                            Cell {
+                                name: &name,
+                                strategy: strategy.clone(),
+                                mode,
+                                layout,
+                                width,
+                                height,
+                                style,
+                                entry: "request",
+                                magnitude,
+                            },
+                        );
                     }
                 }
             }

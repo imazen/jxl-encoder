@@ -77,3 +77,12 @@ unavailable). It runs the standalone header, ICC, cancellation, shifted-channel,
 native squeeze and binary32 targets. Existing integer tests retain their
 expected bytes. The new CI step selects these previously omitted targets and
 retains failed streams. Actual remote CI results remain a separate verdict.
+
+The source-range follow-up runs both signs at magnitudes `2^27 - 1`, `2^27`
+and `2^27 + 1` for every binary32 layout, all offered policies, single/multi-
+group shapes and all three entropy/tree styles. The first two magnitudes
+admit squeeze; the last retains the existing unsqueezed fallback. Every color
+and alpha bit is exact in both decoders. The expanded route, integer-budget
+and source-range replay passes together against the landed production source:
+`squeeze-rct-boundary-controls` (243 seconds, run-heavy peak RSS 0.90 GiB,
+minimum available 21,383 MiB). No source-range threshold is changed.

@@ -1269,3 +1269,6 @@ squeeze-rct-planar-controls manifest revision output:
 
 issue144-production-contracts manifest profile="test":
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --profile {{quote(profile)}} --features __expert,__internals,jpeg-reencoding,parallel,parallel-tree-learning --test frame_header_contract --test color_profile_contract --test icc_tag_contract --test request_cancellation --test shifted_extra_edges --test squeeze_reference --test squeeze_f32_routes -- --test-threads=1
+
+squeeze-rct-boundary-controls manifest revision output:
+    python3 scripts/validate_squeeze_rct_isolated.py {{quote(manifest)}} {{quote(revision)}} {{quote(output)}} --end-before 1
