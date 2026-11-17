@@ -28,3 +28,10 @@ and every coefficient, and requires all extra placeholders to remain zero.
 The retained controls agree at 19/20/21 channels on the listed small,
 degenerate-axis, and 257-square shapes. This establishes color-transform
 separability on those controls, not complete encoder byte parity.
+
+The `squeeze_gray_geometry` component observes the actual full default and
+forward-transform band order for one/two-channel 2x16449 images and their
+transposes. `squeeze_gray_global_v012.tsv` retains those dimensions/shifts
+and the ordered global-prefix boundary. High shifts in globally coded bands
+are legal; the remaining bands all retain positive group tiles. This control
+separates that case from E3's invalid remaining-band geometry.
