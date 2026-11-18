@@ -2848,6 +2848,12 @@ Remaining layout inventory is tracked separately in the progressive contract.
 | Reduced CMYK source precision | Normalize CMY/K by (1 << declared_bits) - 1 for both u8/u16 buffers; synthesized Black inherits that precision. | Part 1 independent integer BitDepth normalization; equal rational ink fractions represent equal source color. | H10 candidate; one-bit before error 0.9999111, followed by a distinct synthesized-u8 Black failure. Both decoder controls pass after correction. |
 | CMYK opaque-selector fields | Resolve CMYK input color/loop/tone from the required profile; omitted simple-selector fields do not select PQ/HLG source dispatch. RGB source selection retains its existing path. | Part 1 E.2 omits those simple fields under want_icc; CMYK profile interpretation is required. | H10 candidate; default-loop before trace changes three records to zero. Expanded exact-byte/trace and full-decoder controls pass; no strategy gate changes. |
 
+### Issue 144 C3: distinct JPEG DHT records
+
+| Site | Current behavior | Reference contract | Status |
+|---|---|---|---|
+| `jpeg::parse::parse_dht_marker`, `jpeg::jbrd::encode_jbrd` | A private discriminator distinguishes an actual empty DHT segment from a real zero-symbol Huffman table. Only the empty segment omits the sentinel; reject inconsistent cloned empty descriptors. | Part 2 A.2; pinned v0.12 preserves both distinct original-byte forms. | The original model collapses the four-byte and 21-byte inputs. Selected raw/parsed/cancellable/bare/default/CLI/gain-map controls reproduce exact originals after repair. No gate, constant or registry metadata changes; RGB-sampling and rare scan signals remain separate. See JPEG_RECONSTRUCTION_CONTRACT.md. |
+
 ### Issue 144 C2: JPEG APP1 classification and external references
 
 | Site | Current behavior | Reference contract | Status |

@@ -37,6 +37,9 @@ pub struct JpegQuantTable {
 /// JPEG Huffman code table.
 #[derive(Debug, Clone)]
 pub struct JpegHuffmanCode {
+    // Raw empty DHT segments and zero-symbol table definitions both have
+    // sixteen zero JPEG counts. Keep their distinct reconstruction grammar.
+    pub(crate) empty_segment: bool,
     /// Whether this is an AC table (true) or DC table (false).
     pub is_ac: bool,
     /// Table ID (0-3).

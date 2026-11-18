@@ -2797,6 +2797,50 @@ c6-grayscale-callers-check manifest llvm archive output:
     python3 scripts/color_admission_coverage.py {{quote(llvm)}} {{quote(output)}} {{quote(archive)}} --jpeg-sampling --reference-root {{quote(manifest)}}/..
 
 
+jpeg-dht-callers-check manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,jpeg-reencoding --test jpeg_sampling_contract dht:: -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder-cli --features jpeg-reencoding --test jpeg_sampling dht:: -- --test-threads=1
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,jpeg-reencoding --test jpeg_sampling_contract -- -D warnings
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder-cli --features jpeg-reencoding --test jpeg_sampling -- -D warnings
+
+jpeg-dht-production-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" dht:: --test-target jpeg_sampling_contract --features __expert,parallel,jpeg-reencoding --source jxl-encoder/src/jpeg/data.rs --source jxl-encoder/src/jpeg/parse.rs --source jxl-encoder/src/jpeg/jbrd.rs --source jxl-encoder/tests/jpeg_sampling_contract/dht.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+jpeg-dht-regions llvm archive reference output:
+    python3 scripts/color_admission_coverage.py {{quote(llvm)}} {{quote(output)}} {{quote(archive)}} --jpeg-dht --reference-root {{quote(reference)}}
+
+jpeg-dht-runtime-faults manifest output coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/test_jpeg_dht_mutations.py "$2" "$3"' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+jpeg-dht-final-validation manifest output coverage_env llvm:
+    mkdir {{quote(output)}}
+    just jpeg-dht-production-evidence {{quote(manifest)}} {{quote(output + "/restored")}} {{quote(coverage_env)}}
+    just jpeg-dht-regions {{quote(llvm)}} {{quote(output + "/restored")}} {{quote(parent_directory(manifest))}} {{quote(output + "/regions")}}
+    just jpeg-dht-callers-check {{quote(manifest)}}
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,jpeg-reencoding --lib -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,jpeg-reencoding --test it -- hash_lock strategy_libjxl_byte_lock divergence_table_drift jbrd_spec_validity jbrd_roundtrip_conformance compat_surface_76 --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,__expert,jpeg-reencoding --test jpeg_sampling_contract -- --test-threads=1
+    just subsampled-metadata-check {{quote(manifest)}}
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --doc
+    cargo clippy --locked --manifest-path {{quote(manifest)}} --workspace --all-targets -- -D warnings
+
+jpeg-dht-gap-check manifest output coverage_env llvm:
+    just jpeg-dht-production-evidence {{quote(manifest)}} {{quote(output + "/restored")}} {{quote(coverage_env)}}
+    just jpeg-dht-regions {{quote(llvm)}} {{quote(output + "/restored")}} {{quote(parent_directory(manifest))}} {{quote(output + "/regions")}}
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,__expert,jpeg-reencoding --test jpeg_sampling_contract dht:: -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,jpeg-reencoding --test it -- jbrd_roundtrip_conformance compat_surface_76 --test-threads=1
+    just subsampled-metadata-check {{quote(manifest)}}
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,jpeg-reencoding --test jpeg_sampling_contract -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder -p jxl-encoder-cli --check
+
+jpeg-dht-restored-check manifest output coverage_env llvm:
+    mkdir {{quote(output)}}
+    just jpeg-dht-production-evidence {{quote(manifest)}} {{quote(output + "/restored")}} {{quote(coverage_env)}}
+    just jpeg-dht-regions {{quote(llvm)}} {{quote(output + "/restored")}} {{quote(parent_directory(manifest))}} {{quote(output + "/regions")}}
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,__expert,jpeg-reencoding --test jpeg_sampling_contract dht:: -- --test-threads=1
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,jpeg-reencoding --test jpeg_sampling_contract -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder -p jxl-encoder-cli --check
+
 gain-map-duplicate-check manifest:
     cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,hdr-gainmap,brotli-metadata --test gain_map_duplicate_contract -- --test-threads=1
@@ -2820,4 +2864,3 @@ gain-map-final-validation manifest output coverage_env llvm:
     cargo clippy --locked --manifest-path {{quote(manifest)}} --workspace --all-targets -- -D warnings
     cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,hdr-gainmap,brotli-metadata --test gain_map_duplicate_contract -- -D warnings
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --lib -- append_gain_map gain_map_append --test-threads=1
-

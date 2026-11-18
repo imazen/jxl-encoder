@@ -148,14 +148,26 @@ pub fn encode_jbrd(jpeg: &JpegData) -> Result<Vec<u8>> {
         // Our parser stores counts[0..15] for bit lengths 1-16.
         // max_depth_idx = index of deepest non-zero count (0-based, maps to bit length idx+1)
         //
-        // An all-zero table is an EMPTY DHT segment (ISO/IEC 18181-2 A.2): it is
-        // written as 17 zero counts and no values, with no sentinel.
-        let Some(max_depth_idx) = hc.counts.iter().rposition(|&c| c > 0) else {
+        // Only an actual empty DHT segment uses seventeen zero counts
+        // without a sentinel (Part 2 A.2). A zero-symbol table definition
+        // still carries its class/id byte and sixteen JPEG counts.
+        if hc.empty_segment {
+            if hc.is_ac
+                || hc.id != 0
+                || !hc.is_last
+                || hc.counts.iter().any(|&c| c != 0)
+                || !hc.values.is_empty()
+            {
+                return Err(crate::error::Error::InvalidInput(
+                    "empty JPEG DHT segment has table contents".into(),
+                ));
+            }
             for _ in 0..17 {
                 write_u32_jbrd(&mut writer, 0, &[0, 1], &[(3, 2), (8, 0)])?;
             }
             continue;
-        };
+        }
+        let max_depth_idx = hc.counts.iter().rposition(|&c| c > 0).unwrap_or(15);
 
         // 17 count values (bit lengths 0-16)
         // U32(Val(0), Val(1), BitsOffset(3, 2), Bits(8))
