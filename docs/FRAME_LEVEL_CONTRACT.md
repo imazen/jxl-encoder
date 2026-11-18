@@ -409,3 +409,13 @@ and windows; it does not cover allocation failures or every input. Current
 small/prepared profiles and the large sequence profiles retain separate
 identities. The CLI controller's source/metadata/container bypass remains
 under the separately approved request-API repair.
+
+The standalone H14 test bundle contains the small finalization and explicitly
+selected large resource families. Pending CLI controller tests live with the
+CLI repair instead of entering the core bundle. The separated bundle passes
+current instrumented small pixels, minimal execution and strict test lint.
+Its first packaging command fails only on two trailing blank lines; that
+nonzero record remains retained. Removing those lines changes no function
+body, assertion or mapped line position, and the separate scoped format check
+passes. CI explicitly selects small default/minimal controls after native
+reference tools are installed; large families remain caller-selected probes.
