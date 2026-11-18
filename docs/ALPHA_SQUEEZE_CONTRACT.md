@@ -314,3 +314,21 @@ members by HTTP range, without requiring a local copy of the complete7GB ZIP.
 The isolated primary decoder has a complete-plane scalar/SIMD replay prepared.
 No expectation or tolerance is relaxed, and this failed job is not counted as a
 passing platform verdict.
+
+## Primary decoder border attribution
+
+The CI disagreement above is localized to the primary decoder's packed
+next-average border view. When an inverse squeeze output grid is finer than
+its input grid, the view omitted the perpendicular tile offset. Both the
+encoder stream and the independently encoded native reference have sixteen
+wrong primary alpha codes in the retained four-square edge region. SIMD and
+scalar output agree on that failure; forcing wide storage retains it.
+
+The isolated primary fix is50c65e45, with permanent transposed native fixtures,
+I16/I32 storage, regular/simple pipeline and whole/chunked input controls.
+Restoring either offset fault fails runtime assertions. Exact retained mapping
+observes20/20 helper and6/6 call-window regions, not whole-decoder coverage.
+The source-pinned candidate isf9d86075. Its required CI44591633712 passes all
+eight jobs, including Windows ARM, macOS ARM and i686. Extended stress jobs
+are still running; encoder dependency integration has its own pending verdict.
+Existing live decoder checkouts and all pixel expectations remain unchanged.

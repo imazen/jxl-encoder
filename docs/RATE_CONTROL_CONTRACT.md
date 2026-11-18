@@ -234,9 +234,8 @@ rate-control library compilation both pass; the former retains nineteen
 warnings. The complete existing CLI suite therefore has positive evidence
 across the exact-source q50/q52 union; the disk-interrupted q50 command remains
 nonzero. Both old Cargo caches were archived and verified before reclamation,
-preserving every test artifact. The trusted-limit large LF-area runtime remains
-separate and active. Its elapsed wall includes verified freezer intermissions
-and is not a latency result.
+preserving every test artifact. The completed trusted-limit large LF-area runtime is recorded below; its
+elapsed wall includes freezer intermissions and is not a latency result.
 
 
 ## November 19: actual winning dictionaries through requests
@@ -266,3 +265,35 @@ minimal dictionary checks with an explicit caller-provisioned codec corpus and
 guarded v0.12 tools. Expert CI provisions and verifies the screenshot's fixed
 SHA256 before both commands. The surrounding controller's error/decoder-fallback
 and allocation gaps remain as documented above.
+
+## Completed large-area and dictionary caller controls
+
+The trusted-limit request-controller LF replay has completed all seventeen
+audit policy bindings at16384x16384. Main-only area268435456 declares Level5;
+the2048x2048 LF frame raises cumulative area to272629760 and declares Level10.
+Every stream completely renders through the pinned primary and v0.12 native
+decoder, with the existing0.001 clamped-primary/native16 agreement bound.
+The controller cap is zero, effort1, distance1, filters and patches disabled;
+this proves frame-area transport through that entry, not controller convergence.
+
+Retained runtime identity: ELF
+`cafba22bf9bb13644f03b553fc45acc282d21d9b85d819ffda63daae247e6afb`,
+completed profile
+`981450a602d973f3e46cd405a77a6c8d3ccc7e17d3727677e9fb013d93ad7bb5`.
+The runtime returns zero; the enclosing q47 queue remains nonzero because it
+also contains intentionally failing before controls. Its4875.17-second runtime
+includes verified freezer intermissions and supplies no isolated latency claim.
+This executable uses primary revision3d48825c; qualification of its replacement
+remains separate.
+
+The real imac dictionary witness also completes all seventeen bindings with
+RGB/RGBA, controller caps0/2, LF off/on, actual ReferenceOnly payloads and
+packed/strided byte equality. Every delivered alpha sample and complete native/
+primary image is checked with unchanged bounds. Runtime ELF
+`f4cf9a664083e89853f3d71ead8a0e747ed7cbbf79b5bd841960618d42a16ffe` and
+profile`a54f7346b6308938de3499a02a9d1a21d564cb09b0d058bab6f8fe39e5801aec`
+are retained in`request-patch-q54-runtime-v2`. The enclosing run subsequently
+fails strict lint on its new unused observation helper; v3 records that level
+in the existing observation JSON and passes default/minimal lint. Minimal
+runtime remains pending. No assertion, encoder arithmetic or quality bound
+changes in that observation-only correction.
