@@ -207,6 +207,62 @@ Reproduction recipes and evidence directories are
 `frame-level-animation-isolated-validation` / `frame-level-animation-isolated`,
 `frame-level-animation-final-sources`, and
 `animation-large-area-production-evidence` / `frame-level-animation-final-policies`.
-The real still-image LF/main-grid probe is compiled but has no completed runtime
-verdict yet. Still/streaming transport remains an unlanded candidate; its
-observed patch results above do not close H14.
+The real LF/main-grid probe now completes before and after the still-transport
+candidate. Its 16384-square main frame plus 2048-square LF frame observes
+272,629,760 pixels. Both still and streaming declared Level 5 before and Level
+10 afterward; the no-LF 2^28-pixel control remains Level 5. Complete primary
+and native rendering and still/streaming byte equality pass. Before: rc101,
+149 seconds, peak RSS 14.20 GiB, minimum available 29,308 MiB. After: rc0,
+142 seconds, peak RSS 14.20 GiB, minimum available 31,298 MiB. These are resource
+observations, not a performance comparison.
+
+The all-offered LF matrix also passes as an individual test. Its enclosing
+command fails a separate upsampled-parser invocation and is later interrupted
+in lossless testing; it supplies no positive coverage credit. The remaining
+all-offered upsampled and lossless replays are still required. Still/streaming
+transport remains an unlanded candidate.
+
+
+## Still transport verification and retained replay tools
+
+The isolated still candidate passes the library baseline, unchanged byte locks
+and divergence checks, strict focused lint, no-default build and formatting
+(rc0, 556 seconds, run-heavy peak RSS 1.91 GiB, minimum available 19,004 MiB).
+The final small controls use 9x3, 129-square and 300x17 RGB8 inputs, efforts
+one/three, lossy/lossless and every offered policy. They require Level 5,
+packed/strided/writer/streaming byte agreement, complete rendering in both
+oracles and exact lossless samples. The existing raw/precomputed/prequantized
+alpha regression also passes, including progressive and multi-group outputs.
+The continuation with strict lint passes in 187 seconds, peak RSS 1.07 GiB,
+minimum available 20,062 MiB. No existing expectation is changed.
+
+The positive strict upsampled and lossless replays retain instrumented production
+classification with only the unchanged patch-template search body excluded.
+The compiled map confirms the exclusion; unrelated generic parallel-map
+instantiations remain mapped. The strict lossless replay passes in 620 seconds,
+peak RSS 16.63 GiB, minimum available 26,982 MiB. Its actual still and streaming
+area is 268,481,032 pixels, both Level 10, with exact source samples and equal
+encoded bytes. The corrected upsampled replay passes in 106 seconds, peak RSS
+6.24 GiB, minimum available 39,159 MiB. None of these resource measurements is
+a speed comparison.
+
+Exact-source region windows in `frame-level-still-regions` observe both final
+container maxima at 4/4, the still and streaming lossless captures at 7/8 each,
+the lossy stats assignment at 1/1, the VarDCT classifier at 13/13, two-pass output
+transport at 6/6, the static output window at 13/14, two-pass serialization at
+8/9, precomputed return at 2/2 and prequantized return at 1/1. The four missing
+regions are classification-error propagation after successful validated header
+emission. Valid generated static headers have no animation clock and use legal
+geometry/scales; invalid inputs fail before these finalizers. This is a
+source-invariant reachability explanation, not injected coverage of those error
+returns. Existing allocation-failure gaps remain separately documented above.
+
+`stage_archived_runtime.py` checks an exact retained ELF and its required ELF
+library names against a checksum-bound runtime closure. `run_archived_test.py`
+checks sources, object and libraries before launch, records the actual PID and
+exit status, and retains the completed profile. `archived_test_status.py`
+checks the live command and selected per-case journals. Positive coverage
+export refuses failed or unexecuted identities. The small replay control
+passes through the staged loader with matching object/profile hashes. An
+initial replay on a non-executable artifact mount fails before launch and is
+retained; executable staging uses a caller-selected suitable filesystem.

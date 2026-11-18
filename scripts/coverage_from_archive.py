@@ -28,7 +28,17 @@ if a.failed_test:
     rows = [dict(staged='test-binary', object=True, sha256=identity['binary_sha256']),
             dict(staged='test.profraw', object=False, sha256=identity['profile_sha256'])]
 else:
-    rows = json.loads((a.archive / 'originals.json').read_text())
+    identity = json.loads((a.archive / 'identity.json').read_text())
+    if identity.get('exit_code') != 0:
+        p.error('positive coverage requires a recorded completed passing verdict')
+    originals = a.archive / 'originals.json'
+    if originals.is_file():
+        rows = json.loads(originals.read_text())
+    else:
+        # Remote archived-ELF replays retain the same exact object/profile
+        # identities, without the original build machine's filesystem paths.
+        rows = [dict(staged='test-binary', object=True, sha256=identity['binary_sha256']),
+                dict(staged='test.profraw', object=False, sha256=identity['profile_sha256'])]
 objects = []
 profiles = []
 for row in rows:

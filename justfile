@@ -2418,3 +2418,16 @@ reference-property-native-controls cjxl djxl output:
 
 reference-advanced-help cjxl output:
     {{quote(cjxl)}} --help -v -v -v -v > {{quote(output)}} 2>&1
+
+frame-level-archived-replay archive runtime output selection:
+    python3 scripts/run_archived_test.py {{quote(archive)}} {{quote(runtime)}} {{quote(output)}} {{quote(selection)}} --include-ignored
+
+archived-test-status output pixels first_run:
+    python3 scripts/archived_test_status.py {{quote(output)}} {{quote(pixels)}} --first-run {{quote(first_run)}}
+
+archived-runtime-stage archive template output:
+    python3 scripts/stage_archived_runtime.py {{quote(archive)}} {{quote(template)}} {{quote(output)}}
+
+archived-runtime-control archive template runtime output:
+    just archived-runtime-stage {{quote(archive)}} {{quote(template)}} {{quote(runtime)}}
+    just frame-level-archived-replay {{quote(archive)}} {{quote(runtime)}} {{quote(output)}} small_frames_keep_level_five
