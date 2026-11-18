@@ -2824,3 +2824,9 @@ Remaining layout inventory is tracked separately in the progressive contract.
 | Site | Current behavior | Reference contract | Status |
 |---|---|---|---|
 | Lossless animation full-frame delta candidate | Pin the main and alpha Add source to slot one, matching the cached replacement canvas used for subtraction | Part 1 F.2/F.7 Add reads the signaled source. The existing pinned v0.12 explicit-Add controls produce the expected sums. | Actual winning regional changes expose wrong default-source pixels before repair. Repair `b8f096c8`: Isolated default/minimal, exact source-code/profile, source-field fault and unchanged baseline checks pass; no registry gate or metadata changes. [Evidence](ANIMATION_DELTA_CONTRACT.md). |
+
+### Issue 144: serialized modular width and container level (2026-11-18)
+
+| Site | Encoder behavior | Reference/specification | Status |
+|---|---|---|---|
+| `vardct/encoder.rs` both `VarDctOutput` constructors | Report the canonical `build_file_header(...).metadata.modular_16bit_buffer_sufficient()` predicate, including source floats and extra-channel precision; the prior report used only the DC-overflow atomic | Part 1 Annex M and v0.12 `VerifyLevelSettings`: a false modular-16-bit promise requires Level 10 | Shared repair preserves complete codestream/pixel bytes for three float fingerprints; their 49-byte container migrations are owner-approved. Selected default/minimal/CI-feature, CLI, raw/precomputed, exact-body region and fault controls pass, as do the receipted workspace functional checks. Expert all-target lint retains diagnostics in three unchanged examples; scoped strict lint passes. Remote CI remains separate. No registry gate/value/metadata changes. [Contract](MODULAR_WIDTH_LEVEL_CONTRACT.md). |

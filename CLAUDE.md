@@ -1779,6 +1779,21 @@ misclassify that CLI limitation as an invalid stream or strip the ICC to hide it
 
 ## Known Bugs (ACTIVE)
 
+### 2026-11-18: serialized modular-width level propagation
+
+The still VarDCT output now derives its width report from the same metadata
+predicate as the serialized header. A retained 32x17 RGBA16 regression declared
+Level 5 despite a false modular-16-bit promise. Source floats and deep extra
+channels now receive the required Level 10 container. Three owner-approved
+float fingerprint migrations add 49 bytes each; every unwrapped codestream
+and complete decoded float bit remains identical through both decoders.
+
+Selected request/streaming/CLI/raw/precomputed controls, exact-body region union,
+independent restored faults, minimal/CI-feature builds and receipted workspace
+functional checks pass. Doctests and strict workspace library/test/binary lint
+pass; full expert-example lint retains diagnostics in three unchanged research
+examples. Remote CI has its own verdict. [Exact evidence and limits](docs/MODULAR_WIDTH_LEVEL_CONTRACT.md).
+
 ### 2026-11-18: frame-dependent level declarations, animation repair
 
 `f00ee41d` classifies the actual emitted animation sequence, including selected

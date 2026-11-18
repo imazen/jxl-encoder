@@ -90,7 +90,8 @@ pub struct VarDctOutput {
     /// Per-strategy first-block counts, indexed by raw strategy code (0..19).
     pub strategy_counts: [u32; 19],
     /// Whether the encoder had to signal `modular_16_bit_buffer_sufficient =
-    /// false` because the quantized DC exceeded `i16` (#94).
+    /// false` due to DC overflow, floating-point source samples or extra-channel
+    /// precision. This reports the same predicate the file-header writer uses.
     ///
     /// The caller needs this to pick the codestream level: libjxl
     /// `VerifyLevelSettings` (`encode.cc:585`) returns 10 whenever that header
@@ -3639,6 +3640,21 @@ impl VarDctEncoder {
         )
     }
 
+    /// Keep container admission equal to the serialized metadata promise,
+    /// including source floats and extra-channel precision as well as DC overflow.
+    fn output_needs_modular_32bit(
+        &self,
+        width: usize,
+        height: usize,
+        extras: &[super::extras::VardctExtra<'_>],
+    ) -> bool {
+        let information: Vec<_> = extras.iter().map(|extra| extra.info.clone()).collect();
+        !self
+            .build_file_header(width, height, &information)
+            .metadata
+            .modular_16bit_buffer_sufficient()
+    }
+
     fn encode_with_extras_stop_impl(
         &self,
         width: usize,
@@ -6655,9 +6671,7 @@ impl VarDctEncoder {
             return Ok(VarDctOutput {
                 data,
                 strategy_counts,
-                needs_modular_32bit: self
-                    .force_modular_32bit
-                    .load(core::sync::atomic::Ordering::Relaxed),
+                needs_modular_32bit: self.output_needs_modular_32bit(width, height, extras),
             });
         }
 
@@ -7032,9 +7046,7 @@ impl VarDctEncoder {
         Ok(VarDctOutput {
             data: writer.finish_with_padding(),
             strategy_counts,
-            needs_modular_32bit: self
-                .force_modular_32bit
-                .load(core::sync::atomic::Ordering::Relaxed),
+            needs_modular_32bit: self.output_needs_modular_32bit(width, height, &[]),
         })
     }
 

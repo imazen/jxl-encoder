@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+- Derive still VarDCT container levels from the complete serialized modular-buffer
+  promise, including floating source samples and deep extra channels. Preserve
+  codestream bytes; the three approved float fingerprints include their Level 10
+  container prefix.
+
 - Select animation codestream levels from actual emitted frame areas and
   rational durations, carrying only the winning trial sequence.
 
