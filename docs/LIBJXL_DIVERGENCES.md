@@ -2974,3 +2974,9 @@ Remaining layout inventory is tracked separately in the progressive contract.
 | Site | Request contract | Reference distinction | Qualification |
 |---|---|---|---|
 | `EncodeRequest::with_rate_control` and private prepared adapter | Explicit default-off Butteraugli controller reuses normal source/stride/metadata/extras/limits/Stop and container finalization; only lossy Full444,255nits, factorone, single-frame input | Source conversion follows the existing pinned-v0.12 controls. This optional encode/decode controller is not the complete libjxl quantizer search. | Owner-approved additive signature. Default library, selected minimal request controls, unchanged byte locks, native/primary controls and restored faults pass. CLI and large-area continuation and remaining exception regions are recorded in RATE_CONTROL_CONTRACT.md. No registry gate or preset value changes. |
+
+### Issue 144: primary inverse-squeeze border oracle
+
+| Site | Encoder/test choice | Independent control | Status |
+|---|---|---|---|
+| Library and CLI primary0.8 dev decoder | Pinf9d86075, preserving perpendicular output-tile offsets when reading packed next-average borders | Unmodified v0.12 native independently encoded horizontal/vertical streams and complete delivered alpha planes | Dependency-only repair for the unchanged alpha tests. Core50c65e45; no encoder arithmetic, registry gate, constant or preset choice changes. Exact integration verdict is retained in RATE_CONTROL_CONTRACT.md. |

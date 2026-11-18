@@ -251,3 +251,9 @@ The zen0.4 implementation already selects per-tile next-average rectangles in
 its existing transform dispatcher; no additional zen0.4 repair is made for
 this finding. This is a source inventory statement, not a new zen runtime
 comparison. No external report was posted.
+
+The encoder library/CLI primary aliases now both pin
+[`f9d86075`](https://github.com/imazen/jxl-rs-v08/commit/f9d860756843e813663d51335e8ac11f83d07c09).
+Frozen q66 integration preserves the existing source graph and all asserted
+alpha codes; only four Git-source lock identities change. Native0.4 remains
+at74eba39b. These pins are development-oracle identities, not published releases.

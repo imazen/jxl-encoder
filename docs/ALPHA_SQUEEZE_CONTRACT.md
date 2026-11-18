@@ -332,3 +332,10 @@ The source-pinned candidate isf9d86075. Its required CI44591633712 passes all
 eight jobs, including Windows ARM, macOS ARM and i686. Extended stress jobs
 are still running; encoder dependency integration has its own pending verdict.
 Existing live decoder checkouts and all pixel expectations remain unchanged.
+
+The encoder library and CLI now selectf9d86075 for the primary0.8 test
+decoder. The locked q66 qualification includes the unchanged complete alpha
+matrix, progressive boundaries, squeeze geometry, optional library baseline
+and byte locks. No encoder pixel algorithm, expectation or tolerance changes
+with this pin. The dedicated decoder CI verdict remains distinct from the
+encoder's fresh platform CI.

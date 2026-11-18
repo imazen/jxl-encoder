@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Pin the primary test decoder border-view repair for native squeezed-alpha edge controls; encoder pixel algorithms and expectations are unchanged.
+
 - Route optional CLI rate control through pixel requests, preserving input
   precision, source/ICC interpretation, alpha, LF data and container metadata;
   reject unsupported animation, JPEG-domain and lossless combinations before

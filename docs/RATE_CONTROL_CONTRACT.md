@@ -297,3 +297,22 @@ fails strict lint on its new unused observation helper; v3 records that level
 in the existing observation JSON and passes default/minimal lint. Minimal
 runtime remains pending. No assertion, encoder arithmetic or quality bound
 changes in that observation-only correction.
+
+## Primary border-fix dependency integration
+
+The library and CLI development decoder aliases now pinf9d86075 together;
+the lock changes only the four matching Git source revisions. The optional
+production controller retains its separately pinned zen0.4 decoder. Frozen
+locked qualification`request-decoder-border-pin-q66-isolated-v2` checks the
+unchanged alpha/layout/policy/entry and progressive/group geometry contracts,
+full optional-feature library, normal/strict byte locks, divergence drift,
+strict library lint and formatting. Actual verdict and retained objects are
+recorded beside that qualification; the preceding mixed-alias q65 failure
+occurs before compilation and supplies no pixel verdict.
+
+The q66 alpha, progressive, geometry and broad-library stages pass. Its later
+lock command fails Cargo argument parsing before those checks execute, so q66
+remains nonzero. The exact-source q68 continuation passes unchanged normal/
+strict byte locks and divergence drift, strict broad library lint and scoped
+formatting. Both source overlays are restored exactly; their individual
+verdicts remain retained. This is the q66/q68 evidence union, not a green q66.

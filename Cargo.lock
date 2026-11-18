@@ -2124,7 +2124,7 @@ dependencies = [
 [[package]]
 name = "jxl"
 version = "0.8.0"
-source = "git+https://github.com/imazen/jxl-rs-v08?rev=3d48825cd10d0a5c325a683136723198fb69859a#3d48825cd10d0a5c325a683136723198fb69859a"
+source = "git+https://github.com/imazen/jxl-rs-v08?rev=f9d860756843e813663d51335e8ac11f83d07c09#f9d860756843e813663d51335e8ac11f83d07c09"
 dependencies = [
  "array-init",
  "byteorder",
@@ -2413,7 +2413,7 @@ dependencies = [
 [[package]]
 name = "jxl_macros"
 version = "0.8.0"
-source = "git+https://github.com/imazen/jxl-rs-v08?rev=3d48825cd10d0a5c325a683136723198fb69859a#3d48825cd10d0a5c325a683136723198fb69859a"
+source = "git+https://github.com/imazen/jxl-rs-v08?rev=f9d860756843e813663d51335e8ac11f83d07c09#f9d860756843e813663d51335e8ac11f83d07c09"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2429,7 +2429,7 @@ checksum = "15d37f283bbcd785c0a1b128a9c1249feb8bdca899fffb0f281a6b183d3c3761"
 [[package]]
 name = "jxl_simd"
 version = "0.8.0"
-source = "git+https://github.com/imazen/jxl-rs-v08?rev=3d48825cd10d0a5c325a683136723198fb69859a#3d48825cd10d0a5c325a683136723198fb69859a"
+source = "git+https://github.com/imazen/jxl-rs-v08?rev=f9d860756843e813663d51335e8ac11f83d07c09#f9d860756843e813663d51335e8ac11f83d07c09"
 
 [[package]]
 name = "jxl_transforms"
@@ -2443,7 +2443,7 @@ dependencies = [
 [[package]]
 name = "jxl_transforms"
 version = "0.8.0"
-source = "git+https://github.com/imazen/jxl-rs-v08?rev=3d48825cd10d0a5c325a683136723198fb69859a#3d48825cd10d0a5c325a683136723198fb69859a"
+source = "git+https://github.com/imazen/jxl-rs-v08?rev=f9d860756843e813663d51335e8ac11f83d07c09#f9d860756843e813663d51335e8ac11f83d07c09"
 dependencies = [
  "jxl_simd 0.8.0",
 ]

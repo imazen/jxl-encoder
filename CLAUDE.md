@@ -1788,6 +1788,19 @@ separate queue items. Broad/coverage/remote verdicts must be read independently.
 
 ## Known Bugs (ACTIVE)
 
+### RESOLVED 2026-11-19: primary decoder squeezed-alpha border view
+
+The primary0.8 oracle dropped the perpendicular output-tile offset when its
+inverse-squeeze output grid was finer than the input grid. Native v0.12
+returns154 at(2044,2040) from both our2049x2048 stream and an independently
+encoded reference; old primary returns155. Isolated core50c65e45 fixes the
+border view, with native transposed fixtures and restored-fault controls.
+Library and CLI aliases pinf9d86075 together; the optional production
+controller decoder remains unchanged. Required decoder platform CI44591633712
+passes; encoder integration and fresh platform verdicts remain separately
+recorded in docs/ALPHA_SQUEEZE_CONTRACT.md. No tolerance is relaxed.
+
+
 ### 2026-11-19: primary alpha decoder agreement at an LF-group edge
 
 PR146 run44577850969's expert alpha matrix reports primary code155 where the
