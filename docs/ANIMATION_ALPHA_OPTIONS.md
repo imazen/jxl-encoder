@@ -110,3 +110,29 @@ They are not classified collectively unreachable. Existing precision and CMYK
 contracts are being replayed on the new body; their coverage must retain its
 own exact source/profile identities. These fractions do not replace those
 contracts or establish whole-function input-space coverage.
+
+The q77 current-body compatibility replay completes the established
+precision/visibility/progressive/typed-layout contracts in both default and
+minimal builds, then the CMYK crop/identity/Add/reference/edge/limit contracts.
+Complete native/primary pixels and existing physical-color/Black assertions
+pass unchanged. Its wrapper exits zero in 727 seconds, build/check peak RSS
+0.98 GiB and minimum available memory 17960 MiB.
+
+Completed q77 ELF / profile identities:
+
+- `default`: `3fe26de25b40add2ae3567f177cd9d97ce7e5627b8f671ad7002ddc1d19ff87e` / `cf7735e726a77e7048e62a2ed189935ed6e51bca6f74dd3eca5408887d2350ef`
+
+- `minimal`: `09551914cbf558dd2dff1fd6ce69d602c30b2032f9b24620b5ffebd6905c00f0` / `7e64d9b804bf90948146eeb6afa519d491ef015775403158d215ae5957de85c0`
+
+- `cmyk`: `874ab0ef219918875a4f7d81dee81b9ac82f1992f651a56dde6e308f2448fc33` / `5aeb34422491c3e4c5ceaca7c6e0dbf6f555d19a2733afc7eb21f4a94eb48ee0`
+
+The q79 exact-body union adds those three matching current animation bodies:
+498/541 full-function mapped regions, with the float-header window still 25/25
+and shared chooser 31/31. The earlier 433/541 result remains its own narrower
+union. The remaining 43 regions concern LF/manual-spline refusals, fallible
+admission/writing/cancellation returns, maximum-strategy/filter defaults,
+metadata/request tone-field overrides and the nondefault blend-source crop
+condition. They are unexecuted here, not collectively unreachable. They do
+not introduce another alpha-representation branch. Separate existing
+contracts retain their own guards and verdicts; no aggregate region fraction
+is a whole-encoder or input-space proof.

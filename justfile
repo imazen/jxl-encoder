@@ -3332,3 +3332,8 @@ alpha-coding-faults manifest output coverage_env:
 
 animation-alpha-forward-regions output llvm +archives:
     python3 scripts/color_admission_coverage.py {{quote(llvm)}} {{quote(output)}} {{archives}} --animation-alpha-forward
+
+animation-alpha-compatibility-check manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --test progressive_ac_contract animation_ -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert --test progressive_ac_contract animation_ -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --test cmyk_animation_layers_contract -- --test-threads=1
