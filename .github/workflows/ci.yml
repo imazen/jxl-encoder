@@ -472,7 +472,7 @@ jobs:
           --test modular_width_level_contract --test animation_contract
           --test jpeg_sampling_contract
           -- --test-threads=1
-      - name: Test grayscale JPEG CLI sampling routes
+      - name: Test JPEG reconstruction CLI routes
         env:
           JXL_ENCODER_OUTPUT_DIR: ${{ runner.temp }}/issue144-contracts
         run: cargo test --locked -p jxl-encoder-cli --release --features jpeg-reencoding --test jpeg_sampling -- --test-threads=1

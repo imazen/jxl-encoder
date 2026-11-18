@@ -18,6 +18,7 @@ p.add_argument('output', type=Path)
 p.add_argument('archives', nargs='+', type=Path)
 p.add_argument('--extra-metadata', action='store_true')
 p.add_argument('--jpeg-metadata', action='store_true')
+p.add_argument('--jpeg-dht', action='store_true')
 p.add_argument('--display-extents', action='store_true')
 p.add_argument('--animation-state', action='store_true')
 p.add_argument('--animation-deltas', action='store_true')
@@ -99,6 +100,17 @@ def observe(relative, name, occurrence=0, window=False):
                      inputs=inputs, excluded_different_body=excluded, covered=sum(v > 0 for v in counts.values()), total=len(counts),
                      missing_relative_regions=[k for k, v in sorted(counts.items()) if not v]))
     print(json.dumps(rows[-1]))
+
+if a.jpeg_dht:
+    observe('jxl-encoder/src/jpeg/parse.rs', 'parse_dht_marker')
+    source = (reference_root / 'jxl-encoder/src/jpeg/jbrd.rs').read_text().splitlines()
+    begin = next(i for i, line in enumerate(source) if 'for hc in &jpeg.huffman_code {' in line)
+    end = next(i for i in range(begin + 1, len(source)) if '// Scan info' in source[i])
+    observe('jxl-encoder/src/jpeg/jbrd.rs', 'encode_jbrd',
+            window=('for hc in &jpeg.huffman_code {', end - begin))
+    (a.output / 'regions.json').write_text(json.dumps(dict(inputs=identities, functions=rows,
+        note='Exact DHT parser body and Huffman writer window; other JPEG paths are outside this report.'), indent=2))
+    sys.exit(0)
 
 if a.jpeg_metadata:
     observe('jxl-encoder/src/jpeg/parse.rs', 'classify_app_marker')

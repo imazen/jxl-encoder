@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+- Preserve distinct empty JPEG DHT segments and real zero-symbol Huffman
+  table definitions, including exact original-byte reconstruction and cloned
+  parsed-data consistency checks (`cc0e53a3`).
+
 - Preserve prefix-only JPEG EXIF/XMP as opaque records; check parsed APP
   classifications before color access and reject duplicate external metadata
   references instead of emitting unreconstructible JPEG data (`39977bf1`).
