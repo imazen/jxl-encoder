@@ -108,3 +108,39 @@ Normal library, unchanged byte locks/drift, minimal runtime, doctests, no-std
 and strict workspace/focused lint pass. The first broad command stops on new
 CLI test lint, then the corrected lint/format chain passes. No existing byte
 expectation, threshold or ignore is migrated.
+
+
+### Final palette caller/profile evidence
+
+Core repair 1cc800cb is on remote main. Its independent selected-source run
+passes against main 96059131 with only the palette change, with every tracked
+production file verified and all owned overlays SHA-restored: rc0/135s,
+peak RSS 1.92GiB/min available18117MiB. The combined broad runtime checks and
+corrected workspace/focused strict lint/format checks also pass. The initial
+broad command's new-test lint failures remain retained separately; no assertion,
+threshold, byte expectation or ignore changed to obtain a pass.
+
+Final scoped capture delta-palette-final-regions-v3 reports declaration 4/4,
+API single-group call 19/20 and patched call 19/20, plus separate actual CLI
+still/animation forwarding 4/4 each. Both API windows' missing region propagates
+a writer error; it was not fault-injected. The earlier longer windows included
+unrelated squeeze branches; they do not define the palette call's scope.
+The unchanged whole-function limits remain 920/963 and 333/405, with allocation,
+serializer and candidate-selection branches outside this selected evidence.
+All three input archives and the separate CLI object/profile identities are
+bound by SHA256; mapping stderr is empty. Report wrapper: rc0/3s, peak
+RSS 0.27GiB/min available19872MiB. These region fractions do not prove input-space
+coverage or qualify floating-palette quality.
+
+The early thread-local observer missed actual worker-pool calls. Its zero
+records did not prove a palette bypass or that cap zero disabled palette use;
+changing the cap alone did not repair that observer. Current controls record
+actual applications across the worker boundary. Multi-group patched-frame
+bypass is established separately by current source dispatch, zero applications
+under the working observer, and complete exact original-pixel reconstruction.
+
+Reproduce the selected contracts with delta-palette-production-evidence,
+delta-palette-cli-evidence and delta-palette-final-regions. Each recipe takes
+an explicitly pinned source manifest or retained object/profile inputs; run
+long work through the configured resource wrapper. CLI child profiles remain
+separate from their integration driver's profile.

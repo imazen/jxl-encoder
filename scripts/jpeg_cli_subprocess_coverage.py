@@ -9,6 +9,7 @@ import subprocess
 p=argparse.ArgumentParser(description=__doc__)
 p.add_argument('llvm',type=Path);p.add_argument('archive',type=Path);p.add_argument('output',type=Path)
 p.add_argument('--color',action='store_true')
+p.add_argument('--palette',action='store_true')
 a=p.parse_args();a.output.mkdir(exist_ok=False)
 def digest(path):return hashlib.sha256(path.read_bytes()).hexdigest()
 identity=json.loads((a.archive/'identity.json').read_text());assert identity['exit_code']==0
@@ -40,9 +41,15 @@ if a.color:
   ('rgb-admission','jxl-encoder/src/jpeg/encode.rs','if jpeg.components.len() == 3',11),
   *[w for w in windows if w[0]!='shared-grid'],
  ]
+if a.palette:
+ windows=[
+  ('still-palette-forwarding','jxl-encoder-cli/src/main.rs','if args.lossy_palette {',3,1),
+  ('animation-palette-forwarding','jxl-encoder-cli/src/main.rs','if args.lossy_palette {',3,0),
+ ]
 summary=[]
-for label,relative,marker,length in windows:
- lines=(a.archive/'source'/relative).read_text().splitlines();first=next(i+1 for i,line in enumerate(lines)if marker in line);last=first+length-1;regions={}
+for window in windows:
+ label,relative,marker,length,*occurrence=window
+ lines=(a.archive/'source'/relative).read_text().splitlines();starts=[i+1 for i,line in enumerate(lines)if marker in line];first=starts[occurrence[0] if occurrence else 0];last=first+length-1;regions={}
  for unit in report['data']:
   for fn in unit['functions']:
    for r in fn['regions']:

@@ -479,6 +479,10 @@ jobs:
           cargo test --locked -p jxl-encoder --release
           --features "__expert,parallel,parallel-tree-learning" --lib
           -- delta_palette_contract --include-ignored --test-threads=1
+      - name: Delta palette CLI callers
+        env:
+          JXL_ENCODER_OUTPUT_DIR: ${{ runner.temp }}/issue144-contracts
+        run: cargo test --locked -p jxl-encoder-cli --release --test delta_palette -- --test-threads=1
       - name: Test JPEG reconstruction CLI routes
         env:
           JXL_ENCODER_OUTPUT_DIR: ${{ runner.temp }}/issue144-contracts

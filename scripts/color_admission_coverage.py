@@ -21,6 +21,7 @@ p.add_argument('--jpeg-metadata', action='store_true')
 p.add_argument('--jpeg-dht', action='store_true')
 p.add_argument('--jpeg-scan-grid', action='store_true')
 p.add_argument('--jpeg-color', action='store_true')
+p.add_argument('--delta-palette', action='store_true')
 p.add_argument('--display-extents', action='store_true')
 p.add_argument('--animation-state', action='store_true')
 p.add_argument('--animation-deltas', action='store_true')
@@ -102,6 +103,20 @@ def observe(relative, name, occurrence=0, window=False):
                      inputs=inputs, excluded_different_body=excluded, covered=sum(v > 0 for v in counts.values()), total=len(counts),
                      missing_relative_regions=[k for k, v in sorted(counts.items()) if not v]))
     print(json.dumps(rows[-1]))
+
+if a.delta_palette:
+    observe('jxl-encoder/src/modular/palette.rs', 'apply_lossy_palette_with_budget')
+    observe('jxl-encoder/src/modular/palette.rs', 'apply_lossy_palette_with_budget',
+            window=('// If no deltas were actually used', 6, 1))
+    observe('jxl-encoder/src/modular/frame.rs', 'encode_modular_with_patches_src',
+            window=('if self.options.lossy_palette', 18))
+    observe('jxl-encoder/src/modular/frame.rs', 'encode_modular_src',
+            window=('if self.options.lossy_palette', 19))
+    observe('jxl-encoder/src/modular/frame.rs', 'encode_modular_multi_group_lossy_palette')
+
+    (a.output / 'regions.json').write_text(json.dumps(dict(inputs=identities, functions=rows,
+        note='Exact source bodies and selected windows; region execution is not input-space coverage.'), indent=2))
+    sys.exit(0)
 
 if a.jpeg_color:
     for archive in a.archives:

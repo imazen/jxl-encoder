@@ -2919,3 +2919,24 @@ jpeg-companion-pin-check manifest producer decoder output:
 
 jpeg-rgb-native-admission cjxl djxl djpeg output sources:
     python3 scripts/jpeg_rgb_native_admission.py {{quote(cjxl)}} {{quote(djxl)}} {{quote(djpeg)}} {{quote(output)}} {{sources}}
+
+delta-palette-cli-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export __CARGO_LLVM_COV_RUSTC_WRAPPER_CRATE_NAMES=jxl_encoder,cjxl_rs,delta_palette; touch "$(dirname "$2")/jxl-encoder-cli/src/main.rs"; python3 scripts/run_selected_test_evidence.py "$2" "$3" delta_palette_all_cli --test-target delta_palette --package jxl-encoder-cli --features parallel --source jxl-encoder-cli/src/main.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+delta-palette-final-regions llvm output callers precision patches cli:
+    python3 -c 'from pathlib import Path; import sys; Path(sys.argv[1]).mkdir(exist_ok=False)' {{quote(output)}}
+    python3 scripts/color_admission_coverage.py {{quote(llvm)}} {{quote(output + "/api")}} {{quote(callers)}} {{quote(precision)}} {{quote(patches)}} --delta-palette
+    python3 scripts/jpeg_cli_subprocess_coverage.py {{quote(llvm)}} {{quote(cli)}} {{quote(output + "/cli")}} --palette
+
+delta-palette-isolated-check manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,parallel-tree-learning --lib delta_palette_contract -- --include-ignored --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,parallel-tree-learning --lib
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --test it -- hash_lock strategy_libjxl_byte_lock divergence_table_drift --test-threads=1
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,parallel-tree-learning --lib --tests -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+
+qualify-selected-palette manifest selection base output:
+    python3 scripts/qualify_selected_modular_source.py {{quote(manifest)}} {{quote(selection)}} {{quote(base)}} {{quote(output)}}
+
+delta-palette-production-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" delta_palette_contract --include-ignored --features __expert,parallel --source jxl-encoder/src/vardct/patches.rs --source jxl-encoder/tests/support/decoded_frames.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
