@@ -411,6 +411,15 @@ jobs:
           CROSS_CONTAINER_OPTS: --security-opt seccomp=unconfined
         run: cross test --locked --workspace --exclude zenjxl-tuning-runner --release --no-default-features --features "std" --lib --target ${{ matrix.target }}
 
+      - name: High-precision alpha prefix coding (cross/i686)
+        if: matrix.run_tests
+        env:
+          CROSS_CONTAINER_OPTS: --security-opt seccomp=unconfined
+        run: >-
+          cross test --locked -p jxl-encoder --release --no-default-features
+          --features std,convenience,__expert --test alpha_large_multiplier_contract
+          --target ${{ matrix.target }} alpha_large_multiplier_still_writer -- --test-threads=1
+
       - name: Optional ICC rows and default-disabled feature graph (cross/i686)
         if: matrix.run_tests
         env:
