@@ -269,7 +269,7 @@ fn compat_block_76_items_stay_reachable() {
 
     // Gain-map box append.
     let jhgm: &[u8] = b"jhgm-payload";
-    let with_gain_map = jxl_encoder::append_gain_map_box(&bare, jhgm);
+    let with_gain_map = jxl_encoder::append_gain_map_box(&bare, jhgm).unwrap();
     assert!(
         find_subseq(&with_gain_map, b"jhgm").is_some(),
         "append_gain_map_box must emit a jhgm box"

@@ -2762,3 +2762,28 @@ c6-grayscale-callers-check manifest llvm archive output:
     cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder-cli --features jpeg-reencoding --test jpeg_sampling -- -D warnings
     python3 scripts/color_admission_coverage.py {{quote(llvm)}} {{quote(output)}} {{quote(archive)}} --jpeg-sampling --reference-root {{quote(manifest)}}/..
 
+
+gain-map-duplicate-check manifest:
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,hdr-gainmap,brotli-metadata --test gain_map_duplicate_contract -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features hdr-gainmap --lib -- append_gain_map gain_map_append hdr::bundle --test-threads=1
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,hdr-gainmap,brotli-metadata --test gain_map_duplicate_contract -- -D warnings
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --lib -- append_gain_map gain_map_append --test-threads=1
+
+gain-map-production-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" "" --test-target gain_map_duplicate_contract --features __expert,parallel,hdr-gainmap,brotli-metadata --source jxl-encoder/src/container.rs --source jxl-encoder/src/hdr/bundle.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+gain-map-runtime-faults manifest output coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/test_gain_map_mutations.py "$2" "$3"' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+gain-map-final-validation manifest output coverage_env llvm:
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder
+    just gain-map-production-evidence {{quote(manifest)}} {{quote(output + "/restored")}} {{quote(coverage_env)}}
+    python3 scripts/color_admission_coverage.py {{quote(llvm)}} {{quote(output + "/regions")}} {{quote(output + "/restored")}} --gain-map --reference-root {{quote(parent_directory(manifest))}}
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features hdr-gainmap,brotli-metadata --lib -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,hdr-gainmap,brotli-metadata --test it -- hash_lock strategy_libjxl_byte_lock divergence_table_drift compat_surface_76 --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --doc
+    cargo clippy --locked --manifest-path {{quote(manifest)}} --workspace --all-targets -- -D warnings
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,hdr-gainmap,brotli-metadata --test gain_map_duplicate_contract -- -D warnings
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --lib -- append_gain_map gain_map_append --test-threads=1
+

@@ -2853,3 +2853,9 @@ Remaining layout inventory is tracked separately in the progressive contract.
 | Site | Current behavior | Reference contract | Status |
 |---|---|---|---|
 | `jpeg::encode_jpeg_to_jxl_inner` sampling selection | Compute absolute JPEG sampling modes for one- and three-component inputs through the same component map. Relative downsampling remains derived separately. | Part 2 A.1 / Part 1 F.2; pinned v0.12 retains grayscale SOF factors in all three fields. | Selected original-writer streams reconstruct changed SOF bytes before repair. Both decoders now reconstruct exact originals; ordinary/cancellable/bare/parsed/recompression/gain-map/CLI callers and independent fields are checked. No strategy gate, constant or registry metadata change. Exact affected-region evidence and limits: JPEG_RECONSTRUCTION_CONTRACT.md. |
+### Issue 144 C1: gain-map multiplicity at public append entries
+
+| Site | Proposed behavior | Reference contract | Status |
+|---|---|---|---|
+| Root `append_gain_map_box` and `hdr::append_gain_map_bundle` | Reject existing direct/`brob` gain maps and malformed top-level boundaries; raw helper returns Result and typed helper propagates it. Valid first insertion retains the existing writer and placement. | Part 2 clause 9.11 permits at most one gain-map box. | Owner-approved breaking signature, proposed through a PR assigned to lilith. Mode-independent helper; no registry gate or value changes. Native/primary pixel preservation, retained before failures, fault controls and exact region limits are recorded in GAIN_MAP_APPEND_CONTRACT.md. |
+
