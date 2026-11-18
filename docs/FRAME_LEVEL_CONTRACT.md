@@ -296,10 +296,46 @@ returned prepared-stream bytes as its final file. It accepts the LF-frame flag
 and can use the prepared patch producer; it does not use the request wrapper
 that classifies actual emitted frame records. Raw/prepared library methods leave
 container-level signaling to their callers, so the CLI needs its own gate in
-this audit. Source inspection alone does not establish an emitted-level defect.
+this audit. The small actual-file controls below establish independent bypasses; the large
+LF caller still has no execution verdict.
 
 A new caller-selected large probe prepares small and 16384-square RGB PNM
 controls, LF on/off, records actual frame geometry and the modular-width
 promise, then completely renders primary/native samples before reporting a
 level mismatch. It has not executed yet. The frozen older auxiliary binary is
 not substituted for this caller or for a current-source qualification.
+
+
+## November 19: observed CLI rate-control bypasses
+
+A current-main source-isolated before run uses 32x17 and 262144/262145x1
+RGB8 controls at effort one, zero rate-control iterations, DCT8 and no filters.
+The actual modular-buffer promise remains 16-bit. At width 262145, the output
+is a bare implicit-Level-5 codestream although Annex M requires Level 10.
+Explicit container-on is ignored even for the small control. Container-off at
+the Level 10 dimension is accepted and overwrites the caller's existing file.
+Both primary Rust and pinned native v0.12 completely render every emitted
+stream; decoder acceptance does not establish correct level signaling.
+
+The same CLI route accepts an RGB input with a supplied CMYK ICC, drops that
+profile and emits no Black channel. It also replaces the source PNG's gamma
+50000 metadata with sRGB. The ordinary request control retains the corresponding
+Gamma encoding. Original-profile native and primary float samples agree within
+0.001 in these runs; no physical magnitude of the gamma error is inferred from
+those original-encoding samples.
+
+The expected failing wrapper retains source identities, commands, destination
+sentinels, headers and complete native/primary outputs under
+`frame-level-cli-before-gates-v2`; the three groups are
+`frame-level-auxiliary-contract/run-8` through `run-10`. Production matches
+main `aac8dcce`, without the private H14 transport candidate. The wrapper exits
+1 in 43 seconds, run-heavy peak RSS 1.04 GiB, minimum available 18,362 MiB.
+The preceding compile failure used the wrong PNG test API and is retained
+separately; the corrected fixture uses the existing zenpng dependency.
+
+The repair must carry the selected iteration's actual frame requirement and
+combine it with the serialized basic-header constraints. Raw library methods
+retain their existing codestream contract. Container-owning CLI code also needs
+to consume or explicitly refuse source color/metadata options rather than
+silently dropping them. The private transport prototype is unqualified and
+adds no public API at this stage.
