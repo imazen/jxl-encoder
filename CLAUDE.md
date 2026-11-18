@@ -1800,6 +1800,11 @@ test/example imports use existing exports. CLI/prepared LF, metric accounting
 and private request integration retain their separate active findings.
 [Scope, retained failure and accepted continuation](docs/RATE_CONTROL_CONTRACT.md).
 
+The first new ARM lint job failed the strict v0.12 resolver because that job
+had no reference tools. Runtime checks now belong to native jobs with the
+existing pinned installation; lint jobs retain compile-only caller checks.
+No assertion or version requirement changes. Remote confirmation is pending.
+
 ### 2026-11-19: CLI rate-control LF and input-layout failures
 
 The retained main-only CLI accepts LF on a 32x17 RGB8 input, but both the

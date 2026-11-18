@@ -240,6 +240,13 @@ jobs:
           cargo check --locked -p jxl-encoder --no-default-features
           --features std,rate-control,__expert --lib
 
+      - name: Test rate-control with and without the optional buttloop
+        env:
+          JXL_ENCODER_OUTPUT_DIR: ${{ runner.temp }}/issue144-contracts
+        run: |
+          cargo test --locked -p jxl-encoder --release --no-default-features --features std,rate-control,__expert --test rate_control_feature_contract -- --test-threads=1
+          cargo test --locked -p jxl-encoder --release --features __expert,parallel,rate-control --test rate_control_feature_contract -- --test-threads=1
+
       - name: Optional ICC row conversion and default-disabled feature graph
         run: |
           cargo test --locked --release -p jxl-encoder --no-default-features --features __expert,jpeg-reencoding,chroma-subsampling --lib api::cms::
@@ -619,12 +626,8 @@ jobs:
       - name: Clippy (default features)
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
 
-      - name: Test rate-control with and without the optional buttloop
-        env:
-          JXL_ENCODER_OUTPUT_DIR: ${{ runner.temp }}/issue144-contracts
+      - name: Check optional rate-control expert callers
         run: |
-          cargo test --locked -p jxl-encoder --release --no-default-features --features std,rate-control,__expert --test rate_control_feature_contract -- --test-threads=1
-          cargo test --locked -p jxl-encoder --release --features __expert,parallel,rate-control --test rate_control_feature_contract -- --test-threads=1
           cargo check --locked -p jxl-encoder --features __expert,parallel,rate-control --example bench_buffering_rss_rate_control
           cargo check --locked -p jxl-encoder --features __expert,__pre_quantized,parallel,rate-control --test it
       - name: Check optional rate-control CLI

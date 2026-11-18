@@ -37,5 +37,9 @@ findings, not process-RSS overruns. Candidate repairs retain separate verdicts.
 See the [frame-level/CLI inventory](FRAME_LEVEL_CONTRACT.md). Region evidence for changed
 algorithms remains separate from this feature-namespace repair; test counts do
 not establish coverage. CI runs minimal library compilation on native platforms
-and both runtime feature variants in the expert job. A new commit's remote CI
-must retain its own verdict.
+and both runtime feature variants in native jobs that install pinned v0.12
+tools. Compile-only expert callers remain in the lint matrix. The initial new
+ARM lint run44490140699 failed at the strict version guard because that job
+had no reference installation; it supplies no pixel verdict. Runtime checks
+were relocated to the existing native reference-tool jobs with all assertions
+unchanged. A new commit's remote CI must retain its own verdict.
