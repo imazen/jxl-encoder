@@ -3326,3 +3326,9 @@ animation-alpha-options-check manifest:
     cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --lib --test animation_alpha_contract --test animation_alpha_layers_contract -- -D warnings
     cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert --lib --test animation_alpha_contract --test animation_alpha_layers_contract -- -D warnings
     cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+
+alpha-coding-faults manifest output coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/test_alpha_coding_mutations.py "$2" "$3"' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+animation-alpha-forward-regions output llvm +archives:
+    python3 scripts/color_admission_coverage.py {{quote(llvm)}} {{quote(output)}} {{archives}} --animation-alpha-forward

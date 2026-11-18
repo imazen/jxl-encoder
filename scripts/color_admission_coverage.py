@@ -23,6 +23,7 @@ p.add_argument('--gain-map', action='store_true')
 p.add_argument('--request-limits', action='store_true')
 p.add_argument('--container-policy', action='store_true')
 p.add_argument('--alpha-tree', action='store_true')
+p.add_argument('--animation-alpha-forward', action='store_true')
 p.add_argument('--rate-control-metric', action='store_true')
 p.add_argument('--jpeg-scan-grid', action='store_true')
 p.add_argument('--jpeg-color', action='store_true')
@@ -120,6 +121,14 @@ if a.alpha_tree:
         observe('jxl-encoder/src/modular/encode_tree.rs', name)
     (a.output / 'regions.json').write_text(json.dumps(dict(inputs=identities, functions=rows,
         note='Exact shared lossy-tree function bodies and runtime identities; mapped execution regions only, not input-space coverage.'), indent=2))
+    sys.exit(0)
+
+if a.animation_alpha_forward:
+    observe('jxl-encoder/src/api/animate.rs', 'encode_animation_lossy')
+    observe('jxl-encoder/src/api/animate.rs', 'encode_animation_lossy', window=('let float_alpha_coding =', 9))
+    observe('jxl-encoder/src/api.rs', 'choose', 0)
+    (a.output / 'regions.json').write_text(json.dumps(dict(inputs=identities, functions=rows,
+        note='Animation caller and common float-alpha representation choice. Straight-line config assignments have no independent branch counter; restored faults retain their own runtime evidence.'), indent=2))
     sys.exit(0)
 
 if a.container_policy:

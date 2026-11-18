@@ -90,4 +90,10 @@ by their fixed zero and Gradient tokens; symbol depth zero likewise has no
 valid caller here. The channel split's negative threshold arm is excluded
 by its zero-based increasing channel decisions. Raw/hybrid and extra-bit
 choices are observed. These fractions do not prove a full input-space or
-whole-encoder qualification. Restored-fault controls remain a separate step.
+whole-encoder qualification. The later q76 restored-fault controls detect both a forced raw representation
+and zeroed HybridUint extra-bit payloads through the independent still check.
+A separate single-leaf-only raw fault is detected by the high-precision matrix,
+including observed 32769/32770-entry invalid alphabets. Each mutated source
+is restored byte-for-byte; every control has an actual runtime exit 101,
+retained fixed/fault source hashes, executable and profile. Their exact records
+are in `animation-alpha-alpha-coding-q76-faults-v1/results.json`.

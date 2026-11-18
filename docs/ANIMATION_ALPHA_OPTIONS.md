@@ -84,3 +84,29 @@ native-platform CI selections do not themselves establish remote success.
 Run `just animation-alpha-options-check <pinned-manifest>` with explicit
 `CJXL_PATH`, `DJXL_PATH` and `LIBJXL_ORIGINAL_PROFILE_ORACLE` from the same
 verified v0.12 build. Each source export needs its own Cargo target directory.
+
+The q76 restored-fault run independently removes distance forwarding, squeeze
+forwarding and positive-distance float representation selection. Each actual
+test runtime exits 101 and retains the fixed/fault source, ELF and profile;
+no compilation failure is counted. The same run detects forced raw tree
+coding, corrupted tree extra bits and a separate single-leaf raw-coding fault.
+All six sources are restored exactly. The wrapper exits zero in 316 seconds,
+with build/check peak RSS 0.98 GiB and minimum available 17943 MiB.
+
+`animation-alpha-q76-regions-v1` validates captured sources and successful
+object/profile identities before combining exact function bodies. The common
+float-header window is 25/25 mapped execution regions, and `AlphaCoding::choose`
+is 31/31. The latter includes the earlier precision/still profiles whose chooser
+body is identical; their old animation bodies are explicitly excluded.
+Straight-line setting assignments have no independent branch counter, so their
+causal evidence is the separate restored-field runtime failures.
+
+The complete animation function is 433/541 mapped regions in this selected
+union. Unexecuted regions include LF/spline refusal, fallible admission and
+writer errors, maximum-strategy and filter overrides, metadata/request tone
+overrides, non-alpha and CMYK metadata/payloads, nondefault blend-source crop
+selection, exact non-half f32 payloads and invisible-color simplification.
+They are not classified collectively unreachable. Existing precision and CMYK
+contracts are being replayed on the new body; their coverage must retain its
+own exact source/profile identities. These fractions do not replace those
+contracts or establish whole-function input-space coverage.
