@@ -3307,3 +3307,13 @@ request-controller-dictionary-check manifest:
 # Compare only complete named dictionary matrices and preserve individual hashes.
 request-dictionary-replay-identity baseline candidate output:
     python3 scripts/compare_request_dictionary_replays.py {{quote(baseline)}} {{quote(candidate)}} {{quote(output)}}
+
+# Caller provides guarded v0.12 tools and uses run-heavy for local execution.
+alpha-large-multiplier-check manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --test alpha_squeeze_matrix high_precision_alpha_large_quantizers -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,rate-control --test alpha_large_multiplier_contract -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert,rate-control --test alpha_squeeze_matrix high_precision_alpha_large_quantizers -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert,rate-control --test alpha_large_multiplier_contract -- --test-threads=1
+
+alpha-tree-regions output llvm +archives:
+    python3 scripts/color_admission_coverage.py {{quote(llvm)}} {{quote(output)}} {{archives}} --alpha-tree

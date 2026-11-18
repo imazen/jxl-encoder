@@ -339,3 +339,18 @@ matrix, progressive boundaries, squeeze geometry, optional library baseline
 and byte locks. No encoder pixel algorithm, expectation or tolerance changes
 with this pin. The dedicated decoder CI verdict remains distinct from the
 encoder's fresh platform CI.
+
+## High-precision alpha tree alphabets
+
+Shared repairc9331a68 bounds specialized lossy-tree alphabets with existing
+HybridUint coding, preserving quantizers and sample choices. The32x17
+RGBA16 distance10 still fails both decoders before repair; the independently
+encoded native reference remains valid. [Complete trigger, native sample
+checks, caller inventory and mapped/error gaps](ALPHA_TREE_CODING.md).
+
+The existing matrix runner now includes large-multiplier policy, precision,
+progressive, geometry and output-entry controls. Native-platform CI explicitly
+selects the small still regression in default/minimal builds; the expert job
+also selects request-controller and minimal high-precision controls. Local
+qualification is separate from each new remote platform verdict. Animation
+alpha-distance/squeeze forwarding remains a separately qualified caller fix.

@@ -286,6 +286,13 @@ jobs:
           --features __expert,__internals,__pre_quantized,parallel
           --test lf_caller_contract -- --test-threads=1
 
+      - name: Test high-precision alpha tree coding in both feature builds
+        env:
+          JXL_ENCODER_OUTPUT_DIR: ${{ runner.temp }}/issue144-contracts
+        run: |
+          cargo test --locked --release -p jxl-encoder --features __expert,parallel --test alpha_large_multiplier_contract alpha_large_multiplier_still_writer -- --test-threads=1
+          cargo test --locked --release -p jxl-encoder --no-default-features --features std,convenience,__expert --test alpha_large_multiplier_contract alpha_large_multiplier_still_writer -- --test-threads=1
+
       - name: Test configured pixel container policies
         env:
           JXL_ENCODER_OUTPUT_DIR: ${{ runner.temp }}/issue144-contracts
@@ -553,6 +560,14 @@ jobs:
           --test modular_width_level_contract --test animation_contract
           --test jpeg_sampling_contract
           -- --test-threads=1
+      - name: Test large alpha multipliers through request control and minimal features
+        env:
+          JXL_ENCODER_OUTPUT_DIR: ${{ runner.temp }}/issue144-contracts
+        run: |
+          cargo test --locked --release -p jxl-encoder --features __expert,parallel,rate-control --test alpha_large_multiplier_contract -- --test-threads=1
+          cargo test --locked --release -p jxl-encoder --no-default-features --features std,convenience,__expert,rate-control --test alpha_squeeze_matrix high_precision_alpha_large_quantizers -- --test-threads=1
+          cargo test --locked --release -p jxl-encoder --no-default-features --features std,convenience,__expert,rate-control --test alpha_large_multiplier_contract -- --test-threads=1
+
       - name: Selected modular and decoder reconstruction contracts
         env:
           JXL_ENCODER_OUTPUT_DIR: ${{ runner.temp }}/issue144-contracts

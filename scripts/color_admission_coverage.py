@@ -22,6 +22,7 @@ p.add_argument('--jpeg-dht', action='store_true')
 p.add_argument('--gain-map', action='store_true')
 p.add_argument('--request-limits', action='store_true')
 p.add_argument('--container-policy', action='store_true')
+p.add_argument('--alpha-tree', action='store_true')
 p.add_argument('--rate-control-metric', action='store_true')
 p.add_argument('--jpeg-scan-grid', action='store_true')
 p.add_argument('--jpeg-color', action='store_true')
@@ -111,6 +112,15 @@ def observe(relative, name, occurrence=0, window=False):
                      inputs=inputs, excluded_different_body=excluded, covered=sum(v > 0 for v in counts.values()), total=len(counts),
                      missing_relative_regions=[k for k, v in sorted(counts.items()) if not v]))
     print(json.dumps(rows[-1]))
+
+if a.alpha_tree:
+    for name in ['lossy_tree_config', 'channel_tree_max_raw', 'write_lossy_tree_symbol',
+                 'write_tree_histogram_for_gradient_lossy', 'write_gradient_tree_tokens_lossy',
+                 'write_tree_histogram_for_channel_split_lossy', 'write_channel_split_tree_tokens']:
+        observe('jxl-encoder/src/modular/encode_tree.rs', name)
+    (a.output / 'regions.json').write_text(json.dumps(dict(inputs=identities, functions=rows,
+        note='Exact shared lossy-tree function bodies and runtime identities; mapped execution regions only, not input-space coverage.'), indent=2))
+    sys.exit(0)
 
 if a.container_policy:
     observe('jxl-encoder/src/api/ingest.rs', 'wrap_output')
