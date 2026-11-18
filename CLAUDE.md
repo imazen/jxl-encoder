@@ -6743,14 +6743,16 @@ allocator/serializer exits remain outside the selected region evidence.
 Existing byte expectations and ignores are unchanged. Full source, fault,
 mode/caller and feature evidence is in CONDITIONAL_MODULAR_CONTRACT.md.
 
-### Issue 144 gain-map append API proposed for review, November 18
+### RESOLVED issue 144 gain-map append API, November 18
 
 Duplicate direct/compressed maps and malformed box boundaries now have a
-verified Result-returning candidate, with unchanged first-append pixels and
+verified Result-returning helper, with unchanged first-append pixels and
 input bytes. The owner approved this breaking low-level signature through a
 PR assigned to lilith; the typed helper retains its signature. Raw/typed
 regions are 29/29 and 9/9; existing parser regions 53/57 retain three impossible
 array-conversion error continuations and one 32-bit-only overflow refusal.
 Restored runtime faults, locked library/compatibility/byte checks, doctests,
-strict workspace lint and default-disabled append checks pass. Main keeps its
-existing API until the PR is reviewed. [Contract](docs/GAIN_MAP_APPEND_CONTRACT.md).
+strict workspace lint and default-disabled append checks pass. The approved
+signature is merged through PR145 at699ad7cd. Current-main integration passes
+with exact overlay restoration (rc0/182s, peak RSS1.08GiB/min18922MiB).
+[Contract](docs/GAIN_MAP_APPEND_CONTRACT.md).

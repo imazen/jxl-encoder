@@ -4,7 +4,7 @@ Part 2 clause 9.11 permits at most one `jhgm` box. The owner selected rejection
 of an existing map, including its `brob` representation, and approved a
 fallible low-level helper through a PR assigned to lilith.
 
-The proposed source-breaking signature is:
+The approved source-breaking signature is:
 
 ```rust,ignore
 pub fn append_gain_map_box(
@@ -39,8 +39,8 @@ payload bytes and unchanged primary pixels. Boundary controls include truncated
 ordinary/extended headers, undersized lengths and oversized lengths. Typed
 serializer errors have a separate propagation control.
 
-The new signature is a proposed breaking change until reviewed and merged.
-No crate publication is authorized by these checks.
+The approved signature is merged through [PR145](https://github.com/imazen/jxl-encoder/pull/145)
+at `699ad7cd`. No crate publication is authorized by these checks.
 
 Exact-source LLVM evidence (`gain-map-final/regions/regions.json`) observes
 29/29 regions in the raw helper and 9/9 in the typed forwarding helper.
@@ -64,3 +64,13 @@ features disabled. `gain-map-final-validation.log` records rc0/172 seconds,
 build/test peak RSS 1.69 GiB and minimum available 18,744 MiB. The final
 restored executable, sources and profiles are retained in `gain-map-final`;
 existing ignores, byte expectations and quality thresholds are unchanged.
+
+
+The current-main integration also passes duplicate-box, complete native/primary
+JPEG reconstruction and compatibility-surface checks against the frozen sibling
+graph. Its six overlays restore exactly. Evidence:
+pr145-reference-main-integration.log, rc0/182s, peak RSS1.08GiB,
+minimum available18922MiB. The preceding review tip f928b171 passed complete CI,
+including Windows ARM, macOS ARM and i686; the integrated tip has its own pending
+CI verdict. These checks do not establish the separate C5 reconstruction-gamut
+contract or expand raw ICC/bundle validation.
