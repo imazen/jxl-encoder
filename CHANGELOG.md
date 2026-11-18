@@ -236,6 +236,7 @@
 - Fix malformed lossless animation headers when identical frames repeat on a 1×1 canvas. Omit the redundant full-canvas crop so Replace blending does not emit a partial-frame source field.
 
 ### QUEUED BREAKING CHANGES
+- `append_gain_map_box` returns `Result<Vec<u8>, EncodeError>` and rejects an existing direct/compressed gain map or malformed container boundaries; callers must handle or propagate the result (`ce7d835b`).
 - `EncoderImprovementsCustom` gains `lossless_lz77_keep_best`; exhaustive struct literals must supply it or use `..Default::default()` (`4e1d70a6`).
 
 
