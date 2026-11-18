@@ -30,6 +30,7 @@ pub(crate) mod color;
 mod color_math;
 pub(crate) mod container;
 pub(crate) mod debug_rect;
+mod frame_level;
 // `effort` carries internal effort-derived knobs (#76: now
 // `pub(crate)` — the 0.3.0-compat root re-export of `EffortProfile`
 // stays, `#[doc(hidden)]`, and closes the old `effort::EffortProfile`

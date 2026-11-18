@@ -2812,6 +2812,13 @@ Remaining layout inventory is tracked separately in the progressive contract.
 |---|---|---|---|
 | Both animation writers, `advance_crop_reference` | Retain source bytes iff normal frame saves in slot one and blend is unset/Replace. ReferenceOnly slot-one writes clear the cache; other ReferenceOnly writes preserve it. Crop only if mode is unset and source is unset/one. | Part 1 F.2/F.7: cropped composition reads its signaled saved canvas. Actual before streams read a different canvas and return wrong pixels in primary Rust and native v0.12. | Shared correctness repair without new registry values or gate metadata. Selected default/minimal matrices, actual partial-crop positive controls and independent source/history faults pass; limits in [ANIMATION_STATE_CONTRACT.md](ANIMATION_STATE_CONTRACT.md). |
 
+
+## Issue 144 emitted-frame level accounting
+
+| Site | Current behavior | Reference / format | Status |
+|---|---|---|---|
+| Successful FrameHeader emission, BitWriter trial append and animation finalization | Record actual F.1 crop/scale and serialized duration; require Level 10 if consecutive zero-duration area exceeds 2^28 or positive duration × tick denominator × 120 is below tick numerator. Only selected trial records append with their payload. | Part 1 Annex M. Unmodified v0.12 emits Level 5 for the retained oversized-area and short-duration controls. | Animation-only repair verified in both writers across every offered policy, with selected byte/pixel, fault, baseline and exact-region controls. Still/streaming auxiliary propagation and LF caller verification remain open. No registry gate or metadata changes. [Contract](FRAME_LEVEL_CONTRACT.md). |
+
 ### Issue 144: selected full-frame delta reference
 
 | Site | Current behavior | Reference contract | Status |

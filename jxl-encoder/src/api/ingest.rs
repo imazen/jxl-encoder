@@ -1403,7 +1403,8 @@ pub(crate) fn finish_animation_output(
         has_black,
         icc_size,
         encoded.metadata.modular_16bit_buffer_sufficient(),
-    )?;
+    )?
+    .max(encoded.frame_level);
 
     Ok(wrap_metadata_container(
         encoded.codestream,

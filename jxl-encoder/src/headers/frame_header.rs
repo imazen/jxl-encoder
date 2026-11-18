@@ -399,6 +399,11 @@ impl FrameHeader {
     ///
     /// Follows the JXL codestream specification (ISO 18181-1) Table A.2.
     pub fn write(&self, writer: &mut BitWriter) -> Result<()> {
+        self.write_fields(writer)?;
+        writer.record_frame(self)
+    }
+
+    fn write_fields(&self, writer: &mut BitWriter) -> Result<()> {
         let normal_frame =
             self.frame_type == FrameType::Regular || self.frame_type == FrameType::SkipProgressive;
         if normal_frame && self.have_crop() && self.canvas_size.is_none() {
@@ -408,7 +413,7 @@ impl FrameHeader {
         }
         // all_default: true only when all fields match the decoder's default
         // VarDCT default frame: Regular, VarDCT, no flags, do_ycbcr=true,
-        // upsampling=1, group_size_shift=1, x/b_qm_scale=2, 1 pass,
+        // upsampling=1, group_size_shift=1, x_qm_scale=3/b_qm_scale=2, 1 pass,
         // no crop, Replace blend, is_last=true, no name, gab+epf2
         let all_default = self.is_all_default();
         writer.write_bit(all_default)?;
@@ -813,7 +818,7 @@ impl FrameHeader {
     /// Returns true if all fields match the decoder's "all_default" frame header.
     ///
     /// The all_default frame header is: Regular VarDCT, no flags, do_ycbcr=true,
-    /// upsampling=1, group_size_shift=1, x/b_qm_scale=2, 1 pass, no crop,
+    /// upsampling=1, group_size_shift=1, x_qm_scale=3/b_qm_scale=2, 1 pass, no crop,
     /// Replace blend, is_last=true, no name, default loop filter (gab+epf2).
     /// Whether every serialized field equals the JXL spec default, so
     /// `all_default = 1` (one bit) may replace the ~24-bit long form.

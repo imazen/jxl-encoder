@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- Select animation codestream levels from actual emitted frame areas and
+  rational durations, carrying only the winning trial sequence.
+
 - Keep selected full-frame animation deltas tied to the slot-one canvas used
   for subtraction, including their alpha Add source.
 

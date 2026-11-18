@@ -42,6 +42,7 @@ pub struct BitWriter {
     storage: Vec<u8>,
     /// Total number of bits written.
     bits_written: usize,
+    frame_sequence: crate::frame_level::FrameSequence,
 }
 
 impl Default for BitWriter {
@@ -56,6 +57,7 @@ impl BitWriter {
         Self {
             storage: Vec::new(),
             bits_written: 0,
+            frame_sequence: Default::default(),
         }
     }
 
@@ -68,6 +70,7 @@ impl BitWriter {
         Self {
             storage: Vec::with_capacity(capacity_bytes),
             bits_written: 0,
+            frame_sequence: Default::default(),
         }
     }
 
@@ -89,6 +92,7 @@ impl BitWriter {
         Ok(Self {
             storage,
             bits_written: 0,
+            frame_sequence: Default::default(),
         })
     }
 
@@ -247,7 +251,8 @@ impl BitWriter {
         }
 
         let other_bytes = other.bytes_written();
-        self.append_bytes(&other.storage[..other_bytes])
+        self.append_bytes(&other.storage[..other_bytes])?;
+        self.frame_sequence.append(&other.frame_sequence)
     }
 
     /// Appends another BitWriter's contents, allowing unaligned data.
@@ -267,7 +272,24 @@ impl BitWriter {
             self.write(remaining_bits, last_bits)?;
         }
 
+        self.frame_sequence.append(&other.frame_sequence)?;
         Ok(())
+    }
+
+    pub(crate) fn record_frame(
+        &mut self,
+        header: &crate::headers::frame_header::FrameHeader,
+    ) -> Result<()> {
+        self.frame_sequence.record(header)
+    }
+
+    pub(crate) fn frame_level(
+        &self,
+        width: u32,
+        height: u32,
+        clock: Option<(u32, u32)>,
+    ) -> Result<u8> {
+        self.frame_sequence.required_level(width, height, clock)
     }
 
     /// Returns a view of the written bytes.

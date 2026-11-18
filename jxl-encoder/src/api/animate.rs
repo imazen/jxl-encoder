@@ -11,6 +11,7 @@ use super::*;
 /// Carry the actual common header to final level selection.
 pub(super) struct EncodedAnimation {
     pub(super) codestream: Vec<u8>,
+    pub(super) frame_level: u8,
     pub(super) metadata: crate::headers::file_header::ImageMetadata,
 }
 
@@ -20,6 +21,14 @@ fn finish_animation_codestream(
     icc: Option<&[u8]>,
     frames: crate::bit_writer::BitWriter,
 ) -> Result<EncodedAnimation> {
+    let clock = header
+        .metadata
+        .animation
+        .as_ref()
+        .map(|a| (a.tps_numerator, a.tps_denominator));
+    let frame_level = frames
+        .frame_level(header.width, header.height, clock)
+        .map_err(at_from)?;
     let mut prefix = crate::bit_writer::BitWriter::new();
     header.write_with_icc(icc, &mut prefix).map_err(at_from)?;
     let prefix = prefix.finish_with_padding();
@@ -39,6 +48,7 @@ fn finish_animation_codestream(
     codestream[..prefix.len()].copy_from_slice(&prefix);
     Ok(EncodedAnimation {
         codestream,
+        frame_level,
         metadata: header.metadata,
     })
 }
