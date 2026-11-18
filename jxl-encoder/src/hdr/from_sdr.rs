@@ -373,12 +373,12 @@ impl<'a> HdrFromSdrRequest<'a> {
             ultrahdr_core::Iso21496Format::JxlJhgm,
         );
 
-        // 8. Build the typed bundle and append the `jhgm` box. We do
-        // NOT set `color_encoding` on the bundle — the gain map's color
-        // encoding is implicit from the codestream we encoded in step 6
-        // (a single-channel grayscale or 3-channel sRGB JXL). Decoders
-        // that care will read it from the inner codestream's own
-        // `ImageMetadata`.
+        // 8. Build the typed bundle and append the `jhgm` box. Its optional
+        // color fields describe the reconstructed alternate image (Part 2
+        // 9.11). Leaving them unset selects the baseline image's encoding.
+        // The inner gain-map codestream carries its own encoding separately.
+        // Qualification of differing baseline/alternate gamuts remains open;
+        // see docs/GAIN_MAP_COLOR_CONTRACT.md.
         let bundle = GainMapBundle::new(iso21496, gm_jxl);
         let container = append_gain_map_bundle(&sdr_jxl, &bundle)?;
         Ok(container)
