@@ -26,12 +26,15 @@ fn source(width: u16, height: u16, h: u8, v: u8, gray: bool, progressive: bool) 
     tables.extend([0; 15]);
     tables.push(0);
     marker(&mut out, 0xc4, &tables);
-    let mut scan = vec![channels];
-    for c in 1..=channels {
-        scan.extend([c, 0]);
+    let separate = !gray && h * v * channels > 10;
+    if !separate {
+        let mut scan = vec![channels];
+        for c in 1..=channels {
+            scan.extend([c, 0]);
+        }
+        scan.extend([0, if progressive { 0 } else { 63 }, 0]);
+        marker(&mut out, 0xda, &scan);
     }
-    scan.extend([0, if progressive { 0 } else { 63 }, 0]);
-    marker(&mut out, 0xda, &scan);
     let blocks = if gray {
         usize::from(width).div_ceil(8) * usize::from(height).div_ceil(8)
     } else {
@@ -47,7 +50,19 @@ fn source(width: u16, height: u16, h: u8, v: u8, gray: bool, progressive: bool) 
             out.push((1 << (8 - bits % 8)) - 1);
         }
     }
-    zero_bits(&mut out, blocks * if progressive { 1 } else { 2 });
+    if separate {
+        let visible_blocks = usize::from(width).div_ceil(8) * usize::from(height).div_ceil(8);
+        for c in 1..=channels {
+            marker(
+                &mut out,
+                0xda,
+                &[1, c, 0, 0, if progressive { 0 } else { 63 }, 0],
+            );
+            zero_bits(&mut out, visible_blocks * if progressive { 1 } else { 2 });
+        }
+    } else {
+        zero_bits(&mut out, blocks * if progressive { 1 } else { 2 });
+    }
     if progressive {
         // Noninterleaved AC scans traverse visible blocks, even when the
         // interleaved DC scan had a larger MCU-completed component grid.
