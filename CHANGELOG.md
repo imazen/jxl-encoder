@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+- Route optional CLI rate control through pixel requests, preserving input
+  precision, source/ICC interpretation, alpha, LF data and container metadata;
+  reject unsupported animation, JPEG-domain and lossless combinations before
+  replacing an existing destination (`f2c0ebe6`).
+
 - Add the default-off `EncodeRequest::with_rate_control` adapter using the
   existing configuration type, preserving the ordinary request pipeline
   (`efebdb40`).

@@ -2239,7 +2239,9 @@ dependencies = [
  "jxl 0.4.3",
  "jxl 0.8.0",
  "jxl-encoder",
+ "jxl-oxide",
  "png",
+ "serde_json",
 ]
 
 [[package]]
