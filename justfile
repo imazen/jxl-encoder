@@ -3270,3 +3270,15 @@ metric-map-final-check manifest artifacts coverage_env:
     bash -c 'set -e; source "$1"; python3 scripts/test_prepared_payload_mutations.py "$2" "$3/mutations" --metric' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
     cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,rate-control --lib --test rate_control_feature_contract -- -D warnings
     cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+
+# Retain individual verdicts while running independent qualifications serially.
+serialized-qualification-queue plan output:
+    python3 scripts/run_serialized_qualification_queue.py {{quote(plan)}} {{quote(output)}}
+
+# Check an existing ELF and all required libraries before runtime-only replay.
+stage-archived-runtime archive template output:
+    python3 scripts/stage_archived_runtime.py {{quote(archive)}} {{quote(template)}} {{quote(output)}}
+
+# Archives every file before reclaiming an explicitly selected inactive Cargo target.
+archive-inactive-cargo source output:
+    python3 scripts/archive_inactive_cargo.py {{quote(source)}} {{quote(output)}} --reclaim

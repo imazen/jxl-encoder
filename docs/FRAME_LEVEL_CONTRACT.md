@@ -490,3 +490,19 @@ queue fails on reversed tool arguments, before export; the corrected container
 export succeeds. The stale request profile is correctly refused when its full
 animation-finalizer body differs from current source; that separate request
 profile is being regenerated, without weakening body-identity checks.
+
+### Reproducible evidence operations
+
+`just serialized-qualification-queue <plan> <output>` executes explicit
+commands in order and retains each verdict. A failing cell keeps the overall
+queue nonzero; independent later controls retain their own results. Optional
+before gates require a retained runtime failure and its diagnostic before
+applying a candidate. Build-only evidence supplies no runtime verdict.
+
+`just stage-archived-runtime <archive> <template> <output>` checks the retained
+ELF, library hashes and required dynamic dependencies before runtime-only
+replay. `just archive-inactive-cargo <source> <output>` refuses a live build or
+executable, verifies every archived file, then reclaims only the named Cargo
+output. Source exports, reference binaries and evidence archives are separate.
+These commands have been exercised by the issue-144 selected-source queues;
+source-body binding remains mandatory when combining profiles.
