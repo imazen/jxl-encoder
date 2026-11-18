@@ -2980,3 +2980,9 @@ Remaining layout inventory is tracked separately in the progressive contract.
 | Site | Encoder/test choice | Independent control | Status |
 |---|---|---|---|
 | Library and CLI primary0.8 dev decoder | Pinf9d86075, preserving perpendicular output-tile offsets when reading packed next-average borders | Unmodified v0.12 native independently encoded horizontal/vertical streams and complete delivered alpha planes | Dependency-only repair for the unchanged alpha tests. Core50c65e45; no encoder arithmetic, registry gate, constant or preset choice changes. Exact integration verdict is retained in RATE_CONTROL_CONTRACT.md. |
+
+### Issue 144: bounded lossy alpha tree alphabets
+
+| Site | Encoder selection | Pinned/native control | Status |
+|---|---|---|---|
+| `modular::encode_tree` lossy Gradient/channel-split histogram and token pairs | Keep HybridUint(15,0,0) when `max_raw < 32767`; otherwise use the existing general-tree HybridUint(4,2,0), including extra bits | Part 1 C.2/C.3 permits the representation. Native v0.12 rejects the old40527-entry raw alphabet and recovers every selected repaired alpha code | Shared serialization repair; quantizers and samples unchanged. Default/minimal still/controller, policy/progressive/entry and geometry controls, unchanged locks/drift and strict lint pass. Exact bodies and error/unreachable region gaps: [ALPHA_TREE_CODING.md](ALPHA_TREE_CODING.md). No registry gate, preset or macro metadata changes. |

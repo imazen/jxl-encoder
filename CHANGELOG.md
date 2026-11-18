@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Bound specialized lossy alpha tree alphabets with HybridUint for large multipliers, preserving quantizers and alpha sample choices.
+
 - Pin the primary test decoder border-view repair for native squeezed-alpha edge controls; encoder pixel algorithms and expectations are unchanged.
 
 - Route optional CLI rate control through pixel requests, preserving input

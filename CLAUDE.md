@@ -1788,6 +1788,19 @@ separate queue items. Broad/coverage/remote verdicts must be read independently.
 
 ## Known Bugs (ACTIVE)
 
+### RESOLVED 2026-11-19: high-precision alpha tree prefix alphabet overflow
+
+A32x17 RGBA16 squeeze/alpha-distance10 still emits a40527-symbol raw
+prefix alphabet; both primary Rust and native v0.12 reject it. The specialized
+lossy-tree histogram/token pairs now use existing HybridUint(4,2,0) when
+max_raw>=32767, retaining raw(15,0,0) below. Quantizers and quantized alpha
+values are unchanged. Selected default/minimal native pixel, policy,
+progressive, source/caller, full-library, unchanged-lock and strict lint
+checks pass. Exact region/error gaps and before identities are recorded in
+docs/ALPHA_TREE_CODING.md. Animation alpha-setting forwarding remains a
+separate caller repair; this shared fix is qualified independently of it.
+
+
 ### RESOLVED 2026-11-19: primary decoder squeezed-alpha border view
 
 The primary0.8 oracle dropped the perpendicular output-tile offset when its
