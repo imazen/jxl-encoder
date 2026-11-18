@@ -183,7 +183,8 @@ fn lossy_per_region_loop_runs_for_multi_dc_group_input() {
 #[test]
 #[cfg(feature = "rate-control")]
 fn rate_control_buffering_dispatch_routes_correctly() {
-    use jxl_encoder::vardct::{RateControlConfig, VarDctEncoder};
+    use jxl_encoder::__test_exports::VarDctEncoder;
+    use jxl_encoder::vardct::RateControlConfig;
 
     // sRGB → linear converter used by the VarDctEncoder API.
     let to_lin = |c: u8| -> f32 {

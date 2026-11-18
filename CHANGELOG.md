@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- Keep the shared rate-control intensity resolver available without the optional
+  buttloop feature; update diagnostic/test callers to existing encoder exports.
+
 - Qualify progressive CMYK and separate Black/alpha callers against current
   production, including prepared/prequantized emission and the std-feature-disabled
   engine. Preserve exact final samples relative to Single (`f273358e`).

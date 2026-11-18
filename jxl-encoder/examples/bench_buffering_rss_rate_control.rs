@@ -12,17 +12,18 @@
 //! that path so the per-region precompute (chunk 5) is reachable from
 //! the user-facing API.
 //!
-//! Requires `--features rate-control`.
+//! Requires `--features rate-control,__expert`.
 //!
 //! Run with:
 //!   cargo run --release -p jxl-encoder \
-//!     --features rate-control \
+//!     --features rate-control,__expert \
 //!     --example bench_buffering_rss_rate_control [variant] [w] [h]
 
 #[cfg(feature = "rate-control")]
 fn main() {
+    use jxl_encoder::__test_exports::VarDctEncoder;
     use jxl_encoder::Buffering;
-    use jxl_encoder::vardct::{RateControlConfig, VarDctEncoder};
+    use jxl_encoder::vardct::RateControlConfig;
 
     let variant_str = std::env::args().nth(1).unwrap_or_else(|| "full".into());
     let variant = match variant_str.as_str() {

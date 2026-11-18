@@ -1510,7 +1510,7 @@ path = "examples/bench_buffering_rss.rs"
 [[example]]
 name = "bench_buffering_rss_rate_control"
 path = "examples/bench_buffering_rss_rate_control.rs"
-required-features = ["rate-control"]
+required-features = ["rate-control", "__expert"]
 
 # W38-2 wedge #1.1: paired A/B for fine_grained_step at e9 (1 = current
 # default = inverted vs libjxl, 2 = libjxl kTortoise+ value per

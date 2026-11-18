@@ -1788,6 +1788,18 @@ separate queue items. Broad/coverage/remote verdicts must be read independently.
 
 ## Known Bugs (ACTIVE)
 
+### RESOLVED issue144 minimal rate-control feature, November19
+
+Minimal `std,rate-control,__expert` compilation failed because the intensity
+resolver was referenced through the disabled optional buttloop module. The
+unchanged pure helper/default now live in always-compiled perceptual tuning.
+Default/minimal real-image controls fully render through primary Rust and pinned
+djxl v0.12. Existing intensity/raw integration checks, the full default library,
+unchanged normal/strict/drift locks, strict lint and formatting pass. Mechanical
+test/example imports use existing exports. CLI/prepared LF, metric accounting
+and private request integration retain their separate active findings.
+[Scope, retained failure and accepted continuation](docs/RATE_CONTROL_CONTRACT.md).
+
 ### 2026-11-19: CLI rate-control LF and input-layout failures
 
 The retained main-only CLI accepts LF on a 32x17 RGB8 input, but both the

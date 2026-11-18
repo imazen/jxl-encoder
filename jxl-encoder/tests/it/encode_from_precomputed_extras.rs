@@ -38,8 +38,9 @@
 
 #![cfg(feature = "rate-control")]
 
+use jxl_encoder::__test_exports::VarDctEncoder;
 use jxl_encoder::api::ExtraChannel;
-use jxl_encoder::vardct::{EncoderPrecomputed, VarDctEncoder};
+use jxl_encoder::vardct::EncoderPrecomputed;
 
 const W: usize = 32;
 const H: usize = 32;

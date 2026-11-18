@@ -45,9 +45,9 @@
 
 #![cfg(all(feature = "__pre_quantized", feature = "rate-control"))]
 
-use jxl_encoder::__pre_quantized::DistanceParams;
+use jxl_encoder::__pre_quantized::{DistanceParams, VarDctEncoder};
 use jxl_encoder::api::ExtraChannel;
-use jxl_encoder::vardct::{EncoderPrecomputed, VarDctEncoder};
+use jxl_encoder::vardct::EncoderPrecomputed;
 
 const W: usize = 32;
 const H: usize = 32;

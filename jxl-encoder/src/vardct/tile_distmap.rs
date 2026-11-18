@@ -173,7 +173,7 @@ impl TileDistMap {
 /// `intensity_target` is the butteraugli metric's display-luminance
 /// parameter (cd/m²). For libjxl-parity callers should resolve this
 /// from the encoded TF via
-/// [`crate::vardct::butteraugli_loop::libjxl_butteraugli_intensity_target`]
+/// [`crate::vardct::perceptual_tuning::libjxl_butteraugli_intensity_target`]
 /// (80.0 for SDR, metadata `intensity_target` for PQ/HLG). Closes
 /// W44-RECON-DEEP/A10.
 pub(crate) fn compute_butteraugli_diffmap(

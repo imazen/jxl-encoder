@@ -43,54 +43,6 @@ use crate::error::Result;
 // bare name unchanged.
 pub(crate) use super::perceptual_tuning::*;
 
-/// SDR butteraugli `intensity_target` default (cd/m²) — matches libjxl's
-/// `FindBestQuantization` (`enc_adaptive_quantization.cc:949-953`):
-/// `params.intensity_target = tf.IsPQ() || tf.IsHLG()
-///     ? frame_header.nonserialized_metadata->m.IntensityTarget()
-///     : 80.f;`
-///
-/// This is the **butteraugli metric** intensity_target (not the encode
-/// metadata `IntensityTarget()`). For SDR (sRGB / Linear / gamma /
-/// unknown TFs) the butteraugli model is calibrated at 80 cd/m² regardless
-/// of what the file-header `intensity_target` says.
-pub(crate) const LIBJXL_BUTTERAUGLI_SDR_INTENSITY_TARGET: f32 = 80.0;
-
-/// Resolve butteraugli's `intensity_target` parameter (cd/m²) from the
-/// encoded transfer function + the encode's metadata intensity_target.
-///
-/// Mirrors libjxl `enc_adaptive_quantization.cc:949-953`:
-/// ```text
-/// params.intensity_target =
-///     tf.IsPQ() || tf.IsHLG()
-///         ? frame_header.nonserialized_metadata->m.IntensityTarget()
-///         : 80.f;
-/// ```
-///
-/// - `TransferFunction::Pq`  → `metadata_intensity_target` (typically 10000.0 cd/m²)
-/// - `TransferFunction::Hlg` → `metadata_intensity_target` (typically 1000.0 cd/m²)
-/// - Everything else (sRGB / Linear / Bt709 / Dci / Unknown) → 80.0 cd/m²
-///
-/// For SDR encodes the butteraugli model is calibrated at 80 cd/m²
-/// independently of the file-header `intensity_target`; only PQ/HLG
-/// route the metadata value through to the perceptual comparator.
-///
-/// Closes W44-RECON-DEEP/A10. Without this dispatch, HDR (PQ/HLG)
-/// encodes computed butteraugli at SDR luminance (80 cd/m²), making
-/// the buttloop converge on the wrong perceptual target — HDR
-/// highlights got over-quantized, HDR shadows got the wrong noise
-/// budget.
-#[inline]
-pub fn libjxl_butteraugli_intensity_target(
-    tf: crate::headers::color_encoding::TransferFunction,
-    metadata_intensity_target: f32,
-) -> f32 {
-    use crate::headers::color_encoding::TransferFunction;
-    match tf {
-        TransferFunction::Pq | TransferFunction::Hlg => metadata_intensity_target,
-        _ => LIBJXL_BUTTERAUGLI_SDR_INTENSITY_TARGET,
-    }
-}
-
 // ===== Distance-aware buttloop tuning scaffolding (W38-2 #3.1).
 //
 // Infrastructure ported from GPU `d75bf7c` (memory

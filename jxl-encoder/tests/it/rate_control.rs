@@ -4,7 +4,8 @@
 
 #![cfg(feature = "rate-control")]
 
-use jxl_encoder::vardct::{RateControlConfig, VarDctEncoder};
+use jxl_encoder::__test_exports::VarDctEncoder;
+use jxl_encoder::vardct::RateControlConfig;
 
 /// sRGB to linear conversion.
 fn srgb_to_linear(c: u8) -> f32 {
