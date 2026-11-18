@@ -2872,6 +2872,13 @@ Remaining layout inventory is tracked separately in the progressive contract.
 |---|---|---|---|
 | `jpeg::encode::encode_jpeg_to_jxl_inner` frame grid | Pad with maximum raw horizontal/vertical sampling shifts; relative shifts still select per-channel coordinates. | `FrameDimensions::Set` uses `MaxHShift`/`MaxVShift`, retaining common absolute factors. Part 1 F.2. | Old equal-factor grayscale/YCbCr partial-MCU streams fail both decoders despite matching headers. Selected complete native/primary pixel and JPEG-byte controls pass; no strategy gate or gate-registry metadata changes. |
 | `.github/sibling-revisions.tsv`, `jpeg::parse::extract_coefficients_zenjpeg` | Frozen producer `5071e85c` tracks baseline trailing ZRLs; decoder `f8e0f0de` reconstructs trailing runs after final nonzero AC and uses visible noninterleaved scan grids. | Part 2 A.5; unmodified native v0.12 reconstructs the original baseline/progressive controls exactly. | Companion source-region/fault evidence stays separate from encoder coverage. Current-main producer dependency upgrades are excluded from the encoder pin. |
+
+### Issue 144 C3/C4: JPEG color signals and RGB sampling
+
+| Site | Encoder | Pinned v0.12 / format | Evidence and scope |
+|---|---|---|---|
+| `jpeg::detect_ycbcr_color_transform` | Require the JFIF identifier for APP0 precedence; unrelated APP0 retains Adobe/identifier interpretation. | Unmodified v0.12 treats any APP0 as JFIF in the selected controls. Independent libjpeg-turbo source samples remain RGB. | Shared reference discrepancy; candidate correction is unconditional across offered JPEG policy bindings. See JPEG_COLOR_SIGNAL_CONTRACT.md for actual before streams, positive precedence and caller evidence. No registry gate/value change. |
+| `jpeg::encode_jpeg_to_jxl_inner` RGB sampling admission | Reject any non-unit component factor when a three-component frame has no YCbCr transform. | F.2 does not carry JPEG sampling fields for an RGB frame. | Covers relative and equal absolute RGB factors through raw/parsed/bare/recompression/gain-map/CLI callers. Unit RGB remains supported. Native admission observations and coverage limits are recorded in JPEG_COLOR_SIGNAL_CONTRACT.md. |
 ### Issue 144 C1: gain-map multiplicity at public append entries
 
 | Site | Proposed behavior | Reference contract | Status |

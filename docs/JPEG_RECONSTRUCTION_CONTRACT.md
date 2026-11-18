@@ -321,3 +321,15 @@ Exact executable/profile/source evidence is retained as
 25/25 sampling, 8/8 grid, 16/17 import and 48/53 scan-writer measurements and
 previously documented defensive error-return gaps. No production arithmetic,
 expected bytes, thresholds or ignores change in this follow-up.
+
+
+### Portable common-factor component scans
+
+The final common-grid fixture uses separate component scans when an interleaved
+MCU would contain more than ten blocks. This avoids libjpeg-turbo's configured
+interleaved-MCU limit while retaining equal absolute 2x2 factors, partial frame
+grids and both baseline/progressive syntax. Earlier twelve-block compatibility
+inputs and their evidence are retained separately. All pixel/JPEG-byte assertions
+remain. The revised controls pass normal execution and both restored old grid
+dimension faults; color/metadata fields and producer/decoder policies are unchanged.
+See [the color-signal contract](JPEG_COLOR_SIGNAL_CONTRACT.md).

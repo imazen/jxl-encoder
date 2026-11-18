@@ -8,6 +8,7 @@ import subprocess
 
 p=argparse.ArgumentParser(description=__doc__)
 p.add_argument('llvm',type=Path);p.add_argument('archive',type=Path);p.add_argument('output',type=Path)
+p.add_argument('--color',action='store_true')
 a=p.parse_args();a.output.mkdir(exist_ok=False)
 def digest(path):return hashlib.sha256(path.read_bytes()).hexdigest()
 identity=json.loads((a.archive/'identity.json').read_text());assert identity['exit_code']==0
@@ -18,9 +19,9 @@ assert len(objects)==1;row=objects[0];binary=a.archive/Path(row['staged']).name;
 profiles=[];commands=[]
 for meta in sorted(a.archive.glob('grid-child-*.meta.txt')):
  lines=meta.read_text().splitlines();assert len(lines)==5
- pid,label,original,code,invocation=lines;assert original==row['original'] and code=='0'
+ pid,label,original,code,invocation=lines;assert original==row['original'];assert code==('1'if a.color and 'color-refusal-'in label else '0'),(label,code)
  found=list(a.archive.glob(f'grid-child-{label}-{pid}-*.profraw'));assert len(found)==1,(meta,found)
- profiles.extend(found);commands.append({'pid':int(pid),'label':label,'invocation':invocation,'exit_code':0,'profile':found[0].name,'profile_sha256':digest(found[0])})
+ profiles.extend(found);commands.append({'pid':int(pid),'label':label,'invocation':invocation,'exit_code':int(code),'profile':found[0].name,'profile_sha256':digest(found[0])})
 assert profiles and len(set(profiles))==len(profiles)
 assert set(profiles)==set(a.archive.glob('grid-child-*.profraw'))
 profile=a.output/'cli.profdata';subprocess.run([str(a.llvm/'llvm-profdata'),'merge','-sparse',*map(str,profiles),'-o',str(profile)],check=True)
@@ -34,6 +35,11 @@ windows=[
  ('transcode-call','jxl-encoder-cli/src/main.rs','let encoded = match cfg.encode_jpeg_transcode',1),
  ('coarsen-call','jxl-encoder-cli/src/main.rs','let encoded = match jxl_encoder::jpeg::encode_jpeg_recompress_auto_codestream',8),
 ]
+if a.color:
+ windows=[
+  ('rgb-admission','jxl-encoder/src/jpeg/encode.rs','if jpeg.components.len() == 3',11),
+  *[w for w in windows if w[0]!='shared-grid'],
+ ]
 summary=[]
 for label,relative,marker,length in windows:
  lines=(a.archive/'source'/relative).read_text().splitlines();first=next(i+1 for i,line in enumerate(lines)if marker in line);last=first+length-1;regions={}

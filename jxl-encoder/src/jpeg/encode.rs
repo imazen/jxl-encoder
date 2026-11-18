@@ -232,6 +232,20 @@ fn encode_jpeg_to_jxl_inner(
     // ('R','G','B')) and can be `Custom` for semantically-YCbCr
     // JPEGs with non-(1,2,3) IDs.
     let is_ycbcr_color_transform = detect_ycbcr_color_transform(jpeg);
+    // F.2 carries JPEG component sampling only for YCbCr (and grayscale).
+    // RGB components therefore require the implicit 1x1 factors, including
+    // when every component has the same non-unit absolute sampling.
+    if jpeg.components.len() == 3
+        && !is_ycbcr_color_transform
+        && jpeg
+            .components
+            .iter()
+            .any(|c| c.h_samp_factor != 1 || c.v_samp_factor != 1)
+    {
+        return Err(crate::error::Error::InvalidInput(
+            "RGB JPEG reconstruction requires 1x1 sampling factors".into(),
+        ));
+    }
     let jpeg_c_map: [usize; 3] = if jpeg.components.len() == 1 {
         [0, 0, 0] // grayscale: all channels reference component 0
     } else if is_ycbcr_color_transform {
@@ -1526,8 +1540,8 @@ pub(crate) fn encode_jpeg_to_jxl_container_with_effort_stop(
 /// Detect whether the frame's semantic color_transform is
 /// `kYCbCr` (true) or `kNone` (false).
 ///
-/// Mirrors libjxl `SetColorTransformFromJpegData`
-/// (`lib/jxl/jpeg/enc_jpeg_data.cc:240-283`) exactly:
+/// Follows libjxl `SetColorTransformFromJpegData`, recognizing the JFIF
+/// signature rather than treating every APP0 payload as JFIF:
 ///
 /// 1. **JFIF (APP0) present** → kYCbCr (always; even if Adobe APP14
 ///    says transform=0, the JFIF marker wins). This is the most
@@ -1550,7 +1564,11 @@ pub(crate) fn encode_jpeg_to_jxl_container_with_effort_stop(
 /// (1,2,3) YCbCr ID-pattern).
 fn detect_ycbcr_color_transform(jpeg: &JpegData) -> bool {
     // Rule 1: JFIF present → always kYCbCr
-    if jpeg.marker_order.contains(&0xE0) {
+    if jpeg
+        .app_data
+        .iter()
+        .any(|data| data.first() == Some(&0xE0) && data.get(3..8) == Some(b"JFIF\0".as_slice()))
+    {
         return true;
     }
     // Rule 2: Adobe APP14 → check transform byte

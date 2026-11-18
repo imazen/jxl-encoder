@@ -2884,6 +2884,42 @@ jpeg-scan-grid-cli-production manifest output coverage_env:
 jpeg-scan-grid-cli-regions llvm archive output:
     python3 scripts/jpeg_cli_subprocess_coverage.py {{quote(llvm)}} {{quote(archive)}} {{quote(output)}}
 
+gain-map-main-integration-check manifest review output producer_repo decoder_repo:
+    python3 scripts/check_gain_map_review_integration.py {{quote(manifest)}} {{quote(review)}} {{quote(output)}} {{quote(producer_repo)}} {{quote(decoder_repo)}}
+
+jpeg-app0-source-oracle djpeg output fixture="jxl-encoder/tests/fixtures/jbrd/rgb_adobe.jpg":
+    python3 scripts/jpeg_app0_source_oracle.py {{quote(fixture)}} {{quote(djpeg)}} {{quote(output)}}
+
+jpeg-color-callers-check manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,jpeg-reencoding --test jpeg_sampling_contract -- app0:: unusual:: --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder-cli --features jpeg-reencoding --test jpeg_sampling color:: -- --test-threads=1
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,jpeg-reencoding --test jpeg_sampling_contract -- -D warnings
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder-cli --features jpeg-reencoding --test jpeg_sampling -- -D warnings
+
+jpeg-color-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/run_jpeg_color_evidence.py "$2" "$3"' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+jpeg-color-regions llvm archive reference output:
+    python3 scripts/color_admission_coverage.py {{quote(llvm)}} {{quote(output)}} {{quote(archive)}} --jpeg-color --reference-root {{quote(reference)}}
+
+jpeg-color-cli-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export __CARGO_LLVM_COV_RUSTC_WRAPPER_CRATE_NAMES=jxl_encoder,cjxl_rs,jpeg_sampling; touch "$(dirname "$2")/jxl-encoder-cli/src/main.rs"; python3 scripts/run_jpeg_color_evidence.py "$2" "$3" --cli' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+jpeg-color-cli-regions llvm archive output:
+    python3 scripts/jpeg_cli_subprocess_coverage.py {{quote(llvm)}} {{quote(archive)}} {{quote(output)}} --color
+
+jpeg-color-runtime-faults manifest output coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/test_jpeg_color_mutations.py "$2" "$3"' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+jpeg-color-minimal-check manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,__expert,jpeg-reencoding --test jpeg_sampling_contract -- app0:: unusual:: --test-threads=1
+
+jpeg-companion-pin-check manifest producer decoder output:
+    python3 scripts/check_jpeg_companion_pins.py {{quote(manifest)}} {{quote(producer)}} {{quote(decoder)}} {{quote(output)}}
+
+jpeg-rgb-native-admission cjxl djxl djpeg output sources:
+    python3 scripts/jpeg_rgb_native_admission.py {{quote(cjxl)}} {{quote(djxl)}} {{quote(djpeg)}} {{quote(output)}} {{sources}}
+
 gain-map-duplicate-check manifest:
     cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,hdr-gainmap,brotli-metadata --test gain_map_duplicate_contract -- --test-threads=1

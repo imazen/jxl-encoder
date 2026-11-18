@@ -300,6 +300,15 @@ fn all_offered_grayscale_sof_sampling_is_preserved() {
     check(encoder_policies::policies(), 3);
 }
 
+#[path = "jpeg_sampling_contract/app0.rs"]
+mod app0;
+
+#[path = "jpeg_sampling_contract/metadata.rs"]
+mod metadata;
+
+#[path = "jpeg_sampling_contract/unusual.rs"]
+mod unusual;
+
 #[test]
 fn unsupported_grayscale_sampling_is_refused_cleanly() {
     let root = directory();
@@ -348,9 +357,6 @@ fn unsupported_grayscale_sampling_is_refused_cleanly() {
         }
     }
 }
-
-#[path = "jpeg_sampling_contract/metadata.rs"]
-mod metadata;
 
 #[path = "jpeg_sampling_contract/dht.rs"]
 mod dht;

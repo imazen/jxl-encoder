@@ -299,6 +299,9 @@ published. See docs/RELEASE_0.4.0.md for the publish gates.)
 
 ### Fixed
 
+- Preserve explicit RGB JPEG interpretation under unrelated APP0 metadata;
+  reject non-unit RGB JPEG sampling instead of discarding its factors.
+
 - Pad JPEG frame grids from absolute sampling factors, preserving grayscale
   and equal-factor YCbCr inputs at partial MCU dimensions. Pin baseline scan
   metadata and reconstruction fixes without upgrading the frozen pixel family.

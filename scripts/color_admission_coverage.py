@@ -21,6 +21,7 @@ p.add_argument('--jpeg-metadata', action='store_true')
 p.add_argument('--jpeg-dht', action='store_true')
 p.add_argument('--gain-map', action='store_true')
 p.add_argument('--jpeg-scan-grid', action='store_true')
+p.add_argument('--jpeg-color', action='store_true')
 p.add_argument('--display-extents', action='store_true')
 p.add_argument('--animation-state', action='store_true')
 p.add_argument('--animation-deltas', action='store_true')
@@ -102,6 +103,17 @@ def observe(relative, name, occurrence=0, window=False):
                      inputs=inputs, excluded_different_body=excluded, covered=sum(v > 0 for v in counts.values()), total=len(counts),
                      missing_relative_regions=[k for k, v in sorted(counts.items()) if not v]))
     print(json.dumps(rows[-1]))
+
+if a.jpeg_color:
+    for archive in a.archives:
+        identity = json.loads((archive / 'identity.json').read_text())
+        assert not identity.get('coverage_scope', {}).get('driver_only', False)
+    observe('jxl-encoder/src/jpeg/encode.rs', 'detect_ycbcr_color_transform')
+    observe('jxl-encoder/src/jpeg/encode.rs', 'encode_jpeg_to_jxl_inner',
+            window=('if jpeg.components.len() == 3', 11))
+    (a.output / 'regions.json').write_text(json.dumps(dict(inputs=identities, functions=rows,
+        source_comparison='Exact function bodies; code-region keys relative to each declaration'), indent=2))
+    raise SystemExit(0)
 
 if a.gain_map:
     observe('jxl-encoder/src/container.rs', 'append_gain_map_box')
