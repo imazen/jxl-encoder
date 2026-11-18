@@ -3295,3 +3295,11 @@ container-policy-minimal-check manifest:
 # Retain selected members without downloading a multi-gigabyte CI ZIP.
 ci-artifact-members repository artifact output pattern:
     python3 scripts/extract_ci_artifact_members.py {{quote(repository)}} {{quote(artifact)}} {{quote(output)}} --member {{quote(pattern)}}
+
+# Caller provides CODEC_CORPUS_DIR and guarded v0.12 tools; run through run-heavy.
+request-controller-dictionary-check manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,rate-control,corpus-tests --test request_rate_control_patch_contract -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,__expert,rate-control,corpus-tests --test request_rate_control_patch_contract -- --test-threads=1
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,rate-control,corpus-tests --test request_rate_control_patch_contract -- -D warnings
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,__expert,rate-control,corpus-tests --test request_rate_control_patch_contract -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check

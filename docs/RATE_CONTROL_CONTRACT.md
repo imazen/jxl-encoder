@@ -237,3 +237,32 @@ nonzero. Both old Cargo caches were archived and verified before reclamation,
 preserving every test artifact. The trusted-limit large LF-area runtime remains
 separate and active. Its elapsed wall includes verified freezer intermissions
 and is not a latency result.
+
+
+## November 19: actual winning dictionaries through requests
+
+`request-patch-q54-runtime-v2` passes complete primary/native rendering for a
+real imac screenshot tile repeated across a2048x512 canvas, under all seventeen
+audit policy bindings. Each case requires an actual ReferenceOnly dictionary
+and a following displayed frame. LF-on adds the separate LF frame; LF-off is
+the source-error baseline. RGB/RGBA, controller caps zero/two, exact alpha137
+and packed/strided byte equality are checked. The retained source-MAE0.01,
+cross-decoder0.001 and existing LF-relative bounds remain unchanged. This is
+conditional-path evidence, not full input-space or all-profile quality coverage.
+
+Runtime ELF SHA256 is
+`f4cf9a664083e89853f3d71ead8a0e747ed7cbbf79b5bd841960618d42a16ffe`;
+profile SHA256 is
+`a54f7346b6308938de3499a02a9d1a21d564cb09b0d058bab6f8fe39e5801aec`.
+The enclosing q54 command subsequently fails strict lint on an unused test
+helper. The final source records the existing level observer in its JSON
+diagnostics; assertions and production bodies are unchanged.
+`request-patch-q56-lint-v3` passes default/minimal strict test lint and scoped
+formatting. The minimal dictionary runtime remains separately selected in CI;
+its compile result alone is not a rendering verdict.
+
+`just request-controller-dictionary-check <pinned-manifest>` runs default and
+minimal dictionary checks with an explicit caller-provisioned codec corpus and
+guarded v0.12 tools. Expert CI provisions and verifies the screenshot's fixed
+SHA256 before both commands. The surrounding controller's error/decoder-fallback
+and allocation gaps remain as documented above.
