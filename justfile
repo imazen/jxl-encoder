@@ -2409,3 +2409,12 @@ frame-level-winning-delta-evidence manifest output coverage_env:
 
 jpeg-native-edge-controls cjxl djxl output:
     python3 scripts/jpeg_native_edge_controls.py {{quote(cjxl)}} {{quote(djxl)}} {{quote(output)}}
+
+palette-native-controls cjxl djxl output:
+    python3 scripts/palette_native_controls.py {{quote(cjxl)}} {{quote(djxl)}} {{quote(output)}}
+
+reference-property-native-controls cjxl djxl output:
+    python3 scripts/reference_property_native_controls.py {{quote(cjxl)}} {{quote(djxl)}} {{quote(output)}}
+
+reference-advanced-help cjxl output:
+    {{quote(cjxl)}} --help -v -v -v -v > {{quote(output)}} 2>&1
