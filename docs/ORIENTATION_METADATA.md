@@ -144,3 +144,14 @@ strict Clippy (`~/tmp/jxl133-hdr-counter-check.log`, rc0, 15 s, peak RSS
 0.34 GiB). The JPEG/chroma-enabled library suite and format check also pass:
 1,736 passed, 31 existing ignores; `~/tmp/jxl133-hdr-library.log`, rc0,
 42 s, peak RSS 1.68 GiB. Existing byte expectations remain unchanged.
+
+
+The November 18 decoder-pin CI replay exposed a test admission mismatch:
+`original_icc_orientation_control` retained Level 5 decoder limits for a
+stream declaring Level 10 with a 32-bit field. All three local decoder
+helpers now derive only their conformance cap from the actual declaration,
+using the shared helper; resource caps and pixel/orientation assertions stay
+unchanged. The corpus/Butteraugli caller reproduces the refusal before the
+maintenance and passes afterward, together with strict focused lint and
+formatting (`width-native-orientation-after.log`, rc0, 26 seconds, peak RSS
+0.62 GiB, minimum available 20,084 MiB). Remote CI has its own verdict.

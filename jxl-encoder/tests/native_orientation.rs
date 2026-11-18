@@ -5,12 +5,15 @@ use jxl_encoder::{
     PixelLayout,
 };
 use zensim_decoder::api::{
-    JxlColorType, JxlDataFormat, JxlDecoder, JxlDecoderOptions, JxlOutputBuffer, JxlPixelFormat,
+    JxlColorType, JxlDataFormat, JxlDecoder, JxlOutputBuffer, JxlPixelFormat,
     ProcessingResult,
 };
 
+#[path = "support/decoder_level.rs"]
+mod decoder_level;
+
 fn decode(data: &[u8], adjust: bool) -> (usize, usize, u8, Vec<u8>) {
-    let mut options = JxlDecoderOptions::default();
+    let mut options = decoder_level::options(data);
     options.adjust_orientation = adjust;
     let mut input = data;
     let ProcessingResult::Complete { result: mut header } =
@@ -267,7 +270,7 @@ fn decode_all_rgba(
     size: (usize, usize),
     intrinsic: Option<(usize, usize)>,
 ) -> Vec<Vec<u8>> {
-    let mut options = JxlDecoderOptions::default();
+    let mut options = decoder_level::options(data);
     options.adjust_orientation = adjust;
     let mut input = data;
     let ProcessingResult::Complete {
@@ -924,7 +927,7 @@ fn original_icc_orientation_control() {
 }
 
 fn decode_rgb_and_depth(data: &[u8], adjust: bool) -> (usize, usize, Vec<u8>, Vec<u8>) {
-    let mut options = JxlDecoderOptions::default();
+    let mut options = decoder_level::options(data);
     options.adjust_orientation = adjust;
     let mut input = data;
     let ProcessingResult::Complete { result: mut header } =

@@ -1794,6 +1794,13 @@ functional checks pass. Doctests and strict workspace library/test/binary lint
 pass; full expert-example lint retains diagnostics in three unchanged research
 examples. Remote CI has its own verdict. [Exact evidence and limits](docs/MODULAR_WIDTH_LEVEL_CONTRACT.md).
 
+The latest Linux CI then exposes the corpus-enabled original-ICC orientation
+helper's default Level 5 cap on a declared Level 10 32-bit stream. Local before
+replay reproduces the refusal. All three orientation decoder helpers now use
+the same declaration-derived cap; resource limits and sample/orientation
+assertions remain unchanged. The focused caller, strict lint and formatting
+pass (26 seconds, peak RSS 0.62 GiB). Remote confirmation remains separate.
+
 ### 2026-11-18: frame-dependent level declarations, animation repair
 
 `f00ee41d` classifies the actual emitted animation sequence, including selected

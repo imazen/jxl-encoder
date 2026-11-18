@@ -174,3 +174,15 @@ pixel replay and both corrected examples. Minimal std/JPEG compilation and
 scoped workspace formatting pass (`modular-width-scoped-final.log`, rc0,
 8 seconds, peak RSS 0.63 GiB, minimum available 20,163 MiB). These scoped
 passes do not turn the full expert-example lint census green.
+
+
+The first latest-head Linux CI run (`44262873841`, job `134660394720`)
+subsequently fails its corpus-enabled original-ICC orientation control. That
+separate target retained default Level 5 decoder options and refused a legal
+32-bit field. Local replay reproduces the exact refusal (rc101, 69 seconds,
+peak RSS 0.83 GiB, minimum available 19,062 MiB). Reusing declaration-derived
+options in all three orientation decoder helpers preserves the assertions and
+passes the original-ICC caller plus focused strict lint/formatting (rc0,
+26 seconds, peak RSS 0.62 GiB, minimum available 20,084 MiB). This caller was
+outside the earlier selected no-corpus workspace graph; its prior passing
+receipts do not cover this feature path. The new head still needs remote CI.
