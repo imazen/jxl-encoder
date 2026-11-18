@@ -207,9 +207,8 @@ v0.12 CMS basis, with the unchanged selected 0.005 bound for the optional path.
 The failed test executable is
 `1a0567d6f5f4c040e1275e02aec964c5f472aee1a8b809f4158352212b73cb93`;
 streams, source and observed table are retained in `color-optional-icc-before`.
-The current optional writer directly codes the nonlinear samples and replaces
-their description with ICC; it does not perform the required source-to-output
-conversion. The owner authorized conversion when available and a typed error
+The failing optional writer directly coded the nonlinear samples and replaced
+their description with ICC without source-to-output conversion. The owner authorized conversion when available and a typed error
 otherwise on November 18. The pinned zenpixels converter offers a CMS backend;
 no sibling or CMS dependency has been modified. H5 remains open for this
 caller, and its failing regression has not been included in the H4 fix.
@@ -219,7 +218,8 @@ caller, and its failing regression has not been included in the H4 fix.
 The owner selected source-to-ICC conversion when available, with a typed error
 when the requested conversion cannot be built. This applies to the optional
 subsampled paths above; raw ICC storage and prediction remain permissive.
-Implementation and the expanded entry/mode matrix remain outstanding.
+The candidate conversion and expanded entry/mode controls are described below;
+final broad validation and landing remain pending.
 
 For H10, the owner selected required CMYK ICC metadata and profile-based lossy
 CMYK conversion, including migration of the seven legacy unprofiled/inverted
@@ -227,3 +227,117 @@ fixtures and their old model oracle. Exact lossless sample preservation remains
 the contract. CMYK animation Black forwarding and streaming admission belong
 to that repair's affected-entry inventory; this decision alone is no execution
 evidence for those paths.
+
+
+### CMS adapter findings for the approved repairs
+
+The frozen zenpixels converter source at `f23ac753` provides the MoxCms
+source-profile adapter used by the optional RGB candidate. It maps packed
+CMYK8, but has no CMYK16 pixel format and explicitly refuses floating CMYK
+conversion as unqualified. Relabeling four ink channels as RGBA would bypass
+that refusal and is not a qualified CMYK conversion path.
+
+The underlying pinned moxcms 0.8.1 `create_transform_f32` documents normalized
+[0,1] input, a 14-bit internal LUT representation and extended output. Its
+profile-based four-channel conversion can be evaluated separately against the
+retained native/LCMS controls before use. This is an available adapter avenue,
+not a completed CMYK implementation or a claim of 16-bit lossless CMS math.
+Lossless CMYK still requires exact stored source samples; lossy conversion must
+retain the source Black plane at its contracted precision.
+
+## Optional source-to-ICC candidate and independent controls
+
+The optional RGB8 coefficient entry now prepares explicit source samples in
+linear light, converts their primaries/white to linear sRGB with the shared
+matrix, then uses the pinned zenpixels MoxCms adapter to encode the target ICC
+profile. The existing feature pair enables that adapter; no sibling source or
+package version changes. An explicit simple source description or source gamma
+requests conversion. `want_icc=true` selects stored ICC bytes and supplies no
+simple source primaries. Metadata-only ICC storage keeps its original bytes,
+including opaque payloads that cannot be used to build a conversion.
+Unavailable transforms and non-finite source/output samples return typed errors
+before a caller's writer is changed. Extended intermediate sRGB values are
+preserved through the CMS: a negative blue component can be inside the target
+P3 gamut. The final target-profile values are rounded and clipped to RGB8,
+matching this entry's existing sample representation.
+
+The first conversion candidate's maximum native linear error was 0.0057168603,
+above the new regression's initial 0.005 bound. Independent LCMS conversion of
+the same P3/DCI source produced RGB8 `[186,137,99]`; native cjpeg quality 100
+at each of the three samplings, followed by pinned cjxl/djxl, produced a PFM
+byte-identical to the candidate. Red source light was 0.541814863682,
+profile-encoded red 0.727780580521, rounded-profile light 0.545011579990,
+and decoded JPEG light 0.547531604767. This separates profile/sample/JPEG
+quantization from the original missing-conversion error.
+
+The newly authored optional tests therefore retain the 0.005 floor and allow
+the independent native quantization error plus the existing matrix control's
+2e-6 numerical tolerance when that error is larger. No established expectation
+or tolerance was changed. The native table covers P3/BT.2020 linear input,
+source gamma, and PQ/HLG/BT.709 at 255/1000/10000-nit targets. A BT.709 sharp-420
+candidate differs from cjpeg while remaining closer to the physical source;
+these controls compare source error, not universal JPEG pixel identity.
+The retained oracle, independent vectors and generation scripts document each
+stage rather than using candidate output as its own expected color.
+
+All seventeen offered policies and all three optional samplings exercise
+request, strided request and writer entries at 32x17 and 259x17 with P3 and
+BT.2020 ICC targets. Streaming accepts rows but explicitly refuses non-Full444
+at finish; its error and unchanged destination are checked. Animation already
+refuses that sampling surface. The CLI has no subsampling selector, and the
+prepared/raw-coefficient APIs do not enter this RGB8 conversion helper.
+Lossless inputs do not enter it. The primary decoder returns original-profile
+samples for non-XYB ICC output, but linear sRGB for XYB ICC floating output;
+tests compare those domains separately with native original-profile and linear
+controls. Full rendering, exact ICC bytes and every selected sample are checked.
+
+Default-features-disabled execution also checks explicit simple/gamma
+conversion and raw storage. This is not a no-std configuration:
+`jpeg-reencoding -> hdr-gainmap -> std`. An earlier cfg-not-std target selected
+zero tests and supplies no runtime evidence; the strict evidence runner rejected
+that selection, and the replacement test executes with the actual feature graph.
+
+Known encoder-owned source, output and row scratch allocations are reserved
+before use; row padding is ignored and cancellation is polled per row. Tests
+exercise budget refusals and reservation release. CMS-internal allocation peaks
+have not been measured and are not claimed to fit an operating-system RSS cap.
+Allocation failure injection and arbitrary future CMS implementations are not
+covered. In this pinned adapter, transform preparation always succeeds;
+fixed RGBF32 layouts/source fields make its optional transform-decline branch
+unreachable, while malformed target ICC reaches an actual build error.
+
+Final-graph positive tests and all six runtime fault replays pass their gates:
+omitted conversion, omitted source matrix, clipped intermediate values,
+over-broad raw-selector conversion, omitted source reservation and omitted
+non-finite-output rejection are each detected. Sources are restored afterward.
+A first missing-conversion mutant did not compile (its None lacked a concrete
+type), so that attempt supplies no runtime evidence. The typed replacement
+compiles and fails the actual decoded-sample assertion.
+
+The final exact-source union observes source wrapper 55/55 mapped regions,
+conversion decision 20/20 and coding-buffer handoff 7/7. The CMS row helper
+is 184/204; the enclosing existing optional entry is 130/155. These are code
+regions, not all Boolean/input combinations. The helper's missing regions are
+the public-u32-dominated width cast, fixed-adapter transform-decline/preparation
+and structural row-error continuations, allocation failures, and defensive row
+scratch overflow. No allocator-failure injection is claimed. The whole-entry
+gaps include existing layout/shape/buffer/extra/color/gamma admission, optional
+intrinsic/tone metadata forwarding and downstream writer errors. Existing
+metadata/geometry tests run separately; their uninstrumented pass does not
+increase these fractions.
+
+`optional-icc-final-graph-v3.log` retains passing broad library, unchanged
+normal/strict/drift locks, existing optional geometry/metadata and source-color
+tests, then fails only the new minimal test's constant-assertion Clippy lint
+(rc101,399 seconds; peak RSS1.85 GiB, minimum available19357 MiB). Moving that
+feature-graph assertion to a const block preserves its check. The full library,
+focused strict lint in default and default-disabled feature closures, and
+formatting pass in `optional-icc-allocation-final.log` (rc0,115 seconds;
+peak RSS1.86 GiB, minimum available19318 MiB). Added allocation-setting and
+private defensive overflow/unknown-transfer/singular-primary tests also pass;
+`optional-icc-defensive-final-v3.log` retains the final region union, strict
+minimal lint and formatting (rc0,38 seconds; peak RSS1.82 GiB, minimum
+available19294 MiB). The first new singular-primary diagnostic assertion expected
+the word singular; the actual error names the determinant bound. Its corrected
+assertion retains a typed failure and the precise determinant diagnostic.
+All established byte expectations, thresholds and ignores remain unchanged.

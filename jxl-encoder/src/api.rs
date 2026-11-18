@@ -9347,6 +9347,55 @@ impl<'a> EncodeRequest<'a> {
         Ok((output.data, stats))
     }
 
+    #[cfg(all(
+        feature = "std",
+        feature = "chroma-subsampling",
+        feature = "jpeg-reencoding"
+    ))]
+    fn subsampled_icc_pixels(
+        &self,
+        cfg: &LossyConfig,
+        pixels: &[u8],
+        profile: &[u8],
+        budget: &alloc::sync::Arc<crate::budget::MemoryBudget>,
+    ) -> core::result::Result<(Vec<u8>, crate::budget::BudgetGuard), EncodeError> {
+        let width = self.width as usize;
+        let rows = self.height as usize;
+        let source_bytes = width
+            .checked_mul(rows)
+            .and_then(|n| n.checked_mul(12))
+            .ok_or_else(|| EncodeError::InvalidInput {
+                message: "ICC source size overflows".into(),
+            })?;
+        let _source_guard =
+            crate::budget::MemoryBudget::reserve_opt(Some(budget), source_bytes as u64)
+                .map_err(EncodeError::from)?;
+        let prepared = self.prepare_lossy_pixels(cfg, pixels, width, rows)?;
+        let matrix = self
+            .color_encoding
+            .as_ref()
+            .filter(|ce| !ce.want_icc)
+            .map(crate::vardct::xyb::primaries_to_srgb_matrix)
+            .transpose()
+            .map_err(EncodeError::from)?
+            .flatten();
+        cms::rgb_to_icc(
+            cms::RgbRows {
+                pixels: &prepared.linear_rgb,
+                width,
+                rows,
+                stride: width * 3,
+                source_matrix: matrix,
+            },
+            profile,
+            budget,
+            self.limits
+                .as_ref()
+                .is_some_and(|limits| limits.fallible_alloc()),
+            self.stop,
+        )
+    }
+
     /// Chunk-4 / chunk-5 entry point for any non-`Full444`
     /// [`ChromaSubsampling`] mode: convert RGB → YCbCr (with per-mode
     /// chroma downsampling) via zenyuv, forward-DCT + integer-quantize
@@ -9410,14 +9459,7 @@ impl<'a> EncodeRequest<'a> {
                 ),
             });
         }
-        let jpeg = crate::vardct::chroma_subsampling::synth_jpeg_data_from_rgb8(
-            pixels,
-            w,
-            h,
-            cfg.distance,
-            mode,
-        )
-        .map_err(EncodeError::from)?;
+        let icc = self.metadata.and_then(|m| m.icc_profile);
         let mut header = crate::jpeg::build_jpeg_file_header(w, h, false);
         if let Some(ce) = self.color_encoding.clone() {
             if ce.color_space != crate::ColorSpace::Rgb {
@@ -9425,9 +9467,10 @@ impl<'a> EncodeRequest<'a> {
                     message: "subsampled RGB8 requires an RGB color encoding".into(),
                 });
             }
-            // This path codes the supplied nonlinear samples directly; it
-            // cannot convert a separately declared source gamma to another TF.
-            if let Some(gamma) = self.source_gamma
+            // Without an ICC conversion this path codes the supplied samples
+            // directly, so a separate source gamma must match the header TF.
+            if icc.is_none()
+                && let Some(gamma) = self.source_gamma
                 && ce.gamma != Some(gamma)
             {
                 return Err(EncodeError::InvalidConfig {
@@ -9443,7 +9486,6 @@ impl<'a> EncodeRequest<'a> {
             crate::TransferFunction::Hlg => 1_000.0,
             _ => 255.0,
         };
-        let icc = self.metadata.and_then(|m| m.icc_profile);
         if let Some(metadata) = self.metadata {
             header.metadata.orientation = metadata.orientation;
         }
@@ -9476,6 +9518,27 @@ impl<'a> EncodeRequest<'a> {
         {
             header.metadata.linear_below = value;
         }
+        // jpeg-reencoding enables std through hdr-gainmap. The optional
+        // source conversion is available whenever this entry is compiled.
+        let converted = if let Some(profile) = icc.filter(|_| {
+            self.source_gamma.is_some()
+                || self.color_encoding.as_ref().is_some_and(|ce| !ce.want_icc)
+        }) {
+            Some(self.subsampled_icc_pixels(cfg, pixels, profile, budget)?)
+        } else {
+            None
+        };
+        let coding_pixels = converted
+            .as_ref()
+            .map_or(pixels, |(bytes, _guard)| bytes.as_slice());
+        let jpeg = crate::vardct::chroma_subsampling::synth_jpeg_data_from_rgb8(
+            coding_pixels,
+            w,
+            h,
+            cfg.distance,
+            mode,
+        )
+        .map_err(EncodeError::from)?;
         let bytes = crate::jpeg::encode_jpeg_pixels_with_header(
             &jpeg,
             &header,
@@ -11569,3 +11632,10 @@ mod planar_admission_tests_95 {
             .expect("a 4 GiB cap must admit the same encode");
     }
 }
+
+#[cfg(all(
+    feature = "std",
+    feature = "chroma-subsampling",
+    feature = "jpeg-reencoding"
+))]
+mod cms;

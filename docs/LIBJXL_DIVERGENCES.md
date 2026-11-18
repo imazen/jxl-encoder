@@ -2830,3 +2830,9 @@ Remaining layout inventory is tracked separately in the progressive contract.
 | Site | Encoder behavior | Reference/specification | Status |
 |---|---|---|---|
 | `vardct/encoder.rs` both `VarDctOutput` constructors | Report the canonical `build_file_header(...).metadata.modular_16bit_buffer_sufficient()` predicate, including source floats and extra-channel precision; the prior report used only the DC-overflow atomic | Part 1 Annex M and v0.12 `VerifyLevelSettings`: a false modular-16-bit promise requires Level 10 | Shared repair preserves complete codestream/pixel bytes for three float fingerprints; their 49-byte container migrations are owner-approved. Selected default/minimal/CI-feature, CLI, raw/precomputed, exact-body region and fault controls pass, as do the receipted workspace functional checks. Expert all-target lint retains diagnostics in three unchanged examples; scoped strict lint passes. Remote CI remains separate. No registry gate/value/metadata changes. [Contract](MODULAR_WIDTH_LEVEL_CONTRACT.md). |
+
+### 2026-11-18: explicit source conversion for optional ICC output
+
+| Site | Encoder behavior | Reference/contract | Scope |
+| --- | --- | --- | --- |
+| Issue 144 H5 optional RGB8 coefficient entry, `api::cms::rgb_to_icc` | Convert an explicit simple source encoding or gamma to the target ICC before coding RGB8. Preserve extended intermediate linear-sRGB values; reject unavailable transforms and non-finite samples. A raw ICC selector alone keeps storage behavior. | Source interpretation precedes output-profile coding. Independent LCMS -> RGB8 -> cjpeg -> pinned v0.12 controls separate sample/JPEG quantization from missing conversion. | Shared correctness path, no strategy gate or registry policy change. Affected entries, native quantization controls, coverage limits and feature implication are recorded in `docs/SOURCE_COLOR_CONVERSION.md`; selected production/native, fault, unchanged lock and strict-lint gates pass. |

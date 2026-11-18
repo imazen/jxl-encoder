@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+- Convert explicit source color/gamma to the target ICC profile before optional
+  RGB8 subsampling. Preserve raw ICC storage and reject unavailable or
+  non-finite conversions before changing a caller's destination.
+
 - Derive still VarDCT container levels from the complete serialized modular-buffer
   promise, including floating source samples and deep extra channels. Preserve
   codestream bytes; the three approved float fingerprints include their Level 10

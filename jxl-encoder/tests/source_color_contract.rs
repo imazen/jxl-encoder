@@ -860,3 +860,7 @@ mod numeric;
 
 #[path = "source_color_contract/icc_source.rs"]
 mod icc_source;
+
+#[cfg(all(feature = "chroma-subsampling", feature = "jpeg-reencoding"))]
+#[path = "source_color_contract/optional_icc.rs"]
+mod optional_icc;

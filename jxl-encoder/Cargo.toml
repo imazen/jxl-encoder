@@ -252,15 +252,11 @@ jpeg-reencoding = ["dep:zenjpeg", "dep:brotli", "brotli-metadata", "hdr-gainmap"
 # libjxl default-on (`jpeg_compress_boxes = true`).
 brotli-metadata = ["dep:brotli"]
 parallel = ["std", "dep:rayon"]
-# Chroma subsampling (4:2:0 / 4:2:2 / 4:4:0) helpers — RGB→YCbCr conversion
-# and Sharp YUV chroma downsampling via the zenyuv crate. Issue #47 chunk 3.
-# API surface (`ChromaSubsampling` enum + `LossyConfig::with_chroma_subsampling`)
-# is always compiled; this feature only adds the conversion helpers in
-# `vardct::chroma_subsampling` and the zenyuv dep. Non-`Full444` modes
-# still return `EncodeError::InvalidConfig` until chunk 4 wires the
-# helpers through the VarDCT encode pipeline (per-channel block grids,
-# YCbCr colour pipeline switch — multi-week work).
-chroma-subsampling = ["dep:zenyuv"]
+# Optional RGB8 4:2:0 / 4:2:2 / 4:4:0 coefficient encoding requires this
+# feature together with jpeg-reencoding. zenyuv supplies chroma conversion;
+# the CMS converts explicit source color/gamma to an attached output ICC.
+# The public selector remains available without these implementation features.
+chroma-subsampling = ["dep:zenyuv", "zenpixels-convert/cms-moxcms"]
 # Parallel tree learning for lossless modular path.
 # After dedup, splits the sample range at the root partition point and builds
 # the left+right subtrees in parallel via `rayon::join` using owned per-side

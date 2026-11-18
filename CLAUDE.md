@@ -1779,6 +1779,27 @@ misclassify that CLI limitation as an invalid stream or strip the ICC to hide it
 
 ## Known Bugs (ACTIVE)
 
+### RESOLVED 2026-11-18: optional subsampling changed explicit source color under ICC
+
+The RGB8 coefficient route coded source samples directly under the output ICC.
+P3/DCI linear input's native maximum error was 0.28845716; the shared optional
+entry now converts explicit source encoding/gamma through the pinned CMS.
+Raw ICC selectors/storage stay permissive. Extended intermediate gamut values
+remain available to the target profile, and unavailable/non-finite conversions
+fail before changing a writer's destination. The existing feature pair enables
+the converter; no public API or strategy policy is added.
+
+Independent LCMS/RGB8/JPEG controls distinguish sample quantization from the
+original error. All offered policies and three samplings exercise request,
+strided and writer entries with primary/native full rendering and sample checks.
+Streaming/animation retain their explicit unsupported-combination errors.
+Six restored faults fail at runtime; code-region fractions and uncovered
+CMS/allocator/existing metadata paths are recorded in
+[the source-color contract](docs/SOURCE_COLOR_CONVERSION.md).
+No established byte expectation, threshold or ignore changes. CMYK/Black
+conversion and the remaining issue144 queue retain separate gates.
+
+
 ### 2026-11-18: serialized modular-width level propagation
 
 The still VarDCT output now derives its width report from the same metadata
