@@ -9,10 +9,9 @@ with controls in `93b7fbd0`. Their verified scope is described below. The later
 elongated group-admission follow-up remains under final validation.
 
 Progressive pass placement (V2) has its own verified routing controls below.
-Animation currently
-does not forward `alpha_distance` or `alpha_squeeze` to its frame encoder; it
-therefore does not exercise this writer. The optional subsampled RGB8 writer
-also does not use it. Neither route is counted as tested squeeze production.
+The later [animation caller repair](ANIMATION_ALPHA_OPTIONS.md) forwards
+`alpha_distance` and `alpha_squeeze`, with its own native planes and explicit
+caller scope. The optional subsampled RGB8 writer does not use this writer.
 
 ## Reproductions and correction
 

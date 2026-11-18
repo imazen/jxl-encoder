@@ -1788,6 +1788,20 @@ separate queue items. Broad/coverage/remote verdicts must be read independently.
 
 ## Known Bugs (ACTIVE)
 
+### RESOLVED 2026-11-19: lossy animation alpha settings omitted
+
+The animation builder now forwards alpha distance/squeeze and chooses the
+common integer float-alpha representation for positive distance. Pinned v0.12
+before controls expose alpha 0 versus 27 for RGBA8 and 0 versus signed -2533 for
+linear-f32 at 32x17. The new complete-plane comparisons cover all offered audit
+policies, alpha layouts, progressive brackets and selected group boundaries,
+plus crop/delta/reference/metadata/limits/association callers in default and
+minimal builds. Existing precision and zero-distance contracts remain.
+[Exact identities, caller scope and remaining evidence](docs/ANIMATION_ALPHA_OPTIONS.md)
+separate this repair from the shared prefix-alphabet fix below. Counts do not
+establish input-space or whole-encoder coverage.
+
+
 ### RESOLVED 2026-11-19: high-precision alpha tree prefix alphabet overflow
 
 A32x17 RGBA16 squeeze/alpha-distance10 still emits a40527-symbol raw
@@ -1797,8 +1811,8 @@ max_raw>=32767, retaining raw(15,0,0) below. Quantizers and quantized alpha
 values are unchanged. Selected default/minimal native pixel, policy,
 progressive, source/caller, full-library, unchanged-lock and strict lint
 checks pass. Exact region/error gaps and before identities are recorded in
-docs/ALPHA_TREE_CODING.md. Animation alpha-setting forwarding remains a
-separate caller repair; this shared fix is qualified independently of it.
+docs/ALPHA_TREE_CODING.md. Animation alpha-setting forwarding has its own
+caller repair; this shared fix is qualified independently of it.
 
 
 ### RESOLVED 2026-11-19: primary decoder squeezed-alpha border view
@@ -2437,9 +2451,9 @@ histogram adapter 33/40; un-injected serializer errors and unreachable branches
 are itemized in [the owning contract](docs/ALPHA_SQUEEZE_CONTRACT.md). These
 fractions do not prove full encoder coverage. Progressive placement remains V2.
 
-The animation builder does not forward either alpha-distance or alpha-squeeze
-configuration. This source-audit gap is separate from actual squeeze-writer
-coverage; no runtime animation alpha-knob verdict is claimed yet.
+The later [animation caller repair](docs/ANIMATION_ALPHA_OPTIONS.md) forwards
+both settings, with independent failing-before and native-plane caller evidence.
+Its newer coverage is separate from the original squeeze-writer fractions.
 
 
 ### RESOLVED dependency: global squeeze intermediates — 2026-11-17

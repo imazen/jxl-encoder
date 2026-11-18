@@ -125,3 +125,8 @@ physical-color qualification is claimed.
 Existing alpha settings not forwarded by animation remain a separate
 configuration-wiring item; CMYK/Black interpretation remains H10. No existing
 byte expectation, tolerance or ignore was changed.
+
+The later [distance/squeeze caller repair](ANIMATION_ALPHA_OPTIONS.md) extends
+this common selection to positive lossy alpha distance. Unset/zero retains
+the exact-float policy described here; its separate native sample and caller
+controls must not be inferred from the older precision coverage fractions.

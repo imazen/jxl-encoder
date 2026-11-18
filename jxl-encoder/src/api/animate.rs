@@ -845,6 +845,8 @@ pub(crate) fn encode_animation_lossy(
     enc.photon_noise_iso = cfg.photon_noise_iso;
     enc.manual_noise_lut = cfg.manual_noise_lut;
     enc.quant_ac_rescale = cfg.quant_ac_rescale;
+    enc.alpha_distance = cfg.alpha_distance;
+    enc.alpha_squeeze = cfg.alpha_squeeze;
     enc.original_distance = cfg.original_distance;
     enc.enable_denoise = cfg.denoise;
     // libjxl gates gaborish at distance > 0.5 (enc_frame.cc:281)
@@ -1011,15 +1013,16 @@ pub(crate) fn encode_animation_lossy(
     } else {
         8
     };
-    // Header bit depth is common to the entire animation. Choose over all
-    // supplied frames, so a later non-half alpha cannot inherit an f16 header.
-    // This scan borrows input; per-frame storage is prepared only when needed.
+    // Lossy float alpha uses one integer representation for the animation.
+    // Otherwise choose exact float coding over all supplied frames, so a later
+    // non-half alpha cannot inherit an f16 header. Per-frame storage is prepared
+    // only when needed.
     let float_alpha_coding = (has_alpha && (layout.is_f16() || layout.is_f32())).then(|| {
         AlphaCoding::choose(
             frames.iter().flat_map(|frame| {
                 ingest::float_alpha_values(layout, frame.pixels).expect("float alpha layout")
             }),
-            false,
+            matches!(cfg.alpha_distance, Some(distance) if distance > 0.0),
         )
     });
     let alpha_info_buf;

@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Forward lossy animation alpha distance/squeeze settings and select matching float-alpha header coding.
 - Bound specialized lossy alpha tree alphabets with HybridUint for large multipliers, preserving quantizers and alpha sample choices.
 
 - Pin the primary test decoder border-view repair for native squeezed-alpha edge controls; encoder pixel algorithms and expectations are unchanged.

@@ -4170,9 +4170,10 @@ impl LossyConfig {
     /// request with additional extras is rejected; shifted VarDCT extras also
     /// remain unsupported.
     ///
-    /// The streaming pixel API uses the same request pipeline. The current
-    /// animation builder does not forward alpha-distance or alpha-squeeze;
-    /// that separate caller gap is tracked in issue 144.
+    /// The streaming pixel API uses the same request pipeline. Animation
+    /// forwards both alpha controls to its per-frame writer; positive alpha
+    /// distance uses integer alpha coding for float layouts as it does for
+    /// still images. Lossless alpha retains its exact representation.
     ///
     /// See [`Self::with_alpha_distance`] for the distance selection.
     pub fn with_alpha_squeeze(mut self, on: bool) -> Self {

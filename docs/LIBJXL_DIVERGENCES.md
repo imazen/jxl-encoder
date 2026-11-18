@@ -2986,3 +2986,18 @@ Remaining layout inventory is tracked separately in the progressive contract.
 | Site | Encoder selection | Pinned/native control | Status |
 |---|---|---|---|
 | `modular::encode_tree` lossy Gradient/channel-split histogram and token pairs | Keep HybridUint(15,0,0) when `max_raw < 32767`; otherwise use the existing general-tree HybridUint(4,2,0), including extra bits | Part 1 C.2/C.3 permits the representation. Native v0.12 rejects the old40527-entry raw alphabet and recovers every selected repaired alpha code | Shared serialization repair; quantizers and samples unchanged. Default/minimal still/controller, policy/progressive/entry and geometry controls, unchanged locks/drift and strict lint pass. Exact bodies and error/unreachable region gaps: [ALPHA_TREE_CODING.md](ALPHA_TREE_CODING.md). No registry gate, preset or macro metadata changes. |
+
+
+### Issue 144: animation alpha distance and squeeze forwarding
+
+`api/animate.rs::encode_animation_lossy` now forwards the existing
+`cfg.alpha_distance` and `cfg.alpha_squeeze` to its shared frame encoder.
+The common float-alpha header selection passes
+`matches!(cfg.alpha_distance, Some(distance) if distance > 0.0)` to
+`AlphaCoding::choose`, matching the still-image integer lossy-alpha choice.
+Unset/zero keeps exact-float selection across all supplied frames. Pinned
+v0.12 independently encoded alpha planes supply the sample oracle. This is
+a shared caller repair, with no new registry gate or preset selection.
+[Before observations and caller evidence](ANIMATION_ALPHA_OPTIONS.md) distinguish
+it from the separate high-precision tree-prefix correction. Full libjxl
+entropy-byte identity and arbitrary float/whole-encoder coverage are not claimed.
