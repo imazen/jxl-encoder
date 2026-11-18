@@ -744,10 +744,10 @@ const fn upsample2_kernel(x: i64, y: i64) -> &'static [f32; 25] {
     }
 }
 
-/// The decoder's default 2× upsampler on one plane (libjxl
-/// `enc_heuristics.cc:UpsampleImage`, itself a mirror of `dec_upsample`
-/// with default `CustomTransformData`): 5×5 kernel per phase with
+/// The v0.12 encoder search's default 2× upsampler on one plane
+/// (`enc_heuristics.cc:UpsampleImage`): 5×5 kernel per phase with
 /// edge-clamped taps, output clamped to the support's min/max.
+/// Decoder reconstruction uses the separate reflected-support wrapper.
 /// `input` is `in_w × in_h`; `out` is `out_w × out_h` (the full-res
 /// dims, `out_w.div_ceil(2) == in_w`).
 fn upsample2_plane(
@@ -758,9 +758,53 @@ fn upsample2_plane(
     out_w: usize,
     out_h: usize,
 ) {
+    upsample2_plane_impl::<false>(input, in_w, in_h, out, out_w, out_h, (in_w, out_w));
+}
+
+// Reconstruction uses the decoder's reflected support. Iterative downsampling
+// retains the v0.12 encoder's clamped-support search and its frozen arithmetic.
+#[cfg(any(test, feature = "__internals"))]
+fn decoder_upsample2_plane(
+    input: &[f32],
+    in_w: usize,
+    in_h: usize,
+    out: &mut [f32],
+    out_w: usize,
+    out_h: usize,
+    strides: (usize, usize),
+) {
+    upsample2_plane_impl::<true>(input, in_w, in_h, out, out_w, out_h, strides);
+}
+
+#[inline]
+fn upsample2_index<const REFLECT: bool>(index: i64, size: i64) -> usize {
+    if REFLECT {
+        let folded = index.rem_euclid(2 * size);
+        if folded < size {
+            folded as usize
+        } else {
+            (2 * size - 1 - folded) as usize
+        }
+    } else {
+        clamp_idx(index, size)
+    }
+}
+
+fn upsample2_plane_impl<const REFLECT: bool>(
+    input: &[f32],
+    in_w: usize,
+    in_h: usize,
+    out: &mut [f32],
+    out_w: usize,
+    out_h: usize,
+    strides: (usize, usize),
+) {
     let _phase = crate::profile_phases::PhaseGuard::new("resample.upsample2_plane");
-    debug_assert_eq!(input.len(), in_w * in_h);
-    debug_assert_eq!(out.len(), out_w * out_h);
+    let (in_stride, out_stride) = strides;
+    debug_assert!(in_w > 0 && in_h > 0 && out_w > 0 && out_h > 0);
+    debug_assert!(in_stride >= in_w && out_stride >= out_w);
+    debug_assert!(input.len() >= (in_h - 1) * in_stride + in_w);
+    debug_assert!(out.len() >= (out_h - 1) * out_stride + out_w);
     let (xsize, ysize) = (in_w as i64, in_h as i64);
     for y in 0..out_h as i64 {
         let mut x = 0i64;
@@ -789,7 +833,7 @@ fn upsample2_plane(
                 let mut mins = [f32::MAX; 4];
                 let mut maxs = [f32::MIN; 4];
                 for ky in 0..5 {
-                    let start = (y as usize / 2 - 2 + ky) * in_w + x as usize / 2 - 2;
+                    let start = (y as usize / 2 - 2 + ky) * in_stride + x as usize / 2 - 2;
                     let row: &[f32; 8] = input[start..start + 8].try_into().unwrap();
                     for kx in 0..5 {
                         let even = kernels[0][ky * 5 + kx];
@@ -812,11 +856,11 @@ fn upsample2_plane(
                     }
                 }
                 for lane in 0..4 {
-                    let start = y as usize * out_w + x as usize + lane * 2;
+                    let start = y as usize * out_stride + x as usize + lane * 2;
                     out[start] = sums[0][lane].clamp(mins[lane], maxs[lane]);
                     out[start + 1] = sums[1][lane].clamp(mins[lane], maxs[lane]);
-                    out[start + out_w] = sums[2][lane].clamp(mins[lane], maxs[lane]);
-                    out[start + out_w + 1] = sums[3][lane].clamp(mins[lane], maxs[lane]);
+                    out[start + out_stride] = sums[2][lane].clamp(mins[lane], maxs[lane]);
+                    out[start + out_stride + 1] = sums[3][lane].clamp(mins[lane], maxs[lane]);
                 }
                 x += 8;
                 continue;
@@ -827,17 +871,17 @@ fn upsample2_plane(
             let mut min = f32::MAX;
             let mut max = f32::MIN;
             for ky in 0..UPSAMPLE2_KSIZE {
-                let yi = clamp_idx(y2 - UPSAMPLE2_KSIZE / 2 + ky, ysize);
-                let row = yi * in_w;
+                let yi = upsample2_index::<REFLECT>(y2 - UPSAMPLE2_KSIZE / 2 + ky, ysize);
+                let row = yi * in_stride;
                 for kx in 0..UPSAMPLE2_KSIZE {
-                    let xi = clamp_idx(x2 - UPSAMPLE2_KSIZE / 2 + kx, xsize);
+                    let xi = upsample2_index::<REFLECT>(x2 - UPSAMPLE2_KSIZE / 2 + kx, xsize);
                     let v = input[row + xi];
                     min = min.min(v);
                     max = max.max(v);
                     sum += v * kernel[(ky * UPSAMPLE2_KSIZE + kx) as usize];
                 }
             }
-            out[(y as usize) * out_w + x as usize] = sum.clamp(min, max);
+            out[(y as usize) * out_stride + x as usize] = sum.clamp(min, max);
             x += 1;
         }
     }
@@ -1196,22 +1240,17 @@ pub enum Downsample2xKernel {
 /// butteraugli on smooth photos, 20-40 on aliased line art), so one threshold
 /// cannot serve both.
 ///
-/// **It is a near-bound, not an exact one, and which kernel you pass decides
-/// how near.** The decoder upsamples whatever the coded frame decodes to, so
-/// the regime's true ceiling is the upsample of the *best* coded frame — not
-/// necessarily the downsampled source. [`Downsample2xKernel::Iterative`] is
-/// libjxl's decoder-adjoint search for exactly that frame, so its floor sits
-/// close to the true ceiling; [`Downsample2xKernel::Sharper`] is a plain
-/// filter whose floor a real encode can beat by a few percent (measured: best
-/// achieved 2× butteraugli / sharper floor has median 0.99, p10 0.96 over the
-/// imazen-26 sweep, and the encoder's own gaborish/EPF post-filters account
-/// for the rest). Treat a `Sharper` floor as a tight estimate and an
-/// `Iterative` floor as the admissibility bound.
+/// Every candidate is evaluated with the decoder's reflected upsampling
+/// support. The iterative downsampler itself retains the v0.12 encoder's
+/// clamped-support search; the two support policies serve different stages.
+/// A round trip evaluates one candidate frame, not the best possible frame
+/// that an arbitrary encoder could code at the reduced resolution.
 ///
-/// Measured floors span two orders of magnitude across content
-/// (`benchmarks/auto_resample_monotonicity_2026-09-05.analysis.md`): ~5
-/// butteraugli on smooth photos, 20-40 on aliased line art, which is exactly
-/// why one threshold cannot serve both.
+/// Historical floor studies (`benchmarks/resample_admissibility_2026-09-06.analysis.md`
+/// and `benchmarks/auto_resample_monotonicity_2026-09-05.analysis.md`) used
+/// the earlier clamped reconstruction model. Re-run their measurements before
+/// comparing them with results from this reflected model. The correction is
+/// qualified against decoded sample planes, not by a new rate-distortion study.
 #[cfg(any(test, feature = "__internals"))]
 pub fn resample_roundtrip_2x_rgb(
     rgb_interleaved: &[f32],
@@ -1252,7 +1291,7 @@ pub fn resample_roundtrip_2x_rgb(
                 box_downsample_2x_plane(src, width, height, &mut down, out_w)
             }
         }
-        upsample2_plane(&down, out_w, out_h, up, width, height);
+        decoder_upsample2_plane(&down, out_w, out_h, up, width, height, (out_w, width));
     }
     from_opsin_planes(&up_planes[0], &up_planes[1], &up_planes[2], n, budget)
 }
@@ -2017,3 +2056,7 @@ mod tests {
 #[cfg(test)]
 #[path = "resampling_reference_tests.rs"]
 mod reference_tests;
+
+#[cfg(all(test, feature = "__expert", feature = "std"))]
+#[path = "resampling_decoder_contract.rs"]
+mod decoder_contract;

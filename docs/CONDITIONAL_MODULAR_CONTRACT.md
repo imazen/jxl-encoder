@@ -217,3 +217,50 @@ from that observer. Evidence is the first selected test in
 reconstruction-model-final-check.log; the full wrapper passes rc0/198s,
 peak RSS1.94GiB/minimum available18110MiB, and also contains the independent
 model/baseline checks. There is no new production E4 arithmetic change.
+
+
+## Internal 2× model: reflected decoding and strided support
+
+The correction applies only to the upsampling stage of the existing internal
+`resample_roundtrip_2x_rgb` diagnostic. Pinned v0.12 uses reflected support in
+decoding and clamped support in its iterative encoder search. The shared
+private kernel selects the appropriate support policy; the original clamped
+search and its frozen scalar arithmetic remain unchanged. No encoding strategy,
+auto-resampling policy, quantization constant or public signature changes.
+
+Actual complete decoded sample planes cover nonconstant real-image crops at
+1×1, 1×3, 3×1, 16×16 and 33×17, signed binary32 and positive RGB8, and even/odd
+output dimensions. Packed and padded input/output rows have identical visible
+model bits, with NaN-filled padding unchanged. The original 33×17 clamped
+model differs from native decoding by 0.06820229; the selected primary/native
+checks disagree by at most 2.9802322e-7. The diagnostic's Sharper, Iterative and
+Box routing tests check selection, finite values and lengths; they do not
+claim whole VarDCT pixel identity.
+
+The first strided profile covered the reflected path but omitted the clamped
+search branch and public diagnostic. The final explicit component/routing/
+frozen-search profile closes those gaps: support index13/13, shared kernel
+163/163, reflected wrapper10/10 and public diagnostic75/75 exact-body mapped
+regions. This is scoped code execution, not all image/input coverage. Restoring
+clamped model support fails the runtime sample-plane regression (exit101),
+then restores exact source. The private strided helper adds no public API.
+
+The full normal/minimal library, unchanged byte locks/drift, frozen arithmetic,
+no-std internals build, strict workspace/focused lint and formatting pass:
+reconstruction-model-final-check.log, rc0/198s, peak RSS1.94GiB,
+minimum available18110MiB. The latest runtime-fault wrapper passes in36s,
+peak1.94GiB/min18079MiB. Selected profiles are resampling-strided-model and
+resampling-final-all-routes; final regions are resampling-final-union-regions.
+The corrected model does not requalify historical floor-study or rate-distortion
+numbers, which used the clamped reconstruction. New comparisons require new
+measurements. No performance improvement is claimed.
+
+
+The final isolated source qualification binds every tracked production file
+to mained945a3f (including the approved C1 API) plus only this model selection.
+Component/native/strided and all three kernel routes, frozen clamped arithmetic,
+library baseline, unchanged locks/drift, minimal runtime, doctests, no-std,
+strict workspace/focused lint and formatting pass. All eight owned overlays
+restore exactly. Evidence: reconstruction-model-isolated-final.log,
+rc0/152s, peak RSS1.93GiB/minimum available18111MiB. No floor-study data or
+quality threshold is regenerated.

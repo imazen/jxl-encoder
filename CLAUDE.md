@@ -6756,3 +6756,17 @@ strict workspace lint and default-disabled append checks pass. The approved
 signature is merged through PR145 at699ad7cd. Current-main integration passes
 with exact overlay restoration (rc0/182s, peak RSS1.08GiB/min18922MiB).
 [Contract](docs/GAIN_MAP_APPEND_CONTRACT.md).
+
+
+### RESOLVED issue 144 internal 2× decoder reconstruction model
+
+The diagnostic round trip now uses reflected decoder support, while iterative
+encoder search retains v0.12 clamped support and its unchanged frozen scalar
+arithmetic. Actual signed/positive decoded planes cover one-pixel axes, odd/even
+outputs and nonconstant interiors/borders. Packed and padded visible model
+words agree exactly and NaN-filled padding is unchanged. Restoring clamped
+model support makes the runtime regression fail. Existing byte locks, library,
+minimal/no-std builds and strict lint pass. This changes a reconstruction model,
+not an encoding strategy or a measured quality/performance policy. Historical
+floor-study numbers need remeasurement before comparison with this model.
+[Actual planes, regions and gaps](docs/CONDITIONAL_MODULAR_CONTRACT.md).

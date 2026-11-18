@@ -1,3 +1,10 @@
+> Historical model qualification (November 18): these recorded measurements
+> used clamped support in the reconstruction diagnostic. The issue-144 model
+> correction uses the decoder's reflected support while retaining clamped
+> iterative encoder search. Re-run the study before comparing these numbers
+> with the corrected diagnostic; no new rate-distortion measurement is supplied.
+> See [the model contract](../docs/CONDITIONAL_MODULAR_CONTRACT.md).
+
 # resampling admissibility on imazen-26 — benchmarks/resample_admissibility_2026-09-06.cells.tsv
 
 4644 encode cells, 2236 decision cells, 42 images, 23 strata, efforts [5, 8], sizes [512, 1024].

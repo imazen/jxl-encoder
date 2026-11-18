@@ -2899,3 +2899,10 @@ Remaining layout inventory is tracked separately in the progressive contract.
 |---|---|---|---|
 | Root `append_gain_map_box` and `hdr::append_gain_map_bundle` | Reject existing direct/`brob` gain maps and malformed top-level boundaries; raw helper returns Result and typed helper propagates it. Valid first insertion retains the existing writer and placement. | Part 2 clause 9.11 permits at most one gain-map box. | Owner-approved breaking signature, merged through PR145 at699ad7cd. Mode-independent helper; no registry gate or value changes. Native/primary pixel preservation, retained before failures, fault controls and exact region limits are recorded in GAIN_MAP_APPEND_CONTRACT.md. |
 
+
+
+### Issue 144 internal 2× reconstruction model
+
+| Site | Encoder model | Pinned v0.12 control | Status |
+| --- | --- | --- | --- |
+| `resampling::resample_roundtrip_2x_rgb` upsampling stage | Reflect decoder support through a shared private strided kernel; retain clamped support in the iterative encoder search. | Native decoding reflects support, while v0.12 `enc_heuristics.cc::UpsampleImage` clamps its search support. | Repaired diagnostic model. Nonconstant 33×17 planes expose 0.06820229 old-model error, with at most 2.9802322e-7 primary/native disagreement. Signed/odd/strided actual-plane controls, restored fault and unchanged frozen search/byte expectations pass. No strategy gate changes or new rate-distortion qualification. See CONDITIONAL_MODULAR_CONTRACT.md. |
