@@ -6641,6 +6641,21 @@ see [the decoder finding](docs/DECODER_FINDINGS.md). This limits the decoder
 oracle, not the stored CMYK source/Black tests. Native CI remains a separate
 verdict. [Coverage and limits](docs/CMYK_SOURCE_CONTRACT.md).
 
+### RESOLVED November 18: JPEG prefix-only APP1 and parsed metadata admission
+
+Prefix-only EXIF/XMP records stay opaque and cannot consume the first genuine
+metadata slot. Shared pre-color and direct JBRD validation rejects mismatched
+APP arrays, invalid classified prefixes and duplicate external EXIF/XMP
+references (Part 2 clause 9.12). The before model panics on missing array
+entries and loses exact duplicate-EXIF reconstruction. Ordinary repeated raw
+metadata remains supported. Raw contents are not fully TIFF/XML-validated.
+
+Fresh classifier/tracking/validator regions are 19/19, 16/16 and 38/38;
+both new call sites are 3/3. Full rendering/exact reconstruction, restored
+runtime faults, minimal/optional callers, unchanged locks, broad library and
+strict workspace lint pass. These are selected affected-path controls, not
+full JPEG validation. [Evidence and limits](docs/JPEG_RECONSTRUCTION_CONTRACT.md).
+
 ### RESOLVED November 18: grayscale JPEG SOF sampling preservation
 
 The shared JPEG writer now retains absolute grayscale sampling factors. Before

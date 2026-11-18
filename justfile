@@ -2746,6 +2746,40 @@ cmyk-auxiliary-final-check manifest:
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --test cmyk_animation_layers_contract -- --test-threads=1
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert --test cmyk_animation_layers_contract -- cmyk_reference_only cmyk_explicit_add --test-threads=1
 
+jpeg-prefix-metadata-check manifest:
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,jpeg-reencoding --test jpeg_sampling_contract metadata -- --test-threads=1
+
+jpeg-metadata-production-evidence manifest output coverage_env:
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder -p jxl-encoder-cli
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" "" --test-target jpeg_sampling_contract --features __expert,parallel,jpeg-reencoding --source jxl-encoder/src/jpeg/encode.rs --source jxl-encoder/src/jpeg/parse.rs --source jxl-encoder/src/jpeg/jbrd.rs --source jxl-encoder/tests/jpeg_sampling_contract/metadata.rs --source jxl-encoder/tests/jpeg_sampling_contract/callers.rs --source scripts/check_jpeg_frame_headers.py --source scripts/jxl_bitstream_diff.py --source scripts/jxl_container.py' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+jpeg-metadata-callers-check manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder-cli --features jpeg-reencoding --test jpeg_sampling -- --test-threads=1
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,jpeg-reencoding --lib --test jpeg_sampling_contract -- -D warnings
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder-cli --features jpeg-reencoding --test jpeg_sampling -- -D warnings
+
+jpeg-metadata-regions llvm archive reference output:
+    python3 scripts/color_admission_coverage.py {{quote(llvm)}} {{quote(output)}} {{quote(archive)}} --jpeg-metadata --reference-root {{quote(reference)}}
+
+jpeg-metadata-runtime-faults manifest output coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/test_jpeg_metadata_mutations.py "$2" "$3"' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+jpeg-metadata-original-replay manifest revision output coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/replay_jpeg_metadata_baseline.py "$2" "$3" "$4"' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(revision)}} {{quote(output)}}
+
+jpeg-metadata-final-validation manifest output coverage_env llvm:
+    just jpeg-metadata-production-evidence {{quote(manifest)}} {{quote(output + "/restored")}} {{quote(coverage_env)}}
+    just jpeg-metadata-regions {{quote(llvm)}} {{quote(output + "/restored")}} {{quote(parent_directory(manifest))}} {{quote(output + "/regions")}}
+    just jpeg-metadata-callers-check {{quote(manifest)}}
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,jpeg-reencoding --lib -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,jpeg-reencoding --test it -- hash_lock strategy_libjxl_byte_lock divergence_table_drift jbrd_roundtrip_conformance jbrd_spec_validity compat_surface_76 --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,__expert,jpeg-reencoding --test jpeg_sampling_contract -- --test-threads=1
+    just subsampled-metadata-check {{quote(manifest)}}
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --doc
+    cargo clippy --locked --manifest-path {{quote(manifest)}} --workspace --all-targets -- -D warnings
+
+
 c6-grayscale-final-check manifest:
     cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,jpeg-reencoding --test jpeg_sampling_contract -- --test-threads=1

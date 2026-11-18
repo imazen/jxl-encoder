@@ -18,6 +18,7 @@ p.add_argument('output', type=Path)
 p.add_argument('archives', nargs='+', type=Path)
 p.add_argument('--extra-metadata', action='store_true')
 p.add_argument('--gain-map', action='store_true')
+p.add_argument('--jpeg-metadata', action='store_true')
 p.add_argument('--display-extents', action='store_true')
 p.add_argument('--animation-state', action='store_true')
 p.add_argument('--animation-deltas', action='store_true')
@@ -106,6 +107,22 @@ if a.gain_map:
     observe('jxl-encoder/src/hdr/bundle.rs', 'append_gain_map_bundle')
     (a.output / 'regions.json').write_text(json.dumps(dict(inputs=identities, functions=rows,
         note='Exact source bodies; mapped regions, not complete input/option combinations.'), indent=2))
+    sys.exit(0)
+
+if a.jpeg_metadata:
+    observe('jxl-encoder/src/jpeg/parse.rs', 'classify_app_marker')
+    observe('jxl-encoder/src/jpeg/parse.rs', 'scan_markers',
+            window=('let mut marker_type = classify_app_marker', 9))
+    observe('jxl-encoder/src/jpeg/jbrd.rs', 'validate_app_metadata')
+    observe('jxl-encoder/src/jpeg/jbrd.rs', 'encode_jbrd',
+            window=('validate_app_metadata(jpeg)?;', 1))
+    observe('jxl-encoder/src/jpeg/encode.rs', 'encode_jpeg_to_jxl_inner',
+            window=('super::jbrd::validate_app_metadata(jpeg)?;', 1))
+    observe('jxl-encoder/src/jpeg/encode.rs', 'compute_jpeg_upsampling')
+    observe('jxl-encoder/src/jpeg/encode.rs', 'encode_jpeg_to_jxl_inner',
+            window=('let jpeg_upsampling = compute_jpeg_upsampling', 1))
+    (a.output / 'regions.json').write_text(json.dumps(dict(inputs=identities, functions=rows,
+        note='Exact source bodies and named windows; no whole-JPEG coverage claim.'), indent=2))
     sys.exit(0)
 
 if a.cmyk_handoffs:

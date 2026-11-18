@@ -16,11 +16,46 @@ use super::data::*;
 use crate::bit_writer::BitWriter;
 use crate::error::Result;
 
+/// Validate classifications before color accessors index their parallel arrays.
+pub(crate) fn validate_app_metadata(jpeg: &JpegData) -> Result<()> {
+    if jpeg.app_data.len() != jpeg.app_marker_type.len() {
+        return Err(crate::error::Error::InvalidInput(
+            "JPEG APP data and classification counts differ".into(),
+        ));
+    }
+    let mut lifted = [false; 2];
+    for (data, kind) in jpeg.app_data.iter().zip(&jpeg.app_marker_type) {
+        let (slot, prefix): (usize, &[u8]) = match kind {
+            AppMarkerType::Exif => (0, b"Exif\0\0"),
+            AppMarkerType::Xmp => (1, b"http://ns.adobe.com/xap/1.0/\0"),
+            _ => continue,
+        };
+        if data.first() != Some(&0xE1)
+            || !data
+                .get(3..)
+                .is_some_and(|payload| payload.len() > prefix.len() && payload.starts_with(prefix))
+        {
+            return Err(crate::error::Error::InvalidInput(
+                "classified JPEG APP1 metadata needs a nonempty payload".into(),
+            ));
+        }
+        if lifted[slot] {
+            return Err(crate::error::Error::InvalidInput(
+                "multiple classified JPEG APP1 records cannot share one external metadata box"
+                    .into(),
+            ));
+        }
+        lifted[slot] = true;
+    }
+    Ok(())
+}
+
 /// Encode the JBRD box content for a parsed JPEG.
 ///
 /// Returns the raw bytes to be placed inside a `jbrd` ISOBMFF box.
 /// The format is: bit-packed header + Brotli-compressed data.
 pub fn encode_jbrd(jpeg: &JpegData) -> Result<Vec<u8>> {
+    validate_app_metadata(jpeg)?;
     let mut writer = BitWriter::new();
 
     // is_gray

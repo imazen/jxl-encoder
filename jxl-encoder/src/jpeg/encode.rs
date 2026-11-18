@@ -181,6 +181,7 @@ fn encode_jpeg_to_jxl_inner(
     if let Some(s) = stop {
         s.check().map_err(|_| crate::error::Error::Cancelled)?;
     }
+    super::jbrd::validate_app_metadata(jpeg)?;
     let width = jpeg.width as usize;
     let height = jpeg.height as usize;
 
