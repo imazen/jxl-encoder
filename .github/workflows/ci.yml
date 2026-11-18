@@ -273,6 +273,13 @@ jobs:
           --features __expert,__internals,__pre_quantized,parallel
           --test lf_caller_contract -- --test-threads=1
 
+      - name: Test configured pixel container policies
+        env:
+          JXL_ENCODER_OUTPUT_DIR: ${{ runner.temp }}/issue144-contracts
+        run: |
+          cargo test --locked --release -p jxl-encoder --features __expert,parallel --test container_policy_contract -- --test-threads=1
+          cargo test --locked --release -p jxl-encoder --no-default-features --features std,convenience,__expert --test container_policy_contract -- --test-threads=1
+
       - name: Test small still and streaming frame-level finalization
         env:
           JXL_ENCODER_OUTPUT_DIR: ${{ runner.temp }}/issue144-contracts

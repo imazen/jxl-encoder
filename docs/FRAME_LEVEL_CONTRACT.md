@@ -542,3 +542,12 @@ archive: `container-boxes-q47-runtime-v8`. Combined exact-body regions:
 `4bbb532590439c7efb1e7e924fd2ca2916a780bfedf8552df2e1712ad602624d`;
 profile SHA256
 `5455ed60a70b348e0602cc825626d5c3e6d6cc911e7e1fb9f9287c6c9e352e0a`.
+
+
+The complete maintained container matrix also passes with defaults disabled
+and explicit std/convenience/expert support (`container-minimal-q48-isolated-v1`).
+It retains all native/primary rendering, exact alpha/ICC/optional payload,
+destination and wide-geometry assertions. The native Linux ARM64, macOS ARM64
+and Windows ARM jobs now select the default and minimal matrix explicitly.
+These workflow commands have local runtime evidence; their fresh platform
+verdicts remain separate. No threshold, ignored test or production choice changes.

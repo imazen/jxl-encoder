@@ -3288,3 +3288,6 @@ container-policy-boxes-supplement-check manifest artifacts coverage_env:
     cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --test container_policy_contract -- -D warnings
     cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
 
+
+container-policy-minimal-check manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert --test container_policy_contract -- --test-threads=1
