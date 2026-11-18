@@ -1736,6 +1736,8 @@ impl LosslessConfig {
     /// Create an encode request for an image with this config.
     ///
     /// Use this when you need to attach metadata, limits, or cancellation.
+    /// Limits attached to this config are inherited; an explicit
+    /// [`EncodeRequest::with_limits`] replaces them for that request.
     pub fn encode_request(
         &self,
         width: u32,
@@ -1748,7 +1750,7 @@ impl LosslessConfig {
             height,
             layout,
             metadata: None,
-            limits: None,
+            limits: self.limits.as_ref(),
             stop: None,
             loop_trace: None,
             #[cfg(feature = "__external_metric")]
@@ -1870,7 +1872,7 @@ impl LosslessConfig {
         metadata: Option<&ImageMetadata<'_>>,
     ) -> Result<Vec<u8>> {
         let mut request = self.encode_request(width, height, layout);
-        request.limits = limits;
+        request.limits = limits.or(self.limits.as_ref());
         request.metadata = metadata;
         request.encode_animation(animation, frames)
     }
@@ -6252,6 +6254,9 @@ impl<'a> EncodeRequest<'a> {
                 message: "spatial resampling is not implemented for animation; use factor one"
                     .into(),
             }));
+        }
+        if self.limits.is_some() {
+            self.check_limits()?;
         }
         if !(1..=1 << 30).contains(&animation.tps_numerator)
             || !(1..=1024).contains(&animation.tps_denominator)

@@ -1788,6 +1788,24 @@ separate queue items. Broad/coverage/remote verdicts must be read independently.
 
 ## Known Bugs (ACTIVE)
 
+### RESOLVED 2026-11-19: inherited lossless limits and animation admission
+
+Lossless request construction dropped configured limits; its legacy animation
+adapter also replaced inherited limits with an absent explicit argument. Both
+animation writers omitted the shared dimension/iteration validator. Pure-main
+controls reproduce ignored pixel, width/height and explicit loop caps. The
+shared repair preserves explicit overrides and rejects before frame/loop work.
+Valid limited/unlimited animation controls retain exact bytes. These are
+admission findings, not observed memory overruns or pixel corruption.
+
+Default/minimal runtime, existing library and unchanged lock checks, strict
+lint/format and restored-fault controls pass against pinned sources. The
+supplemental loop check requires an empty trace on rejection and execution at
+the admitted boundary. Exact source-region evidence, remaining exceptions and
+caller inventory: [REQUEST_LIMITS_CONTRACT.md](docs/REQUEST_LIMITS_CONTRACT.md).
+Remote CI remains a separate verdict. No public signature or policy gate changes.
+
+
 ### RESOLVED issue144 minimal rate-control feature, November19
 
 Minimal `std,rate-control,__expert` compilation failed because the intensity

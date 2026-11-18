@@ -2924,3 +2924,10 @@ Remaining layout inventory is tracked separately in the progressive contract.
 | Site | Encoder contract | Reference / normative distinction | Qualification |
 |---|---|---|---|
 | `ColorEncoding::from_cicp` TC17 mapping | Preserve the relative DCI descriptor. Caller supplies absolute intensity separately or normalizes source samples. The helper does not change pixels or carry a peak. | Pinned v0.12 ApplyCICP selects the same transfer enum. Part 1 E.2 distinguishes relative JXL DCI from absolute CICP17 normalization. | API/documentation clarification; no algorithm, gate, constant, signature or registry metadata change. Native-rendered source/white/intensity controls and exact scope are recorded in TC17_NORMALIZATION.md. |
+
+
+### Issue 144: inherited resource limits and shared animation admission
+
+| Site | Encoder contract | Reference distinction | Qualification |
+|---|---|---|---|
+| Lossless request/legacy animation adapters and shared request animation entry | Inherit configured limits, retain explicit overrides, run existing dimension/iteration checks before frame work when limits are supplied | Caller resource policy; no codestream arithmetic, gate or registry-value change | Pure-main before failures and isolated positive/fault controls are retained. Exact callers and coverage limits: [REQUEST_LIMITS_CONTRACT.md](REQUEST_LIMITS_CONTRACT.md). |

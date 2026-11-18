@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- Preserve configured lossless request limits and explicit overrides; check
+  animation dimensions and iteration caps before frame work.
+
 - Keep the shared rate-control intensity resolver available without the optional
   buttloop feature; update diagnostic/test callers to existing encoder exports.
 

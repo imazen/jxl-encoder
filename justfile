@@ -3211,3 +3211,36 @@ progressive-cmyk-final-check manifest artifacts coverage_env:
 
 progressive-cmyk-std-feature-disabled-lint manifest:
     cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features convenience,__expert,__internals,__pre_quantized --lib --test progressive_cmyk_contract -- -D warnings
+
+
+# Preserve configured limits through still and animation request adapters.
+lossless-config-limits-before-check manifest artifacts coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" inherited_lossless_limits_reach_ --also-filter animation_explicit_dimension_limits_reach_ --test-target lossless_config_limits_contract --features __expert,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/limits.rs --source jxl-encoder/src/api/animate.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+
+lossless-config-limits-after-check manifest artifacts coverage_env:
+    mkdir {{quote(artifacts)}}
+    just lossless-config-limits-before-check {{quote(manifest)}} {{quote(artifacts + "/runtime")}} {{quote(coverage_env)}}
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,__expert --test lossless_config_limits_contract -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --lib -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --test it -- hash_lock strategy_libjxl_byte_lock divergence_table_drift --test-threads=1
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --lib --test lossless_config_limits_contract -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+    bash -c 'set -e; source "$1"; python3 scripts/test_prepared_payload_mutations.py "$2" "$3/mutations" --lossless-limits' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+
+request-limits-loop-before-check manifest artifacts coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" animation_explicit_loop_limits_ --test-target lossless_config_limits_contract --features __expert,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/limits.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+
+request-limits-supplement-check manifest artifacts coverage_env:
+    mkdir {{quote(artifacts)}}
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3/runtime" inherited_lossless_limits_ --also-filter animation_explicit_ --test-target lossless_config_limits_contract --features __expert,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/limits.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --lib --test lossless_config_limits_contract -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+
+request-limits-existing-animation-check manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,parallel --test it animation:: -- --test-threads=1
+
+request-limits-display-extents-check manifest artifacts coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" animation_invalid_display_extents_ --test-target lossless_config_limits_contract --features __expert,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/limits.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,__expert --test lossless_config_limits_contract animation_invalid_display_extents_ -- --test-threads=1
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --lib --test lossless_config_limits_contract -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check

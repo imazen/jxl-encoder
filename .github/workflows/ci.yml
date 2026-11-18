@@ -247,6 +247,13 @@ jobs:
           cargo test --locked -p jxl-encoder --release --no-default-features --features std,rate-control,__expert --test rate_control_feature_contract -- --test-threads=1
           cargo test --locked -p jxl-encoder --release --features __expert,parallel,rate-control --test rate_control_feature_contract -- --test-threads=1
 
+      - name: Test inherited limits and animation admission
+        env:
+          JXL_ENCODER_OUTPUT_DIR: ${{ runner.temp }}/issue144-contracts
+        run: |
+          cargo test --locked -p jxl-encoder --release --features __expert,parallel --test lossless_config_limits_contract -- --test-threads=1
+          cargo test --locked -p jxl-encoder --release --no-default-features --features std,__expert --test lossless_config_limits_contract -- --test-threads=1
+
       - name: Optional ICC row conversion and default-disabled feature graph
         run: |
           cargo test --locked --release -p jxl-encoder --no-default-features --features __expert,jpeg-reencoding,chroma-subsampling --lib api::cms::
