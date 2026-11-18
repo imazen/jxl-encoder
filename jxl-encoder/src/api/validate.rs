@@ -32,6 +32,14 @@ pub(crate) fn validate_lossy_source_encoding(
     Ok(())
 }
 
+/// Validate manual spline data before image/row storage work.
+pub(crate) fn validate_lossy_manual_splines(config: &LossyConfig) -> Result<()> {
+    if let Some(splines) = &config.splines {
+        crate::vardct::splines::validate_splines(splines).map_err(at_from)?;
+    }
+    Ok(())
+}
+
 /// JXL spec maximum dimension (2^30) per axis.
 ///
 /// Both width and height must be `<= MAX_JXL_DIM`. This is enforced on every

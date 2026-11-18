@@ -472,7 +472,7 @@ jobs:
           --test modular_width_level_contract --test animation_contract
           --test jpeg_sampling_contract
           -- --test-threads=1
-      - name: Selected modular contracts
+      - name: Selected modular and decoder reconstruction contracts
         env:
           JXL_ENCODER_OUTPUT_DIR: ${{ runner.temp }}/issue144-contracts
         run: >-
@@ -481,6 +481,13 @@ jobs:
           -- reference_property_contract delta_palette_contract
           internal_2x_border_model reconstruction_model_routes
           --include-ignored --test-threads=1
+      - name: Manual spline admission and supported callers
+        env:
+          JXL_ENCODER_OUTPUT_DIR: ${{ runner.temp }}/issue144-contracts
+        run: >-
+          cargo test --locked -p jxl-encoder --release
+          --features "__expert,__internals,__pre_quantized,parallel,chroma-subsampling,jpeg-reencoding"
+          --test spline_admission_contract --lib -- spline --test-threads=1
       - name: Delta palette CLI callers
         env:
           JXL_ENCODER_OUTPUT_DIR: ${{ runner.temp }}/issue144-contracts

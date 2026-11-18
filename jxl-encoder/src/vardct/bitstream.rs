@@ -1980,6 +1980,15 @@ impl VarDctEncoder {
         stop: Option<&dyn enough::Stop>,
     ) -> Result<[u32; 19]> {
         crate::error::check_stop(stop)?;
+        if let Some(splines) = &self.splines {
+            super::splines::validate_splines(splines)?;
+            if !splines.is_empty() {
+                return Err(crate::error::Error::InvalidInput(
+                    "manual splines are not supported by the animation frame writer".into(),
+                ));
+            }
+        }
+
         // Reuse the full encode pipeline from encode() but write to an existing writer.
         // This duplicates some setup from encode(), but keeps the code paths separate.
         let xsize_blocks = div_ceil(width, BLOCK_DIM);

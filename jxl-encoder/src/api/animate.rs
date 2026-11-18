@@ -774,6 +774,17 @@ pub(crate) fn encode_animation_lossy(
     use crate::headers::frame_header::FrameOptions;
 
     cfg.validate().map_err(at_from)?;
+    validate_lossy_manual_splines(cfg)?;
+    if cfg
+        .splines
+        .as_ref()
+        .is_some_and(|splines| !splines.is_empty())
+    {
+        return Err(at!(EncodeError::InvalidConfig {
+            message: "manual splines are not implemented for animation".into(),
+        }));
+    }
+
     validate_animation_input(width, height, layout, frames)?;
 
     let w = width as usize;

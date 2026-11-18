@@ -2906,3 +2906,10 @@ Remaining layout inventory is tracked separately in the progressive contract.
 | Site | Encoder model | Pinned v0.12 control | Status |
 | --- | --- | --- | --- |
 | `resampling::resample_roundtrip_2x_rgb` upsampling stage | Reflect decoder support through a shared private strided kernel; retain clamped support in the iterative encoder search. | Native decoding reflects support, while v0.12 `enc_heuristics.cc::UpsampleImage` clamps its search support. | Repaired diagnostic model. Nonconstant 33×17 planes expose 0.06820229 old-model error, with at most 2.9802322e-7 primary/native disagreement. Signed/odd/strided actual-plane controls, restored fault and unchanged frozen search/byte expectations pass. No strategy gate changes or new rate-distortion qualification. See CONDITIONAL_MODULAR_CONTRACT.md. |
+
+
+## Issue 144 manual spline admission (November 18)
+
+| Site | Encoder behavior | Pinned libjxl v0.12 | Status |
+|---|---|---|---|
+| `vardct/splines.rs` geometry/conversion and API/prepared/frame admission | Validate finite rounded geometry and serialized coordinate ranges; reject nonfinite/out-of-range quantized DCT words; refuse nonempty manual splines on unsupported routes before output | `QuantizedSpline::Create` requires nonempty points, rounds geometry and clamps large DCT values; its native decoder refuses the retained repeated-point streams | Resolved shared correctness/admission repair, no strategy gate/default changes. Valid arithmetic retained. [Scope and evidence](SPLINE_ADMISSION_CONTRACT.md); exact whole spline parity is not claimed. |

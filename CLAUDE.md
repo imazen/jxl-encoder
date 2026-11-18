@@ -1788,6 +1788,22 @@ separate queue items. Broad/coverage/remote verdicts must be read independently.
 
 ## Known Bugs (ACTIVE)
 
+### RESOLVED 2026-11-19: manual spline input and unsupported payload routes
+
+Manual spline admission checks finite rounded geometry and serialized ranges,
+checks coefficient quantization, and refuses unsupported animation/prepared/
+optional-subsampling payloads before writing. An empty outer list remains a
+legal disable. All offered policy bindings, selected precision/group/API paths,
+exact alpha and explicit effort-8 loop controls pass in primary/native decoders.
+Unmodified v0.12 quantized-word controls and retained legal strict hashes pass.
+Nine restored faults are detected; selected code regions and the unreachable
+constructor continuation are documented. Library, unchanged locks, minimal,
+no-std/docs and strict workspace/optional lib/test lint pass across the retained
+commands. Earlier recipe/fixture/lint failures remain recorded; their encompassing
+wrappers are not labeled green. [Contract and limits](docs/SPLINE_ADMISSION_CONTRACT.md).
+
+
+
 ### RESOLVED 2026-11-19: strict optional CMS overflow-test lint
 
 The existing CMS overflow regression now destructures its error directly.

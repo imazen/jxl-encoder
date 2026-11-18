@@ -4435,6 +4435,12 @@ impl LossyConfig {
     /// They encode thin features (power lines, horizons) efficiently.
     /// The encoder subtracts splines from XYB before VarDCT; the decoder
     /// adds them back after reconstruction. Default: `None`.
+    ///
+    /// Each spline needs finite coordinates and coefficients, at least one
+    /// point, and distinct consecutive points after integer rounding. An empty
+    /// outer list disables manual and automatic splines. Nonempty manual data
+    /// is currently unsupported by animation, optional chroma subsampling and
+    /// prepared coefficient entry points; those paths return an error.
     pub fn with_splines(mut self, splines: Vec<crate::vardct::splines::Spline>) -> Self {
         self.splines = Some(splines);
         self
@@ -6694,7 +6700,10 @@ impl<'a> EncodeRequest<'a> {
         // opt-in via `cfg.validate()`; auto-calling it on the encode
         // path means callers no longer have to remember to invoke it.
         match self.config {
-            ConfigRef::Lossy(cfg) => cfg.validate().map_err(at_from)?,
+            ConfigRef::Lossy(cfg) => {
+                cfg.validate().map_err(at_from)?;
+                validate_lossy_manual_splines(cfg)?;
+            }
             ConfigRef::Lossless(cfg) => cfg.validate().map_err(at_from)?,
         }
         // W44-222: install Tier-2 knobs (if any) into the runtime-tuning
@@ -9384,6 +9393,15 @@ impl<'a> EncodeRequest<'a> {
         pixels: &[u8],
         budget: &alloc::sync::Arc<crate::budget::MemoryBudget>,
     ) -> core::result::Result<(Vec<u8>, EncodeStats), EncodeError> {
+        if cfg
+            .splines
+            .as_ref()
+            .is_some_and(|splines| !splines.is_empty())
+        {
+            return Err(EncodeError::InvalidConfig {
+                message: "manual splines are not implemented with chroma subsampling".into(),
+            });
+        }
         let mode = cfg.chroma_subsampling;
         let tag = mode.tag();
         if !matches!(self.layout, PixelLayout::Rgb8) {
@@ -9782,6 +9800,7 @@ impl LossyEncoder {
         }
         if !self.input_admitted {
             self.cfg.validate().map_err(at_from)?;
+            validate_lossy_manual_splines(&self.cfg)?;
             self.check_input_limits()?;
             encode_preflight(
                 self.width,
@@ -9956,8 +9975,8 @@ mod canonicalize;
 mod validate;
 use validate::{
     validate_dims, validate_icc_model, validate_icc_presence, validate_intrinsic_size,
-    validate_lossy_source_encoding, validate_metadata_sizes, validate_source_gamma,
-    validate_tone_mapping_full,
+    validate_lossy_manual_splines, validate_lossy_source_encoding, validate_metadata_sizes,
+    validate_source_gamma, validate_tone_mapping_full,
 };
 
 impl LossyConfig {

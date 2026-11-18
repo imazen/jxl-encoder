@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+- Validate manual spline wire geometry and checked coefficient quantization;
+  return errors for unsupported animation, prepared coefficient and optional
+  subsampling payload routes. Empty outer lists remain a legal disable.
+
 - Reflect decoder support in the internal 2× reconstruction model while
   retaining clamped v0.12 encoder search, frozen arithmetic and encoded bytes.
   Support strided sample planes in the shared private kernel (`3c9fb262`); historical floor

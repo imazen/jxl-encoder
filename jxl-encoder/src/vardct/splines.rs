@@ -137,6 +137,97 @@ pub struct Spline {
     pub sigma_dct: [f32; 32],
 }
 
+fn rounded_coordinate(value: f32) -> Result<i64> {
+    let rounded = f64::from(value.round());
+    if !value.is_finite() || rounded < i64::MIN as f64 || rounded >= i64::MAX as f64 {
+        return Err(crate::error::Error::InvalidInput(
+            "spline coordinates must be finite and representable as integers".into(),
+        ));
+    }
+    Ok(rounded as i64)
+}
+
+/// Check the actual integer geometry that the spline writer will serialize.
+/// An empty outer list disables manual splines; each individual spline needs
+/// at least one point. Part 1 K.4.1 disallows repeated consecutive wire points.
+pub(crate) fn validate_splines(splines: &[Spline]) -> Result<()> {
+    let mut previous_start = (0_i64, 0_i64);
+    for (index, spline) in splines.iter().enumerate() {
+        let Some(first) = spline.control_points.first() else {
+            return Err(crate::error::Error::InvalidInput(
+                "a spline requires at least one control point".into(),
+            ));
+        };
+        if !spline
+            .color_dct
+            .iter()
+            .flatten()
+            .chain(&spline.sigma_dct)
+            .all(|v| v.is_finite())
+        {
+            return Err(crate::error::Error::InvalidInput(
+                "spline color and sigma coefficients must be finite".into(),
+            ));
+        }
+        let start = (rounded_coordinate(first.x)?, rounded_coordinate(first.y)?);
+        for (value, previous) in [(start.0, previous_start.0), (start.1, previous_start.1)] {
+            let representable = if index == 0 {
+                u32::try_from(value).is_ok()
+            } else {
+                value
+                    .checked_sub(previous)
+                    .is_some_and(|v| i32::try_from(v).is_ok())
+            };
+            if !representable {
+                return Err(crate::error::Error::InvalidInput(
+                    "spline starting position exceeds its serialized coordinate range".into(),
+                ));
+            }
+        }
+        previous_start = start;
+        let mut previous = start;
+        let mut previous_delta = (0_i64, 0_i64);
+        for point in spline.control_points.iter().skip(1) {
+            let current = (rounded_coordinate(point.x)?, rounded_coordinate(point.y)?);
+            if current == previous {
+                return Err(crate::error::Error::InvalidInput(
+                    "consecutive spline control points must differ after integer rounding".into(),
+                ));
+            }
+            let delta = (
+                current.0.checked_sub(previous.0),
+                current.1.checked_sub(previous.1),
+            );
+            let (Some(dx), Some(dy)) = delta else {
+                return Err(crate::error::Error::InvalidInput(
+                    "spline control-point delta overflows its integer representation".into(),
+                ));
+            };
+            if ![(dx, previous_delta.0), (dy, previous_delta.1)]
+                .into_iter()
+                .all(|(v, p)| v.checked_sub(p).is_some_and(|dd| i32::try_from(dd).is_ok()))
+            {
+                return Err(crate::error::Error::InvalidInput(
+                    "spline double-delta exceeds its serialized signed 32-bit range".into(),
+                ));
+            }
+            previous = current;
+            previous_delta = (dx, dy);
+        }
+    }
+    Ok(())
+}
+
+fn quantized_coefficient(value: f32) -> Result<i32> {
+    let rounded = f64::from(value.round());
+    if !value.is_finite() || rounded < f64::from(i32::MIN) || rounded > f64::from(i32::MAX) {
+        return Err(crate::error::Error::InvalidInput(
+            "spline quantized coefficient exceeds its serialized signed 32-bit range".into(),
+        ));
+    }
+    Ok(rounded as i32)
+}
+
 // ── Internal types ──────────────────────────────────────────────────────────
 
 /// Quantized spline (delta-of-deltas control points, integer DCT coefficients).
@@ -407,7 +498,7 @@ impl QuantizedSpline {
         quantization_adjustment: i32,
         y_to_x: f32,
         y_to_b: f32,
-    ) -> Self {
+    ) -> Result<Self> {
         let quant = adjusted_quant(quantization_adjustment);
 
         // Quantize control points: delta-of-deltas encoding.
@@ -440,7 +531,9 @@ impl QuantizedSpline {
         let mut quantized_color = [[0i32; 32]; 3];
         for (i, qc) in quantized_color[1].iter_mut().enumerate() {
             let dct_factor = if i == 0 { SQRT_2 } else { 1.0 };
-            *qc = (spline.color_dct[1][i] * dct_factor * quant / CHANNEL_WEIGHT[1]).round() as i32;
+            *qc = quantized_coefficient(
+                spline.color_dct[1][i] * dct_factor * quant / CHANNEL_WEIGHT[1],
+            )?;
         }
 
         // Dequantize Y for CfL decorrelation reference.
@@ -457,7 +550,7 @@ impl QuantizedSpline {
             for (i, qc) in quantized_color[c].iter_mut().enumerate() {
                 let dct_factor = if i == 0 { SQRT_2 } else { 1.0 };
                 let decorrelated = spline.color_dct[c][i] - cfl_factor * restored_y[i];
-                *qc = (decorrelated * dct_factor * quant / CHANNEL_WEIGHT[c]).round() as i32;
+                *qc = quantized_coefficient(decorrelated * dct_factor * quant / CHANNEL_WEIGHT[c])?;
             }
         }
 
@@ -465,14 +558,16 @@ impl QuantizedSpline {
         let mut quantized_sigma = [0i32; 32];
         for (i, qs) in quantized_sigma.iter_mut().enumerate() {
             let dct_factor = if i == 0 { SQRT_2 } else { 1.0 };
-            *qs = (spline.sigma_dct[i] * dct_factor * quant / CHANNEL_WEIGHT[3]).round() as i32;
+            *qs = quantized_coefficient(
+                spline.sigma_dct[i] * dct_factor * quant / CHANNEL_WEIGHT[3],
+            )?;
         }
 
-        Self {
+        Ok(Self {
             control_points,
             color_dct: quantized_color,
             sigma_dct: quantized_sigma,
-        }
+        })
     }
 
     /// Dequantize back to floating-point spline (for rendering).
@@ -1747,14 +1842,16 @@ fn spline_passes_trial_encode_gate(
     }
 
     // ── Trial-encode this single spline into a fresh BitWriter.
-    let trial_data = SplinesData::from_splines(
+    let Ok(trial_data) = SplinesData::from_splines(
         alloc::vec![spline.clone()],
         0,   // quantization_adjustment
         0.0, // y_to_x (default DC CfL)
         1.0, // y_to_b (default DC CfL)
         width,
         height,
-    );
+    ) else {
+        return false;
+    };
     let mut writer = BitWriter::new();
     let encoded_bytes = if encode_splines_section(&trial_data, &mut writer).is_ok() {
         writer.zero_pad_to_byte();
@@ -2001,13 +2098,19 @@ impl SplinesData {
         y_to_b: f32,
         _image_width: usize,
         image_height: usize,
-    ) -> Self {
+    ) -> Result<Self> {
+        validate_splines(&splines)?;
+        if splines.is_empty() {
+            return Err(crate::error::Error::InvalidInput(
+                "an encoded spline section requires at least one spline".into(),
+            ));
+        }
         let mut quantized = Vec::with_capacity(splines.len());
         let mut all_segments: Vec<SplineSegment> = Vec::new();
         let mut segments_by_y: Vec<(usize, usize)> = Vec::new(); // (y, segment_index)
 
         for spline in &splines {
-            let qs = QuantizedSpline::from_spline(spline, quantization_adjustment, y_to_x, y_to_b);
+            let qs = QuantizedSpline::from_spline(spline, quantization_adjustment, y_to_x, y_to_b)?;
 
             // Dequantize for rendering (matches decoder reconstruction).
             let starting_point = spline.control_points[0];
@@ -2055,14 +2158,14 @@ impl SplinesData {
             segment_y_start[y + 1] += segment_y_start[y];
         }
 
-        Self {
+        Ok(Self {
             quantization_adjustment,
             splines,
             quantized,
             segments: all_segments,
             segment_indices,
             segment_y_start,
-        }
+        })
     }
 }
 
@@ -2079,6 +2182,12 @@ impl SplinesData {
 ///   - ctx 4: control point double-deltas (pack_signed)
 ///   - ctx 5: DCT coefficients (3×32 color + 32 sigma, pack_signed)
 pub(crate) fn encode_splines_section(data: &SplinesData, writer: &mut BitWriter) -> Result<()> {
+    validate_splines(&data.splines)?;
+    if data.splines.is_empty() || data.splines.len() != data.quantized.len() {
+        return Err(crate::error::Error::InvalidInput(
+            "invalid spline section shape".into(),
+        ));
+    }
     let mut tokens = Vec::new();
 
     let num_splines = data.splines.len();
@@ -2247,7 +2356,7 @@ mod tests {
         let y_to_x = 0.0;
         let y_to_b = 1.13;
 
-        let qs = QuantizedSpline::from_spline(&spline, adj, y_to_x, y_to_b);
+        let qs = QuantizedSpline::from_spline(&spline, adj, y_to_x, y_to_b).unwrap();
         let dqs = qs.dequantize(spline.control_points[0], adj, y_to_x, y_to_b);
 
         // Control points should roundtrip exactly (integer-rounded).
@@ -2282,7 +2391,7 @@ mod tests {
             },
         };
 
-        let qs = QuantizedSpline::from_spline(&spline, 0, 0.0, 0.0);
+        let qs = QuantizedSpline::from_spline(&spline, 0, 0.0, 0.0).unwrap();
 
         // Deltas: (10,0), (10,5), (10,10)
         // Double-deltas: (10,0), (0,5), (0,5)
@@ -2605,7 +2714,7 @@ mod tests {
             },
         };
 
-        let data = SplinesData::from_splines(vec![spline], 0, 0.0, 1.13, 64, 64);
+        let data = SplinesData::from_splines(vec![spline], 0, 0.0, 1.13, 64, 64).unwrap();
 
         assert_eq!(data.splines.len(), 1);
         assert_eq!(data.quantized.len(), 1);
@@ -2617,3 +2726,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "spline_admission_tests.rs"]
+mod admission_tests;

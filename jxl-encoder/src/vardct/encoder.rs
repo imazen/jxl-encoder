@@ -3869,6 +3869,9 @@ impl VarDctEncoder {
         if let Some(s) = stop {
             s.check().map_err(|_| Error::Cancelled)?;
         }
+        if let Some(splines) = &self.splines {
+            super::splines::validate_splines(splines)?;
+        }
         if let Some(ce) = &self.color_encoding {
             super::xyb::validate_color_encoding(ce)?;
         }
@@ -4348,7 +4351,7 @@ impl VarDctEncoder {
                     1.0, // y_to_b (default DC CfL)
                     width,
                     height,
-                );
+                )?;
                 {
                     let mut xyb = [
                         core::mem::take(&mut xyb_x),
@@ -7223,6 +7226,15 @@ impl VarDctEncoder {
         quant_field: &[u8],
         extras: &[crate::api::ExtraChannel<'_>],
     ) -> Result<Vec<u8>> {
+        if let Some(splines) = &self.splines {
+            super::splines::validate_splines(splines)?;
+            if !splines.is_empty() {
+                return Err(Error::InvalidInput(
+                    "manual splines are not supported by prepared coefficient entry points".into(),
+                ));
+            }
+        }
+
         if let Some(ce) = &self.color_encoding {
             super::xyb::validate_color_encoding(ce)?;
         }
@@ -7776,6 +7788,15 @@ impl VarDctEncoder {
         raw_nzeros: &[alloc::vec::Vec<alloc::vec::Vec<u16>>; 3],
         extras: &[crate::api::ExtraChannel<'_>],
     ) -> Result<Vec<u8>> {
+        if let Some(splines) = &self.splines {
+            super::splines::validate_splines(splines)?;
+            if !splines.is_empty() {
+                return Err(Error::InvalidInput(
+                    "manual splines are not supported by prepared coefficient entry points".into(),
+                ));
+            }
+        }
+
         if let Some(ce) = &self.color_encoding {
             super::xyb::validate_color_encoding(ce)?;
         }
