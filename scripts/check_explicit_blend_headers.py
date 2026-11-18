@@ -24,6 +24,10 @@ for row in json.loads(a.manifest.read_text()):
     container=Path(row['path']).read_bytes();data,ranges=codestream(container);assert data[:2]==b'\xff\x0a'
     parser=Envelopes(data);parser.br=BitReader(data,2)
     width,height=parser.size_header();parser.image_metadata();parser.custom_transform_data()
+    metadata={key:value for _,key,value in parser.fields}
+    for field in ['tps_numerator', 'tps_denominator']:
+        if field in row:
+            assert metadata['metadata.animation.'+field]==row[field],(row,metadata)
     assert not getattr(parser,'want_icc',False),'This non-ICC fixture requires a complete envelope parse'
     parser.br.jump_to_byte_boundary();frames=[]
     while parser.br.pos<len(data)*8:
@@ -46,6 +50,14 @@ for row in json.loads(a.manifest.read_text()):
         assert partial==row['partial_area'],(row,last)
     else:
         assert bool(last.get('frame.custom_size_or_origin',False))==row.get('partial',False),(row,last)
+    if 'assert_blend' in row:
+        assert last.get('frame.blending.mode', 'kReplace')=='k'+row['assert_blend'],(row,last)
+    if 'assert_source' in row:
+        assert last.get('frame.blending.source',0)==row['assert_source'],(row,last)
+    for index, blend in enumerate(row.get('assert_extra_blends', [])):
+        prefix = f'frame.ec_blending[{index}]'
+        assert last.get(prefix + '.mode', 'kReplace') == 'k' + blend['mode'], (row, last)
+        assert last.get(prefix + '.source', 0) == blend['source'], (row, last)
     if row['reference']:
         hidden=frames[row.get('hidden_index',1)]['fields']
         assert hidden['frame.frame_type']=='kReferenceOnly',(row,hidden)

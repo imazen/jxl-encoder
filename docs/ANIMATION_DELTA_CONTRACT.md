@@ -17,7 +17,7 @@ independent envelope/TOC records show Add/source-zero for the failing implicit
 case and Add/source-one for the passing explicit control. All selected before
 streams and native renders are retained in `selected-delta-strict-before`.
 
-The local repair pins the full-delta candidate to slot one, the invariant of
+The repair `b8f096c8` pins the full-delta candidate to slot one, the invariant of
 `advance_crop_reference`. Main and alpha Add sources follow that same slot.
 No policy gate or public API changes. An isolated source based on `f1fa5382`
 contains only this production repair; the pending frame-level tracker is absent.
