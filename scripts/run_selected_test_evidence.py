@@ -16,6 +16,8 @@ p.add_argument('manifest', type=Path)
 p.add_argument('output', type=Path)
 p.add_argument('filter')
 p.add_argument('--test-target')
+p.add_argument('--driver-only-coverage', action='store_true',
+               help='instrument the integration driver, not production pixel kernels')
 p.add_argument('--package', default='jxl-encoder', choices=['jxl-encoder', 'jxl-encoder-cli'])
 p.add_argument('--features', default='__expert')
 p.add_argument('--no-default-features', action='store_true')
@@ -29,9 +31,11 @@ if (root / '.git').exists() or not (root.parent.parent / 'provenance.json').is_f
 # Wrapper-injected flags do not always invalidate Cargo's cached rlib. Force
 # this owned package to rebuild before recording an instrumented executable.
 os.utime(root / 'jxl-encoder/src/lib.rs', None)
+if a.driver_only_coverage and not a.test_target:
+    p.error('--driver-only-coverage requires an integration test target')
 if a.test_target:
     key = '__CARGO_LLVM_COV_RUSTC_WRAPPER_CRATE_NAMES'
-    names = os.environ.get(key, '').split(',')
+    names = [] if a.driver_only_coverage else os.environ.get(key, '').split(',')
     for name in [a.test_target, a.test_target + '_tests']:
         if name not in names:
             names.append(name)
@@ -106,7 +110,10 @@ with (a.output / 'test.log').open('x') as log:
     child = subprocess.Popen([str(executable), a.filter, '--nocapture', '--test-threads=1'],
                              env=env, stdout=log, stderr=subprocess.STDOUT)
     identity = dict(command=command, executable=str(executable), binary_sha256=digest,
-                    filter=a.filter, pid=child.pid, sources=source_rows)
+                    filter=a.filter, pid=child.pid, sources=source_rows,
+                    coverage_scope=dict(instrumented_crates=os.environ.get(
+                        '__CARGO_LLVM_COV_RUSTC_WRAPPER_CRATE_NAMES','').split(','),
+                        driver_only=a.driver_only_coverage))
     (a.output / 'identity.json').write_text(json.dumps(identity, indent=2))
     code = child.wait()
 assert hashlib.sha256(executable.read_bytes()).hexdigest() == digest

@@ -19,6 +19,8 @@ p.add_argument('archives', nargs='+', type=Path)
 p.add_argument('--extra-metadata', action='store_true')
 p.add_argument('--display-extents', action='store_true')
 p.add_argument('--animation-state', action='store_true')
+p.add_argument('--animation-deltas', action='store_true')
+p.add_argument('--reference-root', type=Path)
 a = p.parse_args()
 a.output.mkdir(exist_ok=False)
 reports = []
@@ -35,7 +37,7 @@ for index, archive in enumerate(a.archives):
     identities.append(dict(archive=str(archive), exit_code=0,
                            binary_sha256=identity['binary_sha256'], profile_sha256=identity['profile_sha256']))
 rows = []
-reference_root = Path(__file__).resolve().parent.parent
+reference_root = a.reference_root or Path(__file__).resolve().parent.parent
 
 def body_span(lines, name, occurrence):
     starts = [i for i, line in enumerate(lines)
@@ -89,6 +91,20 @@ def observe(relative, name, occurrence=0, window=False):
                      inputs=inputs, excluded_different_body=excluded, covered=sum(v > 0 for v in counts.values()), total=len(counts),
                      missing_relative_regions=[k for k, v in sorted(counts.items()) if not v]))
     print(json.dumps(rows[-1]))
+
+if a.animation_deltas:
+    for archive in a.archives:
+        identity = json.loads((archive / 'identity.json').read_text())
+        assert not identity.get('coverage_scope', {}).get('driver_only', False), 'driver-only profiles cannot establish production coverage'
+    observe('jxl-encoder/src/api/animate.rs', 'build_lossless_delta_image')
+    source = (reference_root / 'jxl-encoder/src/api/animate.rs').read_text().splitlines()
+    start = next(i for i,line in enumerate(source) if 'let writer_b: Option<' in line)
+    end = next(i for i in range(start,len(source)) if 'prev_pixels = advance_crop_reference' in source[i])
+    observe('jxl-encoder/src/api/animate.rs', 'encode_animation_lossless',
+            window=('let writer_b: Option<', end-start))
+    (a.output / 'regions.json').write_text(json.dumps(dict(inputs=identities, functions=rows,
+        source_comparison='Exact function bodies; code-region keys relative to each declaration'), indent=2))
+    raise SystemExit(0)
 
 if a.animation_state:
     observe('jxl-encoder/src/api/animate.rs', 'advance_crop_reference')

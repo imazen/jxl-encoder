@@ -68,3 +68,14 @@ The original expanded-layout attempt failed during dependency compilation
 with disk exhaustion before any test ran. Its failed verdict and reclamation
 manifest are retained; the corrected no-debug run supplies the passing strict
 layout result. It is not counted as a pixel failure or a completed test run.
+
+## Reproduction
+
+`just animation-delta-isolated-validation <manifest> <artifacts> <coverage-env>
+<lint-home> <lint-target>` runs policy, strict production-region, minimal,
+restored-fault and unchanged-baseline checks. Use a fresh artifact directory
+and the pinned sibling source closure. `animation-delta-final-continuation`
+rechecks expanded fixtures and lint without repeating unchanged production
+baselines. `scripts/color_admission_coverage.py --animation-deltas` accepts
+only production-instrumented passing archives; driver-only profiles cannot
+establish these code-region observations.

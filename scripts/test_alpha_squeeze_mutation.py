@@ -18,6 +18,9 @@ if (root / '.git').exists() or not (root.parent.parent / 'provenance.json').is_f
     p.error('requires an owned clean-source export')
 a.output.mkdir(exist_ok=False)
 cases = [
+    ('anim-selected-delta-source', 'jxl-encoder/src/api/animate.rs',
+     'delta_options.blend_source = Some(1);', 'delta_options.blend_source = Some(0);',
+     'animation_delta_candidate_contract', 'strict_selected_delta_reads'),
     ('anim-resampling', 'jxl-encoder/src/api.rs', '__ANIM_RESAMPLING__', '',
      'animation_resampling_contract', 'animation_spatial_resampling'),
     ('anim-clock-equality', 'jxl-encoder/src/api/animate.rs',
@@ -365,6 +368,9 @@ for name, source, before, after, target, selection in cases:
                    '--source', 'jxl-encoder/src/vardct/progressive_ac_v012.tsv',
                    '--source', 'jxl-encoder/src/vardct/alpha_squeeze_thin_v012.tsv',
                    '--source', 'jxl-encoder/src/vardct/progressive_brackets_v012.tsv']
+        if name == 'anim-selected-delta-source':
+            command += ['--source', 'jxl-encoder/tests/animation_delta_candidate_contract/layouts.rs',
+                        '--source', 'jxl-encoder/tests/animation_delta_candidate_contract/profiles.rs']
         if name.startswith('anim-'):
             command += ['--source', 'jxl-encoder/src/api/animate.rs',
                         '--source', 'jxl-encoder/src/api/animation.rs',

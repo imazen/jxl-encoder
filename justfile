@@ -2366,3 +2366,25 @@ animation-duration-native source build oracle output:
     python3 scripts/frame_header_oracle.py --component zero_area {{quote(source)}} {{quote(build)}} {{quote(oracle)}}
     python3 scripts/run_zero_area_native.py {{quote(oracle)}} {{quote(output)}} --durations
 
+
+animation-selected-delta-evidence manifest output coverage_env selection:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" "$4" --driver-only-coverage --test-target animation_delta_candidate_contract --features __expert,parallel --source jxl-encoder/tests/animation_delta_candidate_contract/layouts.rs --source jxl-encoder/tests/animation_delta_candidate_contract/profiles.rs --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/headers/frame_header.rs --source jxl-encoder/src/modular/frame.rs --source scripts/check_explicit_blend_headers.py --source scripts/jxl_bitstream_diff.py --source scripts/jxl_container.py' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}} {{quote(selection)}}
+
+
+animation-delta-isolated-validation manifest artifacts coverage_env lint_home lint_target:
+    mkdir {{quote(artifacts)}}
+    just animation-selected-delta-evidence {{quote(manifest)}} {{quote(artifacts + "/offered")}} {{quote(coverage_env)}} ""
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3/regions-input" strict_ --test-target animation_delta_candidate_contract --features __expert,parallel --source jxl-encoder/tests/animation_delta_candidate_contract/layouts.rs --source jxl-encoder/tests/animation_delta_candidate_contract/profiles.rs --source jxl-encoder/src/api/animate.rs --source scripts/check_explicit_blend_headers.py --source scripts/jxl_bitstream_diff.py --source scripts/jxl_container.py; python3 scripts/run_selected_test_evidence.py "$2" "$3/minimal" "" --test-target animation_delta_candidate_contract --no-default-features --features std,convenience,__expert --source jxl-encoder/tests/animation_delta_candidate_contract/layouts.rs --source jxl-encoder/tests/animation_delta_candidate_contract/profiles.rs --source jxl-encoder/src/api/animate.rs --source scripts/check_explicit_blend_headers.py --source scripts/jxl_bitstream_diff.py --source scripts/jxl_container.py; python3 scripts/test_alpha_squeeze_mutation.py "$2" "$3/fault" --case anim-selected-delta-source' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    just alpha-squeeze-broad-baseline {{quote(manifest)}}
+    env CARGO_HOME={{quote(lint_home)}} CARGO_TARGET_DIR={{quote(lint_target)}} cargo +1.100.0 clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --lib --test animation_delta_candidate_contract -- -D warnings
+    cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+
+
+animation-delta-final-continuation manifest artifacts coverage_env lint_home lint_target:
+    mkdir {{quote(artifacts)}}
+    just animation-selected-delta-evidence {{quote(manifest)}} {{quote(artifacts + "/offered")}} {{quote(coverage_env)}} ""
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3/regions-input" strict_ --test-target animation_delta_candidate_contract --features __expert,parallel --source jxl-encoder/tests/animation_delta_candidate_contract/layouts.rs --source jxl-encoder/tests/animation_delta_candidate_contract/profiles.rs --source jxl-encoder/src/api/animate.rs --source scripts/check_explicit_blend_headers.py --source scripts/jxl_bitstream_diff.py --source scripts/jxl_container.py; python3 scripts/run_selected_test_evidence.py "$2" "$3/minimal" "" --test-target animation_delta_candidate_contract --no-default-features --features std,convenience,__expert --source jxl-encoder/tests/animation_delta_candidate_contract/layouts.rs --source jxl-encoder/tests/animation_delta_candidate_contract/profiles.rs --source jxl-encoder/src/api/animate.rs --source scripts/check_explicit_blend_headers.py --source scripts/jxl_bitstream_diff.py --source scripts/jxl_container.py' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    env CARGO_HOME={{quote(lint_home)}} CARGO_TARGET_DIR={{quote(lint_target)}} cargo +1.100.0 clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --lib --test animation_delta_candidate_contract -- -D warnings
+    cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
