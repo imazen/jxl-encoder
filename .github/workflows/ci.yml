@@ -249,6 +249,19 @@ jobs:
           cargo test --locked -p jxl-encoder --release --no-default-features --features std,rate-control,__expert --lib vardct::rate_control::direction_tests:: -- --test-threads=1
           cargo test --locked -p jxl-encoder --release --features __expert,parallel,rate-control --lib vardct::rate_control::direction_tests:: -- --test-threads=1
 
+      - name: Check request controller with the root std feature disabled
+        run: >-
+          cargo check --locked -p jxl-encoder --no-default-features
+          --features rate-control --lib
+
+      - name: Test request rate-control source and destination contracts
+        env:
+          JXL_ENCODER_OUTPUT_DIR: ${{ runner.temp }}/issue144-contracts
+        run: |
+          cargo test --locked --release -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel,rate-control,jpeg-reencoding,chroma-subsampling,__external_metric --lib request_rate_control_ -- --test-threads=1
+          cargo test --locked --release -p jxl-encoder --no-default-features --features std,convenience,__expert,rate-control --lib request_rate_control_ -- --test-threads=1
+          cargo test --locked --release -p jxl-encoder-cli --features rate-control,jpeg-reencoding,brotli-metadata --test rate_control_request -- --test-threads=1
+
       - name: Test rate-control metric peak and reservation lifetimes
         run: >-
           cargo test --locked -p jxl-encoder --release

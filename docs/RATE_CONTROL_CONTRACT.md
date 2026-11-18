@@ -227,9 +227,13 @@ metadata, precision, LF, iteration and unsupported-route families with the
 JPEG and Brotli features compiled together. The subsequent complete existing
 CLI suite passes its delta-palette, gamma, ICC, JPEG, modular-width and
 progressive checks, then stops before Gaborish input on disk exhaustion.
-The Gaborish and later checks, lint and format still need continuation; this
-partial encompassing run is not green. The exact old cache is archived before
-reclamation, preserving every test artifact. The trusted-limit large LF-area
-runtime is also separate: strict LF-off has completed full rendering, while
-all remaining policy/LF cases are still active. Its elapsed wall includes
-verified freezer intermissions and is not a latency result.
+The separate `request-cli-continuation-q52-isolated-v11` run passes the
+remaining Gaborish, shifted-alpha, strategy and streaming CLI targets, strict
+selected-test lint and scoped formatting. Root-std-disabled and std-enabled
+rate-control library compilation both pass; the former retains nineteen
+warnings. The complete existing CLI suite therefore has positive evidence
+across the exact-source q50/q52 union; the disk-interrupted q50 command remains
+nonzero. Both old Cargo caches were archived and verified before reclamation,
+preserving every test artifact. The trusted-limit large LF-area runtime remains
+separate and active. Its elapsed wall includes verified freezer intermissions
+and is not a latency result.
