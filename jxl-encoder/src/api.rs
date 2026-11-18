@@ -4511,7 +4511,8 @@ impl LossyConfig {
     /// When true, DC coefficients are encoded as a separate modular frame
     /// before the main VarDCT frame, matching libjxl's `progressive_dc >= 1`.
     /// Ignored when the frame is resampled (`with_resampling` or automatic
-    /// resampling), as in libjxl.
+    /// resampling), as in libjxl. Animation encoding returns an error because
+    /// separate LF payloads are not implemented for animation.
     pub fn with_lf_frame(mut self, enable: bool) -> Self {
         self.lf_frame = enable;
         self
@@ -4529,7 +4530,8 @@ impl LossyConfig {
     ///
     /// Values are clamped to `0..=`[`MAX_PROGRESSIVE_DC`]. Setting
     /// any non-zero level implies [`Self::with_lf_frame(true)`], and like it
-    /// is ignored when the frame is resampled.
+    /// is ignored when the frame is resampled. Animation encoding rejects an
+    /// enabled LF frame; explicitly disabling it keeps animation available.
     pub fn with_progressive_dc(mut self, level: u8) -> Self {
         let lvl = level.min(MAX_PROGRESSIVE_DC);
         self.progressive_dc = lvl;

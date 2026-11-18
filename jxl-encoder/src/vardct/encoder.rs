@@ -3845,6 +3845,17 @@ impl VarDctEncoder {
         Ok(Some(pipeline))
     }
 
+    /// LF geometry is derived from the full display canvas. Raw callers
+    /// supply DC for the coded grid, which cannot describe a resampled LF.
+    fn check_lf_upsampling(&self) -> Result<()> {
+        if self.use_lf_frame && self.upsampling > 1 {
+            return Err(Error::InvalidInput(
+                "LF frames require spatial upsampling factor one".into(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Shared implementation backing both [`Self::encode`] and
     /// [`Self::encode_with_extras`]. Takes already-validated extras as
     /// the internal `VardctExtra` view; performs the RGB-shape check
@@ -3869,6 +3880,7 @@ impl VarDctEncoder {
         if let Some(s) = stop {
             s.check().map_err(|_| Error::Cancelled)?;
         }
+        self.check_lf_upsampling()?;
         if let Some(splines) = &self.splines {
             super::splines::validate_splines(splines)?;
         }
@@ -7284,6 +7296,7 @@ impl VarDctEncoder {
         quant_field: &[u8],
         extras: &[super::extras::VardctExtra<'_>],
     ) -> Result<Vec<u8>> {
+        self.check_lf_upsampling()?;
         let width = precomputed.width;
         let height = precomputed.height;
         let xsize_blocks = precomputed.xsize_blocks;
@@ -7688,8 +7701,8 @@ impl VarDctEncoder {
             sharpness_map.as_deref(),
             extras,
             patches_data.as_ref(),
-            None, // splines
-            None, // float_dc,
+            None,                          // splines
+            Some(&transform_out.float_dc), // LF payload uses unquantized DC.
             None,
         );
         let _ms_two = _t_two.elapsed().as_secs_f64() * 1000.0;
@@ -7707,8 +7720,12 @@ impl VarDctEncoder {
     /// (forward DCT + quantize + nzeros) and goes straight to
     /// `encode_two_pass` (entropy coding). The caller is responsible
     /// for producing per-channel `quant_dc` / `quant_ac` / `nzeros` /
-    /// `raw_nzeros` / `float_dc` matching the shape `transform_and_quantize`
+    /// `raw_nzeros` matching the shape `transform_and_quantize`
     /// would have emitted on this `precomputed` input.
+    ///
+    /// An attached patch dictionary is emitted with these residual coefficients.
+    /// LfFrame is unsupported here because this API has no unquantized DC input;
+    /// requesting it returns an error before output allocation.
     ///
     /// Designed for the GPU encoder fast path where DCT + quantize
     /// run on the GPU and only the small per-block coefficient buffers
@@ -7800,6 +7817,11 @@ impl VarDctEncoder {
         if let Some(ce) = &self.color_encoding {
             super::xyb::validate_color_encoding(ce)?;
         }
+        if self.use_lf_frame {
+            return Err(Error::InvalidInput(
+                "LF frame encoding requires unquantized DC input, unavailable at the prequantized entry point".into(),
+            ));
+        }
         let width = precomputed.width;
         let height = precomputed.height;
         let xsize_blocks = precomputed.xsize_blocks;
@@ -7879,6 +7901,9 @@ impl VarDctEncoder {
             );
         }
 
+        // Final DC coefficients are supplied by this caller rather than the
+        // transform path that normally records the modular buffer requirement.
+        Self::note_dc_modular_width(&self.force_modular_32bit, quant_dc);
         self.encode_two_pass(
             width,
             height,
@@ -7902,7 +7927,7 @@ impl VarDctEncoder {
             &precomputed.noise_params,
             None,
             &extras_views,
-            None,
+            precomputed.patches_data.as_ref(),
             None,
             None,
             None,

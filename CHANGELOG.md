@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+- Preserve prepared LF DC, attached patch dictionaries and supplied DC-width
+  promises. Reject LF at prequantized callers without DC, raw upsampling greater
+  than one, and unsupported animation payload routes.
+
 - Align SDR/HDR gain-map inputs in the tagged alternate gamut and actual base-white
   light units; normalize absolute PQ/HLG and require exact matching alpha.
 

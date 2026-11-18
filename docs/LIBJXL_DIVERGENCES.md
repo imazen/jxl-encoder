@@ -2940,6 +2940,14 @@ Remaining layout inventory is tracked separately in the progressive contract.
 | Lossless request/legacy animation adapters and shared request animation entry | Inherit configured limits, retain explicit overrides, run existing dimension/iteration checks before frame work when limits are supplied | Caller resource policy; no codestream arithmetic, gate or registry-value change | Pure-main before failures and isolated positive/fault controls are retained. Exact callers and coverage limits: [REQUEST_LIMITS_CONTRACT.md](REQUEST_LIMITS_CONTRACT.md). |
 
 
+### Issue 144: prepared payload and raw LF geometry
+
+| Site | Encoder contract | Reference distinction | Qualification |
+|---|---|---|---|
+| Prepared/prequantized VarDCT entries | Forward available LF DC and attached dictionaries; reject LF without DC; derive modular width from supplied DC | Part1 F.2/H/I; prepared state must describe the emitted reference and DC buffers | Selected pixel/alpha/fault checks pass; exact source regions and remaining gates: PREPARED_FRAME_CONTRACT.md. No strategy gate/default changes. |
+| Ordinary/prepared raw LF entries | Reject LF when spatial upsampling exceeds one | LF grid derives from the display canvas; supplied raw DC describes the coded grid. Public v0.12/request routes suppress LF with resampling | Independent geometry and actual failing before streams retained; default/minimal, restored-call faults, broad/unchanged-lock and strict lint/format checks pass. No shared serializer change. |
+
+
 ### Issue 144: rate-control metric admission and buffer lifetimes
 
 | Site | Encoder contract | Reference distinction | Qualification |

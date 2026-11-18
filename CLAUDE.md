@@ -1802,6 +1802,20 @@ whole-controller memory gap remain explicit in
 new public API or strategy gate is claimed.
 
 
+### RESOLVED 2026-11-19: prepared payloads and raw LF admission
+
+Prepared VarDCT emission forwards unquantized LF DC and attached patch
+dictionaries; prequantized LF without DC is refused, and actual supplied DC
+widens the modular-buffer promise before writing. Raw LF with spatial
+upsampling and unsupported animation LF now fail before frame work. Positive
+primary/native pixels, exact alpha, winning legacy/attached references,
+default/minimal callers, restored faults, current HDR library, unchanged locks,
+and strict lint/format pass. Exact affected windows and uncovered contexts are
+listed in [PREPARED_FRAME_CONTRACT.md](docs/PREPARED_FRAME_CONTRACT.md).
+No public signatures or strategy defaults change. The separate request/CLI
+prototype and its HLG decoder gap remain open.
+
+
 ### RESOLVED 2026-11-19: SDR/HDR gain-map gamut, alpha and light units
 
 The pair producer converts both inputs to the HDR alternate gamut and the

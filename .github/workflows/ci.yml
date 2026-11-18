@@ -265,6 +265,12 @@ jobs:
           cargo test --locked --release -p jxl-encoder --no-default-features --features __expert,jpeg-reencoding,chroma-subsampling --lib api::cms::
           cargo test --locked --release -p jxl-encoder --no-default-features --features __expert,jpeg-reencoding,chroma-subsampling --test optional_icc_minimal_contract
 
+      - name: Test prepared LF payload and raw geometry admission
+        run: >-
+          cargo test --locked --release -p jxl-encoder
+          --features __expert,__internals,__pre_quantized,parallel
+          --test lf_caller_contract -- --test-threads=1
+
       - name: Test gain-map source preparation and transfer fixtures
         run: >-
           cargo test --locked --release -p jxl-encoder
@@ -556,6 +562,14 @@ jobs:
           cargo test --locked -p jxl-encoder --release
           --features "__expert,parallel,hdr-gainmap,brotli-metadata"
           --test gain_map_duplicate_contract -- --test-threads=1
+      - name: Test real prepared patch dictionaries with LF and alpha
+        env:
+          JXL_ENCODER_OUTPUT_DIR: ${{ runner.temp }}/issue144-contracts
+        run: |
+          cargo run --locked --release -p jxl-encoder --features corpus-tests --example prepared_frame_fixture_setup -- "$RUNNER_TEMP/prepared-corpus-root"
+          export CODEC_CORPUS_DIR="$(cat "$RUNNER_TEMP/prepared-corpus-root")"
+          cargo test --locked --release -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel,corpus-tests --test lf_caller_contract -- --test-threads=1
+          cargo test --locked --release -p jxl-encoder --no-default-features --features std,__expert,__internals,__pre_quantized,corpus-tests --test lf_caller_contract -- --test-threads=1
       - name: Test HDR pair gamut, alpha and absolute-light contract
         env:
           JXL_ENCODER_OUTPUT_DIR: ${{ runner.temp }}/issue144-contracts
