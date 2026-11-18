@@ -647,6 +647,7 @@ fn parse_dht_marker(data: &[u8], pos: &mut usize, jpeg: &mut JpegData) -> Result
         // represents it as a table with all-zero counts that is the only
         // entity of its segment (ISO/IEC 18181-2 A.2; libjxl `ProcessDHT`).
         jpeg.huffman_code.push(JpegHuffmanCode {
+            empty_segment: true,
             is_ac: false,
             id: 0,
             is_last: true,
@@ -725,6 +726,7 @@ fn parse_dht_marker(data: &[u8], pos: &mut usize, jpeg: &mut JpegData) -> Result
         }
 
         jpeg.huffman_code.push(JpegHuffmanCode {
+            empty_segment: false,
             is_ac,
             id,
             is_last: true,

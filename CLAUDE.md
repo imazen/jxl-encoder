@@ -1777,6 +1777,15 @@ bundled Display P3 ICC in its default output color space. Its public decoder
 API accepts every frame when the original ICC is explicitly requested; do not
 misclassify that CLI limitation as an invalid stream or strip the ICC to hide it.
 
+## Issue 144 JPEG DHT reconstruction
+
+The empty DHT and unused zero-symbol table forms previously produced the same
+parsed model and rebuilt different original bytes. The private distinction and
+selected API/CLI/gain-map controls are documented in
+[the reconstruction contract](docs/JPEG_RECONSTRUCTION_CONTRACT.md).
+RGB-sampled JPEG admission and rare populated scan-signal controls remain
+separate queue items. Broad/coverage/remote verdicts must be read independently.
+
 ## Known Bugs (ACTIVE)
 
 ### RESOLVED 2026-11-18: optional subsampling changed explicit source color under ICC

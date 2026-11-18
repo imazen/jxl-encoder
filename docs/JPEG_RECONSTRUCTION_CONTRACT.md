@@ -1,8 +1,8 @@
 # JPEG reconstruction edge contracts
 
 Issue 144 C6 is repaired on main. C2's current source, restored controls and passing broad gates
-are described below; remote CI remains a separate verdict. C3 and C4 retain
-independent before evidence and unlanded candidates.
+are described below; remote CI remains a separate verdict. The DHT portion of C3 has separate verified controls below. C3 sampling/scan
+items and C4 remain independent.
 
 ## Grayscale sampling
 
@@ -66,19 +66,13 @@ unchanged. Additional caller/lint/region checks pass in
 available 20,140 MiB). Final fixture reach assertions have their own replay.
 Remote CI is a separate verdict.
 
-## Metadata and conditional checks
+## Remaining conditional checks
 
-The prepared unrelated-APP0 control preserves explicit RGB IDs, with and
-without Adobe transform-zero metadata, and compares full rendering to the
-unaltered RGB reference. Native mutated-input behavior is recorded separately
-because the inspected reference source shares the APP0-presence rule. This
-control has not run.
-
-The prepared prefix-only APP1 controls cover isolated Exif/XMP prefixes and a
-prefix preceding genuine metadata. They require opaque preservation, unchanged
-interpretation and exact reconstruction. A dependency-independent forged
-parsed-data control and unusual RGB-sampling/DHT/scan probes remain pending.
-These selected cases do not establish full JPEG acceptance or Annex A coverage.
+C4's unrelated-APP0 before observation and candidate remain separate from the
+DHT repair below. RGB-subsampled JPEG admission and actually populated scan
+reset/extra-zero-run metadata still need their own production controls. The
+existing restart fixtures report zero for both of those metadata arrays and
+therefore do not qualify those conditional branches.
 
 ## Pinned native edge observations
 
@@ -153,3 +147,76 @@ RSS 1.11 GiB, minimum available 19,232 MiB). A fresh original-writer replay of
 428f04ab retains the duplicate-metadata source/object/profile and runtime
 artifacts, then verifies restoration of the candidate sources; its wrapper
 passes while requiring the regression's nonzero test verdict.
+
+## Empty DHT segments and unused zero-symbol definitions (C3)
+
+An empty DHT segment has four bytes; a zero-symbol table definition has
+21 bytes. A grayscale control renames its active DC0 table to DC1 and inserts
+one of those two forms with DC0. The former parser produces identical complete
+parsed models for the distinct inputs. Unmodified pinned v0.12 admits both
+source JPEGs and reconstructs each exactly. The original encoder instead
+reconstructs the zero-symbol input as an empty segment through both oracles.
+Unused DC3 and AC3 definitions independently reproduce the lost 17 bytes.
+
+The parser now retains a private empty-segment discriminator. Only an actual
+empty segment emits seventeen zero counts without a sentinel; real table
+definitions retain the sentinel, including a zero-symbol definition. Invalid
+public-field edits to a cloned empty descriptor return an error. The table
+type lives in a private module without a public re-export or constructor;
+its existing inferred cloning and public-field editing remain exercised by an
+external integration test. No public name, signature or strategy gate is added.
+
+The selected ordinary/cancellable/parsed/default-effort/bare paths pass across
+the offered policies. Primary and pinned native complete samples match the
+native reference for ordinary, empty, unused DC3/AC3 and restart fixtures.
+The distinct DC0 pair, mixed-table segments, unused class/id boundaries and
+strict effort 1/3/7/8/9/11 controls reconstruct exact originals. Automatic and
+forced CLI input, all strategy spellings/aliases, experimental and implicit
+default input also pass. Embedded gain-map controls render the secondary stream
+and reconstruct the whole primary-plus-secondary original exactly.
+
+Initial after controls pass in `jpeg-dht-model-after.log` (26 seconds, peak
+RSS 1.08 GiB, minimum available 19,315 MiB). Extended API/CLI and strict lint
+pass in `jpeg-dht-callers.log` (41 seconds, peak RSS 1.08 GiB, minimum available
+19,279 MiB). A newly written default-wrapper assertion initially compared its
+effort-7 result with effort 3; the corrected test checks the documented effort
+and decoded samples. The failed attempt remains in `jpeg-dht-expanded.log`.
+Coverage, restored faults and broad checks are recorded separately; none of
+these controls establishes RGB-subsampling support or rare scan-signal coverage.
+
+The source-bound DHT report observes 104/106 parser regions and 67/74 in the
+Huffman writer window. The parser's two missing regions are early truncated
+length returns. They are reachable through the public marker scanner; direct
+truncated-input cases were added after correcting the initial classification. The writer's seven
+missing regions are propagated bit-writer allocation/error returns; successful
+field, empty/real/zero table selection, sentinel and inconsistent-empty paths
+execute. No allocator-failure injection or full JPEG coverage is claimed.
+The existing restart fixtures do not exercise nonempty reset/extra-zero arrays.
+
+The four restored runtime faults independently remove the parser distinction,
+replace the writer discriminator with its old count-based inference, and bypass
+the empty-descriptor consistency guard. Each regression fails and every source
+checksum is restored (`jpeg-dht-regions-and-faults.log`, rc0, 133 seconds;
+peak RSS 1.11 GiB, minimum available 19,221 MiB). Final restored profiles and
+broader feature/library/byte-lock checks run independently after these faults.
+
+The full library, unchanged normal/strict byte and divergence locks, selected
+JBRD validity, default-disabled runtime target, doctests and strict workspace
+all-target lint pass in `jpeg-dht-final-validation-v2.log` (349 seconds; peak
+RSS 1.91 GiB, minimum available 18,505 MiB). That command's misspelled optional
+filter executes no tests and supplies no optional-path evidence. The corrected
+reconstruction-conformance and optional subsampling/metadata targets pass in
+`jpeg-dht-gaps.log`; its overall rc1 is a single extra blank line at the final
+format check (127 seconds; peak RSS 1.11 GiB, minimum available 19,020 MiB).
+The formatting repair changes no test or production behavior. Final DHT-only
+error-path/profile/lint/format results are recorded independently.
+
+Final restored evidence in `jpeg-dht-complete` observes 106/106 DHT parser
+regions and 68/74 in the exact Huffman writer window. The additional cloned
+out-of-range count checks the typed U32-selector refusal. The six remaining
+writer regions are propagated bit-writer errors for valid fixed-width fields,
+zero counts and byte/sentinel values; allocator failure is not injected.
+Default and default-disabled DHT execution, focused strict lint and scoped
+formatting pass (`jpeg-dht-complete.log`, rc0, 71 seconds; peak RSS 1.11 GiB,
+minimum available 19,199 MiB). These named regions do not qualify the complete
+JPEG pipeline or the still-open C3 sampling and rare scan metadata items.
