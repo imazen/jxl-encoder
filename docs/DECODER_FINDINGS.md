@@ -203,31 +203,28 @@ Decoder repair and upstream reporting remain open; no outside-org report is
 authorized. [Encoder control and limitations](CMYK_SOURCE_CONTRACT.md).
 
 
+## November 19: HLG near-unity OOTF control
 
-## November 19: isolated decoder repairs adopted by the encoder
+A private issue144 request-controller caller at255nits retains HLG source
+[0.125,0.25,0.5]. Complete native v0.12 original-parametric output begins
+[0.12495632469654083,0.24998974800109863,0.4999362528324127]. The same stream
+through released jxl0.8.0 begins
+[0.13115248084068298,0.2623854875564575,0.5236957669258118]. This is a positive
+interior vector, distinct from Z1's near-black singularity.
 
-The repaired 0.8 primary lineage is pinned at
-[`3d48825c`](https://github.com/imazen/jxl-rs-v08/commit/3d48825cd10d0a5c325a683136723198fb69859a).
-It preserves the released 0.8 APIs and fixes both the global inverse-squeeze
-grid promotion and the HLG near-unity predicate. The native decoder pin is
-[`74eba39b`](https://github.com/imazen/zenjxl-decoder/commit/74eba39b05e8fae933807f035f56c1a6ece2f8ce),
-including the post-header no-CMS profile guard. Existing live checkouts remain
-untouched. These are source pins, not published decoder releases.
+The released primary decoder's HLG forward/inverse helpers skip exponents
+below0.1 in magnitude. The isolated zenjxl source shares that predicate;
+no matching zenjxl runtime magnitude is claimed here. Unmodified v0.12
+`cms/tone_mapping.h` selects its OOTF outside[-0.01,0.01]. The dependency-repair
+scope is with the owner. The failing source-fidelity assertion is retained;
+no threshold or decoder input was changed to make it pass.
 
-The native HLG component observer uses unmodified v0.12 HlgOOTF_Base.
-Selected primary inverse/forward mapped regions are 19/19; native scalar and
-precise kernels are 17/17 and 27/27, and profile admission is 16/16. The
-primary global-grid propagation expressions are 5/5. These fractions refer
-to exact retained test executables and profiles in the decoder contracts,
-not all inputs, SIMD tiers or a whole-decoder coverage claim. Required-platform
-primary CI44543429842 and native decoder CI44542842011 pass.
-Extended zen run44542842029 ended after a
-runner shutdown, without an aggregate test verdict; it remains incomplete.
-
-The original E4 wide-reference arithmetic finding is independent and remains
-unrepaired in the released-0.8-derived primary. That decoder is not the E4
-acceptance oracle. Encoder integration qualification has its own verdict in
-[the controller contract](RATE_CONTROL_CONTRACT.md).
+Exact retained primary ELFc672e78f5a42bdfaccad2551fcb0feebfea8eed12549fdf47efe9b287831ad3c,
+profile5584894460fe15f363e1099ef45e660b5e7d322c3f3f80fd8627c65c522da14e,
+archive`request-typed-queue14-gates-v1`. Its native observer uses the original
+parametric color fields directly, with float color and extra-channel outputs.
+The separate ICC observer-mode/domain mistakes in the private metadata test
+are harness errors and do not establish ICC corruption.
 
 ## November 19: primary inverse-squeeze next-border offset
 

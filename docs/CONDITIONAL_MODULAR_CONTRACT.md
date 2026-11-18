@@ -54,6 +54,117 @@ input, output, full logs, executable/source hashes and decoded-sample results.
 Pillow reads only explicitly selected RGB8 PNG output in the palette control;
 there is no binary16, HDR, alpha or complete mode/entry-path qualification.
 
+The prepared E6 observer now records the actual quantized output and winning
+indices during the public encoder call. Its uncompiled probe requires a delta
+whose Gradient and Select predictions differ. A control forces only the
+serialized predictor declaration to Gradient and checks identical indices and
+quantized values, the changed-bit count, and complete primary/native output.
+No selection, same-payload or runtime verdict is claimed before that probe runs.
+
+The internal 2× model has a separate uncompiled decoder control. It builds
+valid upsampled modular sample planes through existing production writers,
+then compares both complete decoder outputs with the private model. This is
+intended to measure a reconstruction-model difference, independently of
+VarDCT quantization, and makes no invalid-codestream allegation.
+
+
+## November 18 runtime attribution
+
+The first observer was thread-local, but public encoding dispatches its own
+worker pool. It missed executed tree/palette writes. A test-only mutex-backed
+observer now records those actual writes across the worker boundary. This
+changes no production arithmetic or declared transform fields.
+
+E6 is reproduced on 32×32 and 259×17 RGB8 ramps with a candidate cap of 16.
+Actual palette records contain one/four explicit deltas respectively and a
+winning implicit delta at (2,1), red: index -1, Gradient 132, Select 136.
+Both actual decoder outputs differ from the selected quantized result. A
+control changes only predictor declaration 4 to 5: stream length, palette
+indices and quantized values are identical, exactly one stream bit changes,
+and both decoders then reproduce every selected quantized value. Streaming
+bytes equal the ordinary one-shot bytes. This establishes E6 independently
+of intentional near-lossless source changes. Broader mode/caller qualification
+and the production repair remain in progress.
+
+E4's corrected linear-tagged fixed controls recover every source binary32
+word in both decoders. All four seeds execute one actual learned-tree write,
+but the explicit Zero predictor forces a single leaf. Those runs do not
+establish a selected distinguishing property-18 threshold; the next probe
+removes that override and requests previous-channel properties explicitly.
+The early default-color failure and missing-observer runs remain retained
+but are not credited as E4 reproductions.
+
+The internal 2× control now uses frymire crops at (333,135), requiring
+nonconstant samples on every multi-pixel shape. Native-model maximum errors
+are 0 for 1×1, 0.002424419 for 1×3, 0.032399 for 3×1, 0.044677287 for 16×16,
+and 0.06820229 for 33×17. Primary/native differences are at most
+2.9802322e-7. All samples are finite. These are observed linear sample-plane
+errors in a valid upsampled modular stream; they do not allege invalid syntax.
+The earlier origin crops had too little variation to settle boundary behavior.
+
+Exact source/executable/profile evidence: conditional-modular-before-v5.
+Its wrapper fails the selected regressions: 37 seconds, peak RSS 1.93 GiB,
+minimum available 18,087 MiB. The retained v4 run independently has the same
+nonconstant 2× errors, but lacked cross-worker palette/tree observations.
+
+
+Pinned source qualification: unmodified v0.12 enc_modular.cc selects Average4
+for its lossy-palette candidate, and enc_palette.cc predicts using that selected
+predictor. The correction here aligns the declaration with this encoder's
+existing Gradient quantizer. It does not port the native candidate search or
+claim identical native quantized samples. The one-bit same-payload native
+control supplies the independent interpretation gate for the correction.
+
+
+The subsequent E4 run removes the fixed predictor and observes a selected
+property-18 threshold at tree node 1, source pixel (2,0). Independent arithmetic
+is 1073741824 after narrow-before-absolute and -1073741824 after wide absolute
+then final property narrowing. Both follow the actual root's absolute-west
+branch at that row-zero pixel. The old stream recovers source words through
+crates.io jxl 0.8, but unmodified djxl refuses it. Exact before evidence is
+reference-property-before-witness, rc101/36s, peak RSS1.93 GiB/minimum available
+17,974 MiB. This establishes a winning branch, not merely a tree containing
+that property. The earlier witness helper's north/west confusion is corrected;
+the observed row-zero witness has the same west and fallback-north sample.
+
+The pinned jxl-rs-derived decoder already computes the reference residual in
+i64 before absolute value. The candidate encoder applies the same operation
+at all three gather/emission expressions. That decoder and unmodified v0.12
+must recover every source word after repair; crates.io jxl 0.8 is retained as
+a separately observed shared-defect control, not a deciding vote.
+
+
+## First repaired qualification
+
+conditional-modular-first-repairs passes the selected strict E4 source-word
+checks, the all-policy E6 caller matrix and nonconstant decoder-plane model
+checks: rc0/186s, peak RSS1.94 GiB/minimum available17,975 MiB. The E6 matrix
+covers17 offered policy bindings, both entropy selections,32×32/259×17 and
+legacy/request/strided/writer/streaming plus both animation request spellings.
+Each complete primary/native color buffer equals the recorded quantized target.
+It does not claim all input combinations or a quality/compression improvement.
+
+The separate precision control passes RGB/RGBA8/16 at both dimensions through
+request, strided, streaming and animation, with exact contracted alpha in both
+decoders. A checkerboard exercises the actual no-delta Zero outcome.
+Evidence: delta-palette-precision, rc0/47s, peak RSS1.94 GiB/minimum
+available18,014 MiB.
+
+The decoder-model component and every offered model kernel route pass alongside
+the unchanged frozen clamped-search differential: conditional-core-after-frozen,
+rc0/38s, peak RSS1.95 GiB/minimum available17,955 MiB. Direct decoded-plane
+checks establish interpolation correctness; the kernel-route test establishes
+routing and finite output, not an end-to-end VarDCT pixel-identity claim.
+
+The first exact-body region audit identifies remaining work before closure.
+The E6 declaration is4/4; whole palette application920/963, multi-group
+writer333/405, and the patched-frame palette caller is unexecuted. Many missing
+regions are allocation/serializer errors, but each must be classified from
+source rather than presumed unreachable. E4 raw gather and emission property
+windows are7/7 each; the exact-bucket prewalk is0/7, so expanded sectioned
+production controls are required. The model index, kernel, wrapper and public
+round-trip bodies are13/13,152/152,9/9 and74/74 respectively. These are selected
+mapped regions, not input-space coverage. Evidence: conditional-first-regions.
 
 ## E6 repaired: selected predictor and affected callers
 
@@ -112,7 +223,6 @@ Normal library, unchanged byte locks/drift, minimal runtime, doctests, no-std
 and strict workspace/focused lint pass. The first broad command stops on new
 CLI test lint, then the corrected lint/format chain passes. No existing byte
 expectation, threshold or ignore is migrated.
-
 
 ### Final palette caller/profile evidence
 
@@ -208,17 +318,6 @@ production file to main1e759639 plus this selected repair. Existing ignore
 annotations and established expected bytes are unchanged.
 
 
-The additional requested-effort12/13 controls pass alongside6–11, both modes,
-both shapes and all four relevant Custom permission pairs. Every source word
-is recovered through the pinned fork and native v0.12. This extends offered
-entry coverage; a count of emitted trees does not establish how many search
-seeds ran. The separate default profile's larger seed budget is not inferred
-from that observer. Evidence is the first selected test in
-reconstruction-model-final-check.log; the full wrapper passes rc0/198s,
-peak RSS1.94GiB/minimum available18110MiB, and also contains the independent
-model/baseline checks. There is no new production E4 arithmetic change.
-
-
 ## Internal 2× model: reflected decoding and strided support
 
 The correction applies only to the upsampling stage of the existing internal
@@ -254,6 +353,17 @@ resampling-final-all-routes; final regions are resampling-final-union-regions.
 The corrected model does not requalify historical floor-study or rate-distortion
 numbers, which used the clamped reconstruction. New comparisons require new
 measurements. No performance improvement is claimed.
+
+
+The additional requested-effort12/13 controls pass alongside6–11, both modes,
+both shapes and all four relevant Custom permission pairs. Every source word
+is recovered through the pinned fork and native v0.12. This extends offered
+entry coverage; a count of emitted trees does not establish how many search
+seeds ran. The separate default profile's larger seed budget is not inferred
+from that observer. Evidence is the first selected test in
+reconstruction-model-final-check.log; the full wrapper passes rc0/198s,
+peak RSS1.94GiB/minimum available18110MiB, and also contains the independent
+model/baseline checks. There is no new production E4 arithmetic change.
 
 
 The final isolated source qualification binds every tracked production file

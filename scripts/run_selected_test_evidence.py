@@ -138,7 +138,9 @@ if a.build_only:
     print('Built and retained unexecuted test: ' + a.filter, flush=True)
     sys.exit(0)
 profile = (a.output / 'test.profraw').resolve()
-env = dict(os.environ, LLVM_PROFILE_FILE=str(profile))
+# Cargo normally supplies this at test execution time. Direct ELF replay must
+# retain the selected package's runtime path for established fixture/doc checks.
+env = dict(os.environ, LLVM_PROFILE_FILE=str(profile), CARGO_MANIFEST_DIR=str(root / a.package))
 with (a.output / 'test.log').open('x') as log:
     child = subprocess.Popen([str(executable), a.filter, *a.also_filter, '--nocapture', '--test-threads=1'] +
                              (['--include-ignored'] if a.include_ignored else []),
@@ -151,7 +153,8 @@ with (a.output / 'test.log').open('x') as log:
     (a.output / 'identity.json').write_text(json.dumps(identity, indent=2))
     code = child.wait()
 assert hashlib.sha256(executable.read_bytes()).hexdigest() == digest
-identity.update(exit_code=code, working_directory=os.getcwd())
+identity.update(exit_code=code, working_directory=os.getcwd(),
+                runtime_environment={'CARGO_MANIFEST_DIR': env['CARGO_MANIFEST_DIR']})
 (a.output / 'identity.json').write_text(json.dumps(identity, indent=2))
 assert profile.is_file(), 'completed test emitted no instrumentation profile'
 identity.update(profile_sha256=hashlib.sha256(profile.read_bytes()).hexdigest())

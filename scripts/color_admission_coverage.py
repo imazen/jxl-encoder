@@ -21,11 +21,17 @@ p.add_argument('--extra-count', action='store_true')
 p.add_argument('--jpeg-metadata', action='store_true')
 p.add_argument('--jpeg-dht', action='store_true')
 p.add_argument('--gain-map', action='store_true')
+p.add_argument('--gain-map-color', action='store_true')
+p.add_argument('--rate-control-metric', action='store_true')
+p.add_argument('--rate-direction', action='store_true')
+p.add_argument('--prepared-payloads', action='store_true')
+p.add_argument('--raw-lf', action='store_true')
+p.add_argument('--animation-lf', action='store_true')
 p.add_argument('--request-limits', action='store_true')
+p.add_argument('--request-rate', action='store_true')
 p.add_argument('--container-policy', action='store_true')
 p.add_argument('--alpha-tree', action='store_true')
 p.add_argument('--animation-alpha-forward', action='store_true')
-p.add_argument('--rate-control-metric', action='store_true')
 p.add_argument('--jpeg-scan-grid', action='store_true')
 p.add_argument('--jpeg-color', action='store_true')
 p.add_argument('--delta-palette', action='store_true')
@@ -142,6 +148,20 @@ if a.container_policy:
         note='Configured pixel-output container policy and animation level finalization; mapped regions, not input-space coverage.'), indent=2))
     sys.exit(0)
 
+if a.request_rate:
+    observe('jxl-encoder/src/api.rs', 'with_rate_control')
+    observe('jxl-encoder/src/api.rs', 'validate_rate_control')
+    observe('jxl-encoder/src/api.rs', 'encode_inner_with_stop', window=('self.validate_rate_control()?;', 1))
+    observe('jxl-encoder/src/api.rs', 'encode_inner_with_stop', window=('let request = EncodeRequest {', 9))
+    observe('jxl-encoder/src/api.rs', 'encode_animation_with_request_stop', window=('if self.rate_control.is_some() {', 5))
+    observe('jxl-encoder/src/api.rs', 'encode_lossy', window=('let rate_tracked = self', 17))
+    observe('jxl-encoder/src/api.rs', 'encode_lossy', window=('let tracked = match rate_tracked {', 5))
+    observe('jxl-encoder/src/vardct/encoder.rs', 'encode_request_rate_control')
+    observe('jxl-encoder/src/vardct/rate_control.rs', 'encode_with_rate_control_extras_tracked')
+    (a.output / 'regions.json').write_text(json.dumps(dict(inputs=identities, functions=rows,
+        note='Request controller setter, admission, derived request, dispatch and iteration regions from the named runtime identities; not complete input-space coverage.'), indent=2))
+    sys.exit(0)
+
 if a.request_limits:
     observe('jxl-encoder/src/api.rs', 'encode_request', 0, window=('limits: self.limits.as_ref(),', 1))
     observe('jxl-encoder/src/api.rs', 'encode_animation_inner', 0, window=('request.limits = limits.or(self.limits.as_ref());', 1))
@@ -151,12 +171,67 @@ if a.request_limits:
         note='Inherited/configured request admission regions; not pixel-space or RSS coverage.'), indent=2))
     sys.exit(0)
 
+if a.rate_direction:
+    observe('jxl-encoder/src/vardct/rate_control.rs', 'adjust_quant_field')
+    observe('jxl-encoder/src/vardct/rate_control.rs', 'encode_with_rate_control')
+    (a.output / 'regions.json').write_text(json.dumps(dict(inputs=identities, functions=rows,
+        note='Exact proportional feedback and public prepared wrapper bodies; pixel/input-space coverage remains separate.'), indent=2))
+    sys.exit(0)
+
 if a.rate_control_metric:
     observe('jxl-encoder/src/vardct/tile_distmap.rs', 'compute_butteraugli_diffmap')
     observe('jxl-encoder/src/vardct/tile_distmap.rs', 'from_diffmap')
     observe('jxl-encoder/src/vardct/tile_distmap.rs', 'deref')
     (a.output / 'regions.json').write_text(json.dumps(dict(inputs=identities, functions=rows,
         note='Metric admission and retained-map lifetime regions; not a process RSS ceiling.'), indent=2))
+    sys.exit(0)
+
+if a.raw_lf:
+    observe('jxl-encoder/src/vardct/encoder.rs', 'check_lf_upsampling')
+    observe('jxl-encoder/src/vardct/encoder.rs', 'encode_inner', window=('self.check_lf_upsampling()?;', 1))
+    observe('jxl-encoder/src/vardct/encoder.rs', 'encode_from_precomputed_inner', window=('self.check_lf_upsampling()?;', 1))
+    (a.output / 'regions.json').write_text(json.dumps(dict(inputs=identities, functions=rows,
+        note='Raw LF admission predicate and both call sites; not whole-encoder coverage.'), indent=2))
+    sys.exit(0)
+
+if a.prepared_payloads:
+    for name in ['encode_from_precomputed', 'encode_from_precomputed_with_extras', 'encode_from_precomputed_inner',
+                 'encode_from_pre_quantized_ac', 'encode_from_pre_quantized_ac_with_extras', 'note_dc_modular_width']:
+        observe('jxl-encoder/src/vardct/encoder.rs', name)
+    observe('jxl-encoder/src/vardct/encoder.rs', 'encode_from_precomputed_inner',
+            window=('Some(&transform_out.float_dc), // LF payload uses unquantized DC.', 1))
+    observe('jxl-encoder/src/vardct/encoder.rs', 'encode_from_precomputed_inner',
+            window=('let mut patches_data: Option<super::patches::PatchesData>', 37))
+    observe('jxl-encoder/src/vardct/encoder.rs', 'encode_from_pre_quantized_ac_with_extras',
+            window=('if self.use_lf_frame {', 6))
+    observe('jxl-encoder/src/vardct/encoder.rs', 'encode_from_pre_quantized_ac_with_extras',
+            window=('Self::note_dc_modular_width(&self.force_modular_32bit, quant_dc);', 1))
+    observe('jxl-encoder/src/vardct/encoder.rs', 'encode_from_pre_quantized_ac_with_extras',
+            window=('precomputed.patches_data.as_ref(),', 1))
+    (a.output / 'regions.json').write_text(json.dumps(dict(inputs=identities, functions=rows,
+        note='Exact affected prepared callers and payload/selection windows; shared writer has separate coverage.'), indent=2))
+    sys.exit(0)
+
+if a.animation_lf:
+    observe('jxl-encoder/src/api/animate.rs', 'encode_animation_lossy', window=('if cfg.lf_frame {', 6))
+    (a.output / 'regions.json').write_text(json.dumps(dict(inputs=identities, functions=rows,
+        note='Unsupported LF admission window, both outcomes; not complete animation coverage.'), indent=2))
+    sys.exit(0)
+
+if a.gain_map_color:
+    observe('jxl-encoder/src/hdr/from_sdr.rs', 'encode')
+    observe('jxl-encoder/src/hdr/from_sdr.rs', 'to_jxl_base_layout')
+    for name in ['encoding', 'source_override', 'base_white_nits', 'linear_rgba', 'matching_alpha_row']:
+        observe('jxl-encoder/src/hdr/from_sdr_color.rs', name)
+    observe('jxl-encoder/src/api/ingest.rs', 'hlg_to_linear_f')
+    observe('jxl-encoder/src/hdr/from_sdr_color.rs', 'linear_rgba', window=('if let Some((luminances, gamma)) = hlg {', 3))
+    observe('jxl-encoder/src/hdr/from_sdr_color.rs', 'linear_rgba', window=('let light_scale = match color.transfer {', 5))
+    observe('jxl-encoder/src/hdr/from_sdr_color.rs', 'linear_rgba', window=('if light_scale != 1.0 {', 5))
+    observe('jxl-encoder/src/hdr/from_sdr.rs', 'encode', window=('let sdr_ce = color::source_override(', 49))
+    observe('jxl-encoder/src/hdr/from_sdr.rs', 'encode', window=('metadata.use_base_color_space = false;', 1))
+    observe('jxl-encoder/src/hdr/from_sdr.rs', 'encode', window=('let bundle = GainMapBundle::new', 2))
+    (a.output / 'regions.json').write_text(json.dumps(dict(inputs=identities, functions=rows,
+        note='Exact source bodies and selected windows. Region execution is not input-space coverage.'), indent=2))
     sys.exit(0)
 
 if a.spline_admission:

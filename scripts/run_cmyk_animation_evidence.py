@@ -11,12 +11,17 @@ p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('manifest', type=Path)
 p.add_argument('profile', type=Path)
 p.add_argument('output', type=Path)
+p.add_argument('--source-control', type=Path)
+p.add_argument('--physical-control', type=Path)
+p.add_argument('--explicit-replace', action='store_true')
 a = p.parse_args()
 root = a.manifest.resolve().parent
 assert not (root/'.git').exists() and (root.parent.parent/'provenance.json').is_file()
 a.output.mkdir(exist_ok=False)
 rows = []
-for relative in ['jxl-encoder/examples/progressive_ac_cmyk.rs', 'jxl-encoder/src/api.rs',
+for relative in ['Cargo.lock', 'jxl-encoder/Cargo.toml', 'jxl-encoder/src/api/cmyk.rs',
+                 'jxl-encoder/src/api/validate.rs', 'jxl-encoder/src/headers/file_header.rs',
+                 'jxl-encoder/examples/progressive_ac_cmyk.rs', 'jxl-encoder/src/api.rs',
                  'jxl-encoder/src/api/animate.rs', 'jxl-encoder/src/api/ingest.rs',
                  'jxl-encoder/src/vardct/xyb.rs', 'jxl-encoder/tests/images/frymire.png',
                  'jxl-encoder/tests/support/decoded_extras.rs',
@@ -38,14 +43,23 @@ retained=a.output/'example-binary'
 shutil.copy2(executable,retained)
 digest=hashlib.sha256(retained.read_bytes()).hexdigest()
 with (a.output/'probe.log').open('x') as log:
-    child=subprocess.Popen([executable,str(a.profile),str(a.output/'run'),'--animation'],stdout=log,stderr=subprocess.STDOUT)
+    assert not (a.source_control and a.physical_control)
+    arguments = ['--physical-control', str(a.physical_control)] if a.physical_control else (['--source-control', str(a.source_control)] if a.source_control else (['--animation-replace'] if a.explicit_replace else ['--animation']))
+    child=subprocess.Popen([executable,str(a.profile),str(a.output/'run'),*arguments],stdout=log,stderr=subprocess.STDOUT)
     identity=dict(command=command, executable=executable,binary_sha256=digest,pid=child.pid,sources=rows,
                   profile_sha256=hashlib.sha256(a.profile.read_bytes()).hexdigest())
+    if a.source_control:
+        references = sorted(a.source_control.glob('*.jxl'))
+        assert len(references) == 12, references
+        identity['reference_streams'] = [{"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+                                         for path in references]
+    if a.physical_control:
+        identity['native_lcms_control'] = dict(path=str(a.physical_control),sha256=hashlib.sha256(a.physical_control.read_bytes()).hexdigest())
     (a.output/'identity.json').write_text(json.dumps(identity,indent=2))
     code=child.wait()
 assert hashlib.sha256(Path(executable).read_bytes()).hexdigest()==digest
 assert (a.output/'run/binary.sha256').read_text()==digest
 identity['exit_code']=code
 (a.output/'identity.json').write_text(json.dumps(identity,indent=2))
-print('CMYK animation probe: rc='+str(code),flush=True)
+print('CMYK '+('physical source' if a.physical_control else ('source' if a.source_control else 'animation'))+' probe: rc='+str(code),flush=True)
 sys.exit(code)

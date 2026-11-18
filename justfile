@@ -2148,6 +2148,15 @@ color-final-source-faults manifest artifacts coverage_env lint_home lint_target:
 color-last-numeric-evidence manifest output coverage_env:
     bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" numeric:: --test-target source_color_contract --features __expert,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/validate.rs --source jxl-encoder/src/headers/color_encoding.rs --source jxl-encoder/src/color_math.rs --source jxl-encoder/src/vardct/xyb.rs --source jxl-encoder/src/vardct/source_white.rs --source jxl-encoder/tests/source_color_contract/numeric.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
 
+color-optional-icc-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" optional_subsampling_keeps_explicit_source_interpretation_with_icc_output --test-target source_color_contract --features __expert,parallel,jpeg-reencoding,chroma-subsampling --source jxl-encoder/src/api.rs --source jxl-encoder/src/vardct/chroma_subsampling.rs --source jxl-encoder/tests/source_color_contract/optional_icc.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+color-last-boundary-and-optional manifest artifacts coverage_env:
+    just color-last-numeric-evidence {{quote(manifest)}} {{quote(artifacts + "/color-last-numeric")}} {{quote(coverage_env)}}
+    just color-admission-unit-evidence {{quote(manifest)}} {{quote(artifacts + "/color-last-header")}} {{quote(coverage_env)}}
+    just color-icc-source-evidence {{quote(manifest)}} {{quote(artifacts + "/color-last-icc-source")}} {{quote(coverage_env)}}
+    just color-optional-icc-evidence {{quote(manifest)}} {{quote(artifacts + "/color-optional-icc-before")}} {{quote(coverage_env)}}
+
 color-final-model-trace manifest artifacts coverage_env:
     bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3/color-last-model-mismatch" mismatched_icc_channel_models_are_refused --test-target color_profile_contract --features __expert,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/validate.rs --source jxl-encoder/src/api/ingest.rs; python3 scripts/run_selected_test_evidence.py "$2" "$3/color-last-trace-header" headers::color_encoding:: --features __expert,parallel,trace-bitstream --source jxl-encoder/src/headers/color_encoding.rs --source jxl-encoder/src/headers/file_header.rs --source jxl-encoder/src/color_math.rs --source jxl-encoder/src/vardct/xyb.rs --source jxl-encoder/src/trace.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
 
@@ -2189,6 +2198,9 @@ extra-metadata-broad-validation manifest lint_home lint_target:
     cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features
     cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder -p jxl-encoder-cli -p jxl-encoder-simd --check
 
+black-profile-before-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" "" --test-target black_profile_contract --features __expert,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/validate.rs --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/headers/file_header.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
 extra-metadata-prequantized-fault manifest output coverage_env:
     bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/test_alpha_squeeze_mutation.py "$2" "$3" --case extra-prequantized' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
 
@@ -2204,6 +2216,16 @@ extra-metadata-all-header-evidence manifest output coverage_env:
 extra-metadata-complete-regions manifest artifacts coverage_env llvm:
     just extra-metadata-all-header-evidence {{quote(manifest)}} {{quote(artifacts + "/extra-metadata-all-header-final")}} {{quote(coverage_env)}}
     just extra-metadata-regions {{quote(llvm)}} {{quote(artifacts + "/extra-metadata-regions-final")}} {{quote(artifacts + "/extra-metadata-complete/writer")}} {{quote(artifacts + "/extra-metadata-complete/public")}} {{quote(artifacts + "/extra-metadata-complete/prepared")}} {{quote(artifacts + "/extra-metadata-complete/minimal")}} {{quote(artifacts + "/extra-metadata-header-final")}} {{quote(artifacts + "/extra-metadata-admission-final")}} {{quote(artifacts + "/extra-metadata-all-header-final")}}
+
+cmyk-source-native source build oracle profile output:
+    python3 scripts/frame_header_oracle.py --component cmyk_source {{quote(source)}} {{quote(build)}} {{quote(oracle)}}
+    {{quote(oracle)}} {{quote(profile)}} {{quote(output)}}
+
+cmyk-source-evidence manifest profile output reference:
+    python3 scripts/run_cmyk_animation_evidence.py {{quote(manifest)}} {{quote(profile)}} {{quote(output)}} --source-control {{quote(reference)}}
+
+animation-clock-before-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" animation_nonzero_timecodes --test-target animation_clock_contract --features __expert,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/headers/frame_header.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
 
 resampled-level-before-evidence manifest output coverage_env:
     bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" already_downsampled_level --test-target animation_level_contract --features __expert,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/ingest.rs --source jxl-encoder/src/container.rs --source jxl-encoder/src/vardct/bitstream.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
@@ -2274,9 +2296,6 @@ resampled-display-final-continuation manifest artifacts coverage_env lint_home l
     bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3/lossless" display_extent_unscaled_lossless --test-target animation_level_contract --features __expert,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/headers/file_header.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
     just resampled-display-lint-continuation {{quote(manifest)}} {{quote(lint_home)}} {{quote(lint_target)}}
 
-animation-clock-before-evidence manifest output coverage_env:
-    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" animation_nonzero_timecodes --test-target animation_clock_contract --features __expert,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/headers/frame_header.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
-
 animation-clock-after-evidence manifest artifacts coverage_env:
     mkdir {{quote(artifacts)}}
     bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3/history" clock_order_tests --features __expert,parallel --source jxl-encoder/src/api/animate.rs; python3 scripts/run_selected_test_evidence.py "$2" "$3/public" "" --test-target animation_clock_contract --features __expert,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/api/animation.rs --source jxl-encoder/src/headers/frame_header.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
@@ -2302,11 +2321,20 @@ animation-clock-crop-after manifest artifacts coverage_env:
     just animation-clock-public-evidence {{quote(manifest)}} {{quote(artifacts + "/clocks")}} {{quote(coverage_env)}}
     just animation-crop-reference-evidence {{quote(manifest)}} {{quote(artifacts + "/references")}} {{quote(coverage_env)}}
 
+animation-composed-attribution manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" composed_canvas_lossy --test-target animation_crop_reference_contract --features __expert,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/modular/frame.rs --source jxl-encoder/src/vardct/bitstream.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+animation-envelope-inspect manifest output:
+    python3 scripts/check_explicit_blend_headers.py {{quote(manifest)}} {{quote(output)}}
+
 animation-state-faults manifest output coverage_env:
     bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/test_alpha_squeeze_mutation.py "$2" "$3" --case anim-resampling --case anim-clock-equality --case anim-clock-reference --case anim-clock-zero-reset --case anim-clock-hidden --case anim-clock-lossless-entry --case anim-clock-lossy-entry --case anim-crop-lossless-entry --case anim-crop-lossy-entry --case anim-crop-overwrite --case anim-crop-slot --case anim-crop-composed --case anim-crop-lossless-source --case anim-crop-lossy-source' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
 
 animation-state-regions llvm output *archives:
     python3 scripts/color_admission_coverage.py {{quote(llvm)}} {{quote(output)}} {{archives}} --animation-state
+
+animation-unsaved-reference-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" unsaved_canvas_lossless --test-target animation_crop_reference_contract --features __expert,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/animate.rs --source scripts/check_explicit_blend_headers.py --source scripts/jxl_bitstream_diff.py --source scripts/jxl_container.py' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
 
 animation-state-minimal manifest output coverage_env:
     bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3/references" "" --test-target animation_crop_reference_contract --no-default-features --features std,convenience,__expert --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/animate.rs --source scripts/check_explicit_blend_headers.py --source scripts/jxl_bitstream_diff.py --source scripts/jxl_container.py; python3 scripts/run_selected_test_evidence.py "$2" "$3/clocks" "" --test-target animation_clock_contract --no-default-features --features std,convenience,__expert --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/animate.rs; python3 scripts/run_selected_test_evidence.py "$2" "$3/resampling" "" --test-target animation_resampling_contract --no-default-features --features std,convenience,__expert --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/animate.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
@@ -2317,6 +2345,9 @@ animation-state-selected-and-faults manifest artifacts coverage_env:
     mkdir {{quote(artifacts + "/minimal")}}
     just animation-state-minimal {{quote(manifest)}} {{quote(artifacts + "/minimal")}} {{quote(coverage_env)}}
     just animation-state-faults {{quote(manifest)}} {{quote(artifacts + "/faults")}} {{quote(coverage_env)}}
+
+animation-zero-area-evidence manifest output coverage_env selection:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" "$4" --include-ignored --test-target animation_zero_area_contract --features __expert,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/api/ingest.rs --source jxl-encoder/src/bit_writer.rs --source jxl-encoder/src/headers/frame_header.rs --source jxl-encoder/src/vardct/bitstream.rs --source jxl-encoder/src/vardct/lf_frame.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}} {{quote(selection)}}
 
 animation-state-source-windows manifest artifacts coverage_env:
     mkdir {{quote(artifacts)}}
@@ -2334,6 +2365,10 @@ animation-state-final-validation manifest artifacts coverage_env llvm lint_home 
     just animation-state-source-windows {{quote(manifest)}} {{quote(artifacts)}} {{quote(coverage_env)}}
     just animation-state-regions {{quote(llvm)}} {{quote(artifacts + "/regions")}} {{prior_archives}} {{quote(artifacts + "/clocks")}} {{quote(artifacts + "/references")}}
     just animation-state-broad-validation {{quote(manifest)}} {{quote(lint_home)}} {{quote(lint_target)}}
+
+animation-zero-area-native source build oracle output:
+    python3 scripts/frame_header_oracle.py --component zero_area {{quote(source)}} {{quote(build)}} {{quote(oracle)}}
+    python3 scripts/run_zero_area_native.py {{quote(oracle)}} {{quote(output)}}
 
 animation-state-lint-continuation manifest lint_home lint_target:
     env CARGO_HOME={{quote(lint_home)}} CARGO_TARGET_DIR={{quote(lint_target)}} cargo +1.100.0 clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --lib --test animation_clock_contract --test animation_resampling_contract --test animation_crop_reference_contract -- -D warnings
@@ -2358,39 +2393,22 @@ animation-crop-patch-continuation manifest output coverage_env corpus oracle lin
     env CARGO_HOME={{quote(lint_home)}} CARGO_TARGET_DIR={{quote(lint_target)}} cargo +1.100.0 clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,corpus-tests --lib --test frame_header_contract -- -D warnings
     cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
 
-animation-zero-area-native source build oracle output:
-    python3 scripts/frame_header_oracle.py --component zero_area {{quote(source)}} {{quote(build)}} {{quote(oracle)}}
-    python3 scripts/run_zero_area_native.py {{quote(oracle)}} {{quote(output)}}
-
 animation-duration-native source build oracle output:
     python3 scripts/frame_header_oracle.py --component zero_area {{quote(source)}} {{quote(build)}} {{quote(oracle)}}
     python3 scripts/run_zero_area_native.py {{quote(oracle)}} {{quote(output)}} --durations
 
-
-animation-selected-delta-evidence manifest output coverage_env selection:
-    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" "$4" --driver-only-coverage --test-target animation_delta_candidate_contract --features __expert,parallel --source jxl-encoder/tests/animation_delta_candidate_contract/layouts.rs --source jxl-encoder/tests/animation_delta_candidate_contract/profiles.rs --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/headers/frame_header.rs --source jxl-encoder/src/modular/frame.rs --source scripts/check_explicit_blend_headers.py --source scripts/jxl_bitstream_diff.py --source scripts/jxl_container.py' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}} {{quote(selection)}}
-
-
-animation-delta-isolated-validation manifest artifacts coverage_env lint_home lint_target:
-    mkdir {{quote(artifacts)}}
-    just animation-selected-delta-evidence {{quote(manifest)}} {{quote(artifacts + "/offered")}} {{quote(coverage_env)}} ""
-    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3/regions-input" strict_ --test-target animation_delta_candidate_contract --features __expert,parallel --source jxl-encoder/tests/animation_delta_candidate_contract/layouts.rs --source jxl-encoder/tests/animation_delta_candidate_contract/profiles.rs --source jxl-encoder/src/api/animate.rs --source scripts/check_explicit_blend_headers.py --source scripts/jxl_bitstream_diff.py --source scripts/jxl_container.py; python3 scripts/run_selected_test_evidence.py "$2" "$3/minimal" "" --test-target animation_delta_candidate_contract --no-default-features --features std,convenience,__expert --source jxl-encoder/tests/animation_delta_candidate_contract/layouts.rs --source jxl-encoder/tests/animation_delta_candidate_contract/profiles.rs --source jxl-encoder/src/api/animate.rs --source scripts/check_explicit_blend_headers.py --source scripts/jxl_bitstream_diff.py --source scripts/jxl_container.py; python3 scripts/test_alpha_squeeze_mutation.py "$2" "$3/fault" --case anim-selected-delta-source' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
-    just alpha-squeeze-broad-baseline {{quote(manifest)}}
-    env CARGO_HOME={{quote(lint_home)}} CARGO_TARGET_DIR={{quote(lint_target)}} cargo +1.100.0 clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --lib --test animation_delta_candidate_contract -- -D warnings
-    cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features
-    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
-
-
-animation-delta-final-continuation manifest artifacts coverage_env lint_home lint_target:
-    mkdir {{quote(artifacts)}}
-    just animation-selected-delta-evidence {{quote(manifest)}} {{quote(artifacts + "/offered")}} {{quote(coverage_env)}} ""
-    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3/regions-input" strict_ --test-target animation_delta_candidate_contract --features __expert,parallel --source jxl-encoder/tests/animation_delta_candidate_contract/layouts.rs --source jxl-encoder/tests/animation_delta_candidate_contract/profiles.rs --source jxl-encoder/src/api/animate.rs --source scripts/check_explicit_blend_headers.py --source scripts/jxl_bitstream_diff.py --source scripts/jxl_container.py; python3 scripts/run_selected_test_evidence.py "$2" "$3/minimal" "" --test-target animation_delta_candidate_contract --no-default-features --features std,convenience,__expert --source jxl-encoder/tests/animation_delta_candidate_contract/layouts.rs --source jxl-encoder/tests/animation_delta_candidate_contract/profiles.rs --source jxl-encoder/src/api/animate.rs --source scripts/check_explicit_blend_headers.py --source scripts/jxl_bitstream_diff.py --source scripts/jxl_container.py' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
-    env CARGO_HOME={{quote(lint_home)}} CARGO_TARGET_DIR={{quote(lint_target)}} cargo +1.100.0 clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --lib --test animation_delta_candidate_contract -- -D warnings
-    cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features
-    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+animation-area-live-profile pid output:
+    test ! -e {{quote(output)}}
+    nice -n 19 ionice -c3 perf record -q -F 49 -p {{pid}} -o {{quote(output)}} -- sleep 5
+    perf report --stdio --no-children -i {{quote(output)}} --percent-limit 2 > {{quote(output + ".report")}}
 
 animation-large-area-production-evidence manifest output coverage_env selection:
     bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" "$4" --driver-only-coverage --include-ignored --test-target animation_zero_area_contract --features __expert,parallel --source jxl-encoder/src/frame_level.rs --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/api/ingest.rs --source jxl-encoder/src/bit_writer.rs --source jxl-encoder/src/headers/frame_header.rs --source jxl-encoder/src/vardct/bitstream.rs --source jxl-encoder/src/vardct/lf_frame.rs --source scripts/check_explicit_blend_headers.py --source scripts/jxl_bitstream_diff.py --source scripts/jxl_container.py' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}} {{quote(selection)}}
+
+animation-duration-before-controls manifest artifacts coverage_env source build oracle:
+    mkdir {{quote(artifacts)}}
+    just animation-duration-native {{quote(source)}} {{quote(build)}} {{quote(oracle)}} {{quote(artifacts + "/native")}}
+    just animation-large-area-production-evidence {{quote(manifest)}} {{quote(artifacts + "/public")}} {{quote(coverage_env)}} strict_minimum_nonzero
 
 frame-level-strict-candidate manifest artifacts coverage_env:
     mkdir {{quote(artifacts)}}
@@ -2404,11 +2422,93 @@ frame-level-core-library-check manifest output coverage_env:
 frame-level-all-offered-evidence manifest output coverage_env:
     just animation-large-area-production-evidence {{quote(manifest)}} {{quote(output)}} {{quote(coverage_env)}} all_offered
 
+animation-selected-delta-evidence manifest output coverage_env selection:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" "$4" --driver-only-coverage --test-target animation_delta_candidate_contract --features __expert,parallel --source jxl-encoder/tests/animation_delta_candidate_contract/layouts.rs --source jxl-encoder/tests/animation_delta_candidate_contract/profiles.rs --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/headers/frame_header.rs --source jxl-encoder/src/modular/frame.rs --source scripts/check_explicit_blend_headers.py --source scripts/jxl_bitstream_diff.py --source scripts/jxl_container.py' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}} {{quote(selection)}}
+
+frame-level-auxiliary-evidence manifest output coverage_env corpus:
+    CODEC_CORPUS_DIR={{quote(corpus)}} bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" strict_upsampled --driver-only-coverage --include-ignored --test-target frame_level_auxiliary_contract --features __expert,parallel,corpus-tests --source jxl-encoder/src/frame_level.rs --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/api/ingest.rs --source jxl-encoder/src/headers/frame_header.rs --source jxl-encoder/src/vardct/encoder.rs --source jxl-encoder/src/vardct/bitstream.rs --source jxl-encoder/src/vardct/patches.rs --source scripts/check_explicit_blend_headers.py --source scripts/jxl_bitstream_diff.py --source scripts/jxl_container.py' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+frame-level-delta-auxiliary-after manifest artifacts coverage_env corpus:
+    mkdir {{quote(artifacts)}}
+    just frame-level-core-library-check {{quote(manifest)}} {{quote(artifacts + "/unit")}} {{quote(coverage_env)}}
+    just animation-selected-delta-evidence {{quote(manifest)}} {{quote(artifacts + "/selected-deltas")}} {{quote(coverage_env)}} all_offered
+    just frame-level-auxiliary-evidence {{quote(manifest)}} {{quote(artifacts + "/auxiliary")}} {{quote(coverage_env)}} {{quote(corpus)}}
+
+animation-delta-isolated-validation manifest artifacts coverage_env lint_home lint_target:
+    mkdir {{quote(artifacts)}}
+    just animation-selected-delta-evidence {{quote(manifest)}} {{quote(artifacts + "/offered")}} {{quote(coverage_env)}} ""
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3/regions-input" strict_ --test-target animation_delta_candidate_contract --features __expert,parallel --source jxl-encoder/tests/animation_delta_candidate_contract/layouts.rs --source jxl-encoder/tests/animation_delta_candidate_contract/profiles.rs --source jxl-encoder/src/api/animate.rs --source scripts/check_explicit_blend_headers.py --source scripts/jxl_bitstream_diff.py --source scripts/jxl_container.py; python3 scripts/run_selected_test_evidence.py "$2" "$3/minimal" "" --test-target animation_delta_candidate_contract --no-default-features --features std,convenience,__expert --source jxl-encoder/tests/animation_delta_candidate_contract/layouts.rs --source jxl-encoder/tests/animation_delta_candidate_contract/profiles.rs --source jxl-encoder/src/api/animate.rs --source scripts/check_explicit_blend_headers.py --source scripts/jxl_bitstream_diff.py --source scripts/jxl_container.py; python3 scripts/test_alpha_squeeze_mutation.py "$2" "$3/fault" --case anim-selected-delta-source' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    just alpha-squeeze-broad-baseline {{quote(manifest)}}
+    env CARGO_HOME={{quote(lint_home)}} CARGO_TARGET_DIR={{quote(lint_target)}} cargo +1.100.0 clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --lib --test animation_delta_candidate_contract -- -D warnings
+    cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+
+animation-delta-final-continuation manifest artifacts coverage_env lint_home lint_target:
+    mkdir {{quote(artifacts)}}
+    just animation-selected-delta-evidence {{quote(manifest)}} {{quote(artifacts + "/offered")}} {{quote(coverage_env)}} ""
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3/regions-input" strict_ --test-target animation_delta_candidate_contract --features __expert,parallel --source jxl-encoder/tests/animation_delta_candidate_contract/layouts.rs --source jxl-encoder/tests/animation_delta_candidate_contract/profiles.rs --source jxl-encoder/src/api/animate.rs --source scripts/check_explicit_blend_headers.py --source scripts/jxl_bitstream_diff.py --source scripts/jxl_container.py; python3 scripts/run_selected_test_evidence.py "$2" "$3/minimal" "" --test-target animation_delta_candidate_contract --no-default-features --features std,convenience,__expert --source jxl-encoder/tests/animation_delta_candidate_contract/layouts.rs --source jxl-encoder/tests/animation_delta_candidate_contract/profiles.rs --source jxl-encoder/src/api/animate.rs --source scripts/check_explicit_blend_headers.py --source scripts/jxl_bitstream_diff.py --source scripts/jxl_container.py' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    env CARGO_HOME={{quote(lint_home)}} CARGO_TARGET_DIR={{quote(lint_target)}} cargo +1.100.0 clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --lib --test animation_delta_candidate_contract -- -D warnings
+    cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+
 frame-level-winning-delta-evidence manifest output coverage_env:
     bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" strict_winning --driver-only-coverage --test-target frame_level_delta_contract --features __expert,parallel --source jxl-encoder/src/frame_level.rs --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/api/ingest.rs --source jxl-encoder/src/bit_writer.rs --source jxl-encoder/src/headers/frame_header.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
 
+frame-level-lossless-auxiliary-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" strict_lossless_patch --driver-only-coverage --include-ignored --test-target frame_level_auxiliary_contract --features __expert,parallel,corpus-tests --source jxl-encoder/tests/frame_level_auxiliary_contract/lossless.rs --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/ingest.rs --source jxl-encoder/src/bit_writer.rs --source jxl-encoder/src/headers/frame_header.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+frame-level-followup-candidate-local manifest artifacts coverage_env:
+    mkdir {{quote(artifacts)}}
+    just frame-level-core-library-check {{quote(manifest)}} {{quote(artifacts + "/unit")}} {{quote(coverage_env)}}
+    just frame-level-winning-delta-evidence {{quote(manifest)}} {{quote(artifacts + "/winning-delta")}} {{quote(coverage_env)}}
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3/large-built" strict_lossless_patch --build-only --driver-only-coverage --include-ignored --test-target frame_level_auxiliary_contract --features __expert,parallel,corpus-tests --source jxl-encoder/src/frame_level.rs --source jxl-encoder/tests/frame_level_auxiliary_contract/lossless.rs --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/ingest.rs --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/bit_writer.rs --source jxl-encoder/src/headers/frame_header.rs --source jxl-encoder/src/vardct/encoder.rs --source jxl-encoder/src/vardct/bitstream.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+
+frame-level-animation-isolated-validation manifest artifacts coverage_env lint_home lint_target:
+    mkdir {{quote(artifacts)}}
+    just frame-level-core-library-check {{quote(manifest)}} {{quote(artifacts + "/unit")}} {{quote(coverage_env)}}
+    just animation-large-area-production-evidence {{quote(manifest)}} {{quote(artifacts + "/durations")}} {{quote(coverage_env)}} minimum_nonzero
+    just animation-large-area-production-evidence {{quote(manifest)}} {{quote(artifacts + "/area")}} {{quote(coverage_env)}} strict_zero_duration
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/test_alpha_squeeze_mutation.py "$2" "$3/faults" --case level-record --case level-compact-record --case level-byte-append --case level-bit-append --case level-area-boundary --case level-area-reset --case level-duration-boundary --case level-duration-denominator --case level-spatial-units --case level-reference-duration --case level-static-duration --case level-lf-crop --case level-actual-crop' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    just alpha-squeeze-broad-baseline {{quote(manifest)}}
+    env CARGO_HOME={{quote(lint_home)}} CARGO_TARGET_DIR={{quote(lint_target)}} cargo +1.100.0 clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,corpus-tests --lib --test animation_zero_area_contract --test frame_level_delta_contract --test frame_level_auxiliary_contract -- -D warnings
+    cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+
+frame-level-animation-final-sources manifest artifacts coverage_env llvm prior_unit:
+    mkdir {{quote(artifacts)}}
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3/regions-input" minimum_nonzero --test-target animation_zero_area_contract --features __expert,parallel --source jxl-encoder/src/frame_level.rs --source jxl-encoder/src/lib.rs --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/api/ingest.rs --source jxl-encoder/src/bit_writer.rs --source jxl-encoder/src/headers/frame_header.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    python3 scripts/color_admission_coverage.py {{quote(llvm)}} {{quote(artifacts + "/regions")}} {{quote(prior_unit)}} {{quote(artifacts + "/regions-input")}} --frame-levels
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3/lf-built" strict_lf_frame --build-only --driver-only-coverage --include-ignored --test-target frame_level_auxiliary_contract --features __expert,parallel,corpus-tests --source jxl-encoder/src/frame_level.rs --source jxl-encoder/tests/frame_level_auxiliary_contract/lossless.rs --source jxl-encoder/tests/frame_level_auxiliary_contract/lf.rs --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/ingest.rs --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/bit_writer.rs --source jxl-encoder/src/headers/frame_header.rs --source jxl-encoder/src/vardct/encoder.rs --source jxl-encoder/src/vardct/bitstream.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+
+frame-level-lf-build manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" strict_lf_frame --build-only --driver-only-coverage --include-ignored --test-target frame_level_auxiliary_contract --features __expert,parallel,corpus-tests --source jxl-encoder/src/frame_level.rs --source jxl-encoder/tests/frame_level_auxiliary_contract/lossless.rs --source jxl-encoder/tests/frame_level_auxiliary_contract/lf.rs --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/ingest.rs --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/bit_writer.rs --source jxl-encoder/src/headers/frame_header.rs --source jxl-encoder/src/vardct/encoder.rs --source jxl-encoder/src/vardct/bitstream.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+frame-level-lf-production-build manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" strict_lf_frame --build-only --include-ignored --test-target frame_level_auxiliary_contract --features __expert,parallel,corpus-tests --source jxl-encoder/src/frame_level.rs --source jxl-encoder/tests/frame_level_auxiliary_contract/lossless.rs --source jxl-encoder/tests/frame_level_auxiliary_contract/lf.rs --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/ingest.rs --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/bit_writer.rs --source jxl-encoder/src/headers/frame_header.rs --source jxl-encoder/src/vardct/encoder.rs --source jxl-encoder/src/vardct/bitstream.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+frame-level-archived-replay archive runtime output selection:
+    python3 scripts/run_archived_test.py {{quote(archive)}} {{quote(runtime)}} {{quote(output)}} {{quote(selection)}} --include-ignored
+
+jpeg-sampling-evidence manifest output coverage_env selection:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" "$4" --test-target jpeg_sampling_contract --features __expert,parallel,jpeg-reencoding --source jxl-encoder/src/jpeg/encode.rs --source jxl-encoder/src/jpeg/data.rs --source jxl-encoder/src/jpeg/parse.rs --source jxl-encoder/src/jpeg/jbrd.rs --source jxl-encoder/src/api.rs --source jxl-encoder/tests/jpeg_sampling_contract/app0.rs --source jxl-encoder/tests/jpeg_sampling_contract/metadata.rs --source jxl-encoder/tests/jpeg_sampling_contract/unusual.rs --source scripts/check_jpeg_frame_headers.py --source scripts/jxl_bitstream_diff.py --source scripts/jxl_container.py' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}} {{quote(selection)}}
+
+gain-map-duplicate-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" "" --test-target gain_map_duplicate_contract --features __expert,parallel,hdr-gainmap,brotli-metadata --source jxl-encoder/src/container.rs --source jxl-encoder/src/hdr/bundle.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+frame-level-all-auxiliary-production-build manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" all_offered --build-only --include-ignored --test-target frame_level_auxiliary_contract --features __expert,parallel,corpus-tests --source jxl-encoder/src/frame_level.rs --source jxl-encoder/tests/frame_level_auxiliary_contract/lossless.rs --source jxl-encoder/tests/frame_level_auxiliary_contract/lf.rs --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/ingest.rs --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/bit_writer.rs --source jxl-encoder/src/headers/frame_header.rs --source jxl-encoder/src/vardct/encoder.rs --source jxl-encoder/src/vardct/bitstream.rs --source scripts/check_explicit_blend_headers.py --source scripts/jxl_bitstream_diff.py --source scripts/jxl_container.py' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+jpeg-frame-header-check manifest output:
+    python3 scripts/check_jpeg_frame_headers.py {{quote(manifest)}} {{quote(output)}}
+
+archived-test-status output pixels first_run:
+    python3 scripts/archived_test_status.py {{quote(output)}} {{quote(pixels)}} --first-run {{quote(first_run)}}
+
 jpeg-native-edge-controls cjxl djxl output:
     python3 scripts/jpeg_native_edge_controls.py {{quote(cjxl)}} {{quote(djxl)}} {{quote(output)}}
+
+reference-advanced-help cjxl output:
+    {{quote(cjxl)}} --help -v -v -v -v > {{quote(output)}} 2>&1
 
 palette-native-controls cjxl djxl output:
     python3 scripts/palette_native_controls.py {{quote(cjxl)}} {{quote(djxl)}} {{quote(output)}}
@@ -2416,23 +2516,66 @@ palette-native-controls cjxl djxl output:
 reference-property-native-controls cjxl djxl output:
     python3 scripts/reference_property_native_controls.py {{quote(cjxl)}} {{quote(djxl)}} {{quote(output)}}
 
-reference-advanced-help cjxl output:
-    {{quote(cjxl)}} --help -v -v -v -v > {{quote(output)}} 2>&1
+conditional-modular-unit-evidence manifest output coverage_env selection:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" "$4" --include-ignored --features __expert,parallel --source jxl-encoder/src/modular/encode_tree.rs --source jxl-encoder/src/modular/reference_property_contract.rs --source jxl-encoder/src/modular/palette.rs --source jxl-encoder/src/modular/delta_palette_contract.rs --source jxl-encoder/src/vardct/resampling.rs --source jxl-encoder/src/vardct/resampling_decoder_contract.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}} {{quote(selection)}}
 
-frame-level-archived-replay archive runtime output selection:
-    python3 scripts/run_archived_test.py {{quote(archive)}} {{quote(runtime)}} {{quote(output)}} {{quote(selection)}} --include-ignored
+spline-admission-evidence manifest output coverage_env selection:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" "$4" --test-target spline_admission_contract --features __expert,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/api/validate.rs --source jxl-encoder/src/vardct/encoder.rs --source jxl-encoder/src/vardct/splines.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}} {{quote(selection)}}
 
-archived-test-status output pixels first_run:
-    python3 scripts/archived_test_status.py {{quote(output)}} {{quote(pixels)}} --first-run {{quote(first_run)}}
+frame-level-selective-coverage manifest exclusion output coverage_env:
+    python3 scripts/coverage_exclude_patch_search.py {{quote(manifest)}} {{quote(exclusion)}}
+    bash -c 'set -e; source "$1"; export RUSTC_BOOTSTRAP=1; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" all_offered --build-only --coverage-exclusions "$4" --include-ignored --test-target frame_level_auxiliary_contract --features __expert,parallel,corpus-tests --source jxl-encoder/src/frame_level.rs --source jxl-encoder/tests/frame_level_auxiliary_contract/lossless.rs --source jxl-encoder/tests/frame_level_auxiliary_contract/small.rs --source jxl-encoder/tests/frame_level_auxiliary_contract/cli.rs --source jxl-encoder/tests/frame_level_auxiliary_contract/lf.rs --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/ingest.rs --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/bit_writer.rs --source jxl-encoder/src/headers/frame_header.rs --source jxl-encoder/src/vardct/encoder.rs --source jxl-encoder/src/vardct/bitstream.rs --source scripts/check_explicit_blend_headers.py --source scripts/jxl_bitstream_diff.py --source scripts/jxl_container.py' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}} {{quote(exclusion + "/manifest.json")}}
+
+frame-level-all-auxiliary-driver-build manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" all_offered --build-only --driver-only-coverage --include-ignored --test-target frame_level_auxiliary_contract --features __expert,parallel,corpus-tests --source jxl-encoder/src/frame_level.rs --source jxl-encoder/tests/frame_level_auxiliary_contract/lossless.rs --source jxl-encoder/tests/frame_level_auxiliary_contract/lf.rs --source jxl-encoder/tests/frame_level_auxiliary_contract/small.rs --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/ingest.rs --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/bit_writer.rs --source jxl-encoder/src/headers/frame_header.rs --source jxl-encoder/src/vardct/encoder.rs --source jxl-encoder/src/vardct/bitstream.rs --source scripts/check_explicit_blend_headers.py --source scripts/jxl_bitstream_diff.py --source scripts/jxl_container.py' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+frame-level-small-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" small_frames_keep_level_five --test-target frame_level_auxiliary_contract --features __expert,parallel,corpus-tests --source jxl-encoder/src/frame_level.rs --source jxl-encoder/tests/frame_level_auxiliary_contract/lossless.rs --source jxl-encoder/tests/frame_level_auxiliary_contract/lf.rs --source jxl-encoder/tests/frame_level_auxiliary_contract/small.rs --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/ingest.rs --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/bit_writer.rs --source jxl-encoder/src/headers/frame_header.rs --source jxl-encoder/src/vardct/encoder.rs --source jxl-encoder/src/vardct/bitstream.rs --source scripts/check_explicit_blend_headers.py --source scripts/jxl_bitstream_diff.py --source scripts/jxl_container.py' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+frame-level-still-isolated-validation manifest artifacts coverage_env lint_home lint_target:
+    mkdir {{quote(artifacts)}}
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder
+    just frame-level-small-evidence {{quote(manifest)}} {{quote(artifacts + "/small")}} {{quote(coverage_env)}}
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,__expert --test frame_level_auxiliary_contract small_frames_ -- --test-threads=1
+    just frame-level-core-library-check {{quote(manifest)}} {{quote(artifacts + "/unit")}} {{quote(coverage_env)}}
+    just alpha-squeeze-broad-baseline {{quote(manifest)}}
+    env CARGO_HOME={{quote(lint_home)}} CARGO_TARGET_DIR={{quote(lint_target)}} cargo +1.100.0 clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,corpus-tests --lib --test frame_level_auxiliary_contract -- -D warnings
+    cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+    just frame-level-all-auxiliary-driver-build {{quote(manifest)}} {{quote(artifacts + "/driver-built")}} {{quote(coverage_env)}}
+
+gain-map-color-evidence manifest output coverage_env selection:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" "$4" --test-target gain_map_color_contract --features __expert,parallel,hdr-gainmap --source jxl-encoder/src/hdr/from_sdr.rs --source jxl-encoder/src/hdr/bundle.rs --source jxl-encoder/src/vardct/color_matrices_v012.tsv' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}} {{quote(selection)}}
+
+frame-level-still-final-continuation manifest artifacts coverage_env lint_home lint_target:
+    mkdir {{quote(artifacts)}}
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder
+    just frame-level-small-evidence {{quote(manifest)}} {{quote(artifacts + "/small")}} {{quote(coverage_env)}}
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3/raw-precomputed" precomputed_and_prequantized --test-target alpha_squeeze_matrix --features __expert,__internals,__pre_quantized,parallel --source jxl-encoder/src/frame_level.rs --source jxl-encoder/src/bit_writer.rs --source jxl-encoder/src/headers/frame_header.rs --source jxl-encoder/src/vardct/encoder.rs --source jxl-encoder/src/vardct/bitstream.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    env CARGO_HOME={{quote(lint_home)}} CARGO_TARGET_DIR={{quote(lint_target)}} cargo +1.100.0 clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel,corpus-tests --lib --test frame_level_auxiliary_contract --test alpha_squeeze_matrix -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
 
 archived-runtime-stage archive template output:
     python3 scripts/stage_archived_runtime.py {{quote(archive)}} {{quote(template)}} {{quote(output)}}
+
+frame-level-still-region-evidence llvm output small raw upsampled lossless:
+    python3 scripts/color_admission_coverage.py {{quote(llvm)}} {{quote(output)}} {{quote(small)}} {{quote(raw)}} {{quote(upsampled)}} {{quote(lossless)}} --still-frame-levels
 
 archived-runtime-control archive template runtime output:
     just archived-runtime-stage {{quote(archive)}} {{quote(template)}} {{quote(runtime)}}
     just frame-level-archived-replay {{quote(archive)}} {{quote(runtime)}} {{quote(output)}} small_frames_keep_level_five
 
-# Issue 144: pinned modular-width declaration evidence.
+jpeg-grayscale-isolated-validation manifest artifacts coverage_env lint_home lint_target:
+    mkdir {{quote(artifacts)}}
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder
+    just jpeg-sampling-evidence {{quote(manifest)}} {{quote(artifacts + "/offered")}} {{quote(coverage_env)}} grayscale
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features jpeg-reencoding --lib --no-report -- --test-threads=1
+    cargo llvm-cov --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --test it --no-report -- hash_lock strategy_libjxl_byte_lock divergence_table_drift --test-threads=1
+    env CARGO_HOME={{quote(lint_home)}} CARGO_TARGET_DIR={{quote(lint_target)}} cargo +1.100.0 clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,jpeg-reencoding --lib --test jpeg_sampling_contract -- -D warnings
+    cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,jpeg-reencoding
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+
+# Pin-only closure: no pending encoder production changes participate.
 decoder-dht-pin-validation manifest:
     cargo metadata --locked --manifest-path {{quote(manifest)}} --no-deps --format-version 1 > "$TMPDIR/decoder-dht-pin-metadata.json"
     cargo test --locked --manifest-path {{quote(manifest)}} --workspace --all-targets --features __expert,jpeg-reencoding -- --test-threads=1
@@ -2441,6 +2584,7 @@ decoder-dht-pin-validation manifest:
     cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,jpeg-reencoding
     cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder -p jxl-encoder-simd -p jxl-encoder-cli -p jxl-encoder-macros -p zenjxl-tuning-runner -- --check
 
+# Retained pre-repair executable; do not relock the byte expectations.
 modular-width-previous-lock-control binary:
     {{quote(binary)}} hash_lock --nocapture --test-threads=1
 
@@ -2452,6 +2596,9 @@ modular-width-lock-evidence manifest revision output:
 
 modular-width-pixel-replay manifest pairs output:
     cargo run --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,jpeg-reencoding --example modular_width_pixel_replay -- {{quote(pairs)}} {{quote(output)}}
+
+archive-inactive-cargo source output:
+    python3 scripts/archive_inactive_cargo.py {{quote(source)}} {{quote(output)}} --reclaim
 
 modular-width-strict-check manifest:
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,jpeg-reencoding --test modular_width_level_contract strict_source_and_extra_precision -- --nocapture --test-threads=1
@@ -2467,6 +2614,7 @@ modular-width-focused manifest:
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,jpeg-reencoding --test animation_contract -- --test-threads=1
     cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,jpeg-reencoding --lib --test animation_contract --test modular_width_level_contract --test it --example modular_width_pixel_replay -- -D warnings
 
+# Exact-source instrumentation; the output retains production sources and ELF.
 modular-width-coverage manifest output coverage_env:
     bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" "" --test-target modular_width_level_contract --features __expert,jpeg-reencoding --source jxl-encoder/src/vardct/encoder.rs --source jxl-encoder/src/api.rs --source jxl-encoder/src/headers/file_header.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
 
@@ -2536,6 +2684,12 @@ modular-width-custom-harness binary:
 modular-width-workspace-receipted manifest previous_log original_receipt prior_progress output:
     python3 scripts/resume_workspace_validation.py {{quote(manifest)}} {{quote(previous_log)}} {{quote(output)}} --pass-receipt {{quote(original_receipt)}} --previous-receipt {{quote(prior_progress)}}
 
+modular-width-custom-harness-bound binary:
+    zenbench exec --cpu-policy performance {{quote(binary)}}
+
+modular-width-custom-harness-scoped binary output:
+    python3 scripts/run_in_cpu_class.py {{quote(output)}} -- {{quote(binary)}}
+
 modular-width-cargo-custom-harness manifest:
     cargo test --locked --verbose --manifest-path {{quote(manifest)}} -p jxl-encoder-simd --bench kernel_tiers -- --test-threads=1
 
@@ -2544,6 +2698,7 @@ modular-width-cargo-custom-harness-check manifest:
     cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder-simd --bench kernel_tiers -- -D warnings
     cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder-simd -- --check
 
+# Continue the pinned workspace gate after receipted all-target execution.
 modular-width-workspace-postchecks manifest:
     cargo test --locked --manifest-path {{quote(manifest)}} --workspace --doc --features __expert,jpeg-reencoding
     cargo clippy --locked --manifest-path {{quote(manifest)}} --workspace --all-targets --features __expert,jpeg-reencoding -- -D warnings
@@ -2555,11 +2710,21 @@ modular-width-workspace-lint-continuation manifest:
     cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,jpeg-reencoding
     cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder -p jxl-encoder-simd -p jxl-encoder-cli -p jxl-encoder-macros -p zenjxl-tuning-runner -- --check
 
+# Preserve the full expert-example lint census separately from changed paths.
 modular-width-scoped-final manifest:
     cargo clippy --locked --manifest-path {{quote(manifest)}} --workspace --lib --tests --bins --features __expert,jpeg-reencoding -- -D warnings
     cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,jpeg-reencoding --example modular_width_pixel_replay --example jpeg_pixel_parity --example lossy_multiseed_isolate_ab -- -D warnings
     cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,jpeg-reencoding
     cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder -p jxl-encoder-simd -p jxl-encoder-cli -p jxl-encoder-macros -p zenjxl-tuning-runner -- --check
+
+color-optional-icc-candidate manifest:
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,jpeg-reencoding,chroma-subsampling --lib api::cms:: -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,jpeg-reencoding,chroma-subsampling --test source_color_contract optional_subsampling_keeps_explicit_source_interpretation_with_icc_output -- --test-threads=1
+
+color-optional-icc-resolve manifest:
+    cargo metadata --offline --manifest-path {{quote(manifest)}} --format-version 1 > "$TMPDIR/optional-icc-metadata.json"
+    just color-optional-icc-candidate {{quote(manifest)}}
 
 color-optional-icc-quantization-build build output:
     c++ -std=c++17 -O2 -I{{quote(build + "/lib/include")}} scripts/optional_icc_quantization_oracle.cc -L{{quote(build + "/lib")}} -Wl,-rpath,{{quote(build + "/lib")}} -ljxl -llcms2 -o {{quote(output)}}
@@ -2568,12 +2733,36 @@ color-optional-icc-quantization-build build output:
 color-optional-icc-quantization-control oracle cjxl djxl input output:
     python3 scripts/optional_icc_quantization_control.py {{quote(oracle)}} {{quote(cjxl)}} {{quote(djxl)}} {{quote(input)}} {{quote(output)}}
 
+color-optional-icc-all-candidate manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,jpeg-reencoding,chroma-subsampling --test source_color_contract optional_icc:: -- --test-threads=1
+
 color-optional-icc-native-table oracle cjxl djxl offered gamma transfer output:
     python3 scripts/optional_icc_native_table.py {{quote(oracle)}} {{quote(cjxl)}} {{quote(djxl)}} {{quote(offered)}} {{quote(gamma)}} {{quote(transfer)}} {{quote(output)}}
+
+color-optional-icc-extended manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,jpeg-reencoding,chroma-subsampling --lib icc_conversion_preserves_extended_intermediate_primaries -- --test-threads=1
+
+color-optional-icc-followup manifest:
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder
+    just color-optional-icc-all-candidate {{quote(manifest)}}
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,jpeg-reencoding,chroma-subsampling --lib --test source_color_contract -- -D warnings
+    cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features jpeg-reencoding,chroma-subsampling
+
+color-optional-icc-raw-selector manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,jpeg-reencoding,chroma-subsampling --test source_color_contract unavailable_explicit_icc_conversion -- --test-threads=1
 
 color-optional-icc-production-evidence manifest output coverage_env:
     mkdir -p {{quote(output)}}
     bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3/units" api::cms:: --features std,convenience,__expert,jpeg-reencoding,chroma-subsampling --no-default-features --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/cms.rs --source jxl-encoder/tests/fixtures/icc_extreme_gamma.hex; python3 scripts/run_selected_test_evidence.py "$2" "$3/public" optional_icc:: --test-target source_color_contract --features std,convenience,__expert,jpeg-reencoding,chroma-subsampling --no-default-features --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/cms.rs --source jxl-encoder/tests/source_color_contract/optional_icc.rs --source jxl-encoder/tests/source_color_contract/optional_icc_native.tsv --source jxl-encoder/tests/fixtures/icc_extreme_gamma.hex' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+modular-width-native-orientation-replay manifest oracle:
+    just native-orientation-icc-check {{quote(manifest)}} {{quote(oracle)}}
+
+modular-width-native-orientation-fixed manifest oracle:
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder
+    just native-orientation-icc-check {{quote(manifest)}} {{quote(oracle)}}
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features corpus-tests,butteraugli-loop --test native_orientation -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder -- --check
 
 color-optional-icc-faults manifest output coverage_env:
     bash -c 'set -e; source "$1"; python3 scripts/test_optional_icc_mutations.py "$2" "$3"' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
@@ -2585,6 +2774,12 @@ color-optional-icc-minimal manifest:
 color-optional-icc-extreme-profile output binary:
     c++ -std=c++17 -O2 scripts/icc_extreme_profile_oracle.cc -llcms2 -o {{quote(binary)}}
     {{quote(binary)}} {{quote(output)}}
+
+color-optional-icc-finite-output manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert,jpeg-reencoding,chroma-subsampling --lib finite_source_with_nonfinite_cms_output -- --test-threads=1
+
+color-optional-icc-extra-finite-fault manifest output coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/test_optional_icc_mutations.py "$2" "$3" --case missing-output-finite' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
 
 color-optional-icc-default-disabled-evidence manifest output coverage_env:
     bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" default_disabled_features_convert --test-target optional_icc_minimal_contract --features __expert,jpeg-reencoding,chroma-subsampling --no-default-features --source jxl-encoder/src/api.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
@@ -2600,23 +2795,120 @@ color-optional-icc-broad manifest:
     cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features __expert,jpeg-reencoding,chroma-subsampling --lib --test optional_icc_minimal_contract -- -D warnings
     cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder -- --check
 
+color-optional-icc-final-resume manifest output coverage_env positives:
+    mkdir -p {{quote(output)}}
+    just color-optional-icc-faults {{quote(manifest)}} {{quote(output)}}/faults {{quote(coverage_env)}}
+    just color-optional-icc-production-evidence {{quote(manifest)}} {{quote(output)}}/restored {{quote(coverage_env)}}
+    bash -c 'llvm_tools="$(rustc --print sysroot)/lib/rustlib/x86_64-unknown-linux-gnu/bin"; just color-optional-icc-regions "$llvm_tools" "$1/regions" "$1/restored/units" "$1/restored/public" "$2/minimal" "$3"' _ {{quote(output)}} {{quote(positives)}} "$(dirname {{quote(manifest)}})"
+    just color-optional-icc-broad {{quote(manifest)}}
+
+color-optional-icc-allocation-final manifest output coverage_env previous:
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder
+    mkdir -p {{quote(output)}}
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3/units" api::cms:: --features std,convenience,__expert,jpeg-reencoding,chroma-subsampling --no-default-features --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/cms.rs --source jxl-encoder/tests/fixtures/icc_extreme_gamma.hex' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+    just color-optional-icc-default-disabled-evidence {{quote(manifest)}} {{quote(output)}}/minimal {{quote(coverage_env)}}
+    bash -c 'llvm_tools="$(rustc --print sysroot)/lib/rustlib/x86_64-unknown-linux-gnu/bin"; just color-optional-icc-regions "$llvm_tools" "$1/regions" "$1/units" "$2/restored/public" "$1/minimal" "$3"' _ {{quote(output)}} {{quote(previous)}} "$(dirname {{quote(manifest)}})"
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,jpeg-reencoding,chroma-subsampling --lib
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,jpeg-reencoding,chroma-subsampling --lib --test source_color_contract --test subsampled_metadata --test subsampled_odd_shapes -- -D warnings
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features __expert,jpeg-reencoding,chroma-subsampling --lib --test optional_icc_minimal_contract -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder -- --check
+
+color-optional-icc-defensive-final manifest output coverage_env previous minimal:
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder
+    mkdir -p {{quote(output)}}
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3/units" api::cms:: --features std,convenience,__expert,jpeg-reencoding,chroma-subsampling --no-default-features --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/cms.rs --source jxl-encoder/tests/fixtures/icc_extreme_gamma.hex' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+    bash -c 'llvm_tools="$(rustc --print sysroot)/lib/rustlib/x86_64-unknown-linux-gnu/bin"; just color-optional-icc-regions "$llvm_tools" "$1/regions" "$1/units" "$2/restored/public" "$3/minimal" "$4"' _ {{quote(output)}} {{quote(previous)}} {{quote(minimal)}} "$(dirname {{quote(manifest)}})"
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features __expert,jpeg-reencoding,chroma-subsampling --lib --test optional_icc_minimal_contract -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder -- --check
+
+cmyk-cms-pinned-probe rlib dependencies profile binary output:
+    rustc --edition 2024 -C opt-level=2 scripts/cmyk_cms_probe.rs --extern moxcms={{quote(rlib)}} -L dependency={{quote(dependencies)}} -o {{quote(binary)}}
+    {{quote(binary)}} {{quote(profile)}} {{quote(output)}}
+
+cmyk-black-profile-before manifest output coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" black_requires --test-target black_profile_contract --features std,convenience,__expert,jpeg-reencoding,chroma-subsampling --no-default-features --source jxl-encoder/src/api.rs --source jxl-encoder/src/headers/file_header.rs --source jxl-encoder/src/api/animate.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+cmyk-profile-first-compile manifest:
+    cargo update --offline --manifest-path {{quote(manifest)}} -p moxcms --precise 0.8.1
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder
+    cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --example progressive_ac_cmyk
+
+cmyk-profile-source-candidate manifest profile output reference:
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder
+    python3 scripts/run_cmyk_animation_evidence.py {{quote(manifest)}} {{quote(profile)}} {{quote(output)}} --source-control {{quote(reference)}}
+
+cmyk-profile-physical-candidate manifest profile output table:
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder
+    python3 scripts/run_cmyk_animation_evidence.py {{quote(manifest)}} {{quote(profile)}} {{quote(output)}} --physical-control {{quote(table)}}
+
+cmyk-native-output-control djxl input output original_oracle:
+    python3 scripts/cmyk_native_output_control.py {{quote(djxl)}} {{quote(input)}} {{quote(output)}} {{quote(original_oracle)}}
+
+cmyk-raw-frame-oracle-build build output:
+    c++ -std=c++17 -O2 -I{{quote(build + "/lib/include")}} scripts/cmyk_raw_frame_oracle.cc -L{{quote(build + "/lib")}} -Wl,-rpath,{{quote(build + "/lib")}} -ljxl -ljxl_cms -o {{quote(output)}}
+    {{quote(output)}} --version
+
+cmyk-raw-frame-check oracle input output mode:
+    mkdir {{quote(output)}}
+    {{quote(oracle)}} {{quote(input)}} {{quote(output + "/frames")}} {{quote(mode)}}
+
+cmyk-animation-replace-evidence manifest profile output:
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder
+    python3 scripts/run_cmyk_animation_evidence.py {{quote(manifest)}} {{quote(profile)}} {{quote(output)}} --explicit-replace
+
+cmyk-cms-pinned-probe-f64 rlib dependencies profile binary output:
+    rustc --edition 2024 -C opt-level=2 scripts/cmyk_cms_probe_f64.rs --extern moxcms={{quote(rlib)}} -L dependency={{quote(dependencies)}} -o {{quote(binary)}}
+    {{quote(binary)}} {{quote(profile)}} {{quote(output)}}
+
+cmyk-profile-resolve manifest:
+    cargo metadata --offline --manifest-path {{quote(manifest)}} --format-version 1 > "$TMPDIR/cmyk-profile-metadata.json"
+
+cmyk-gradient-rgb-native build binary profile output:
+    c++ -std=c++17 -O2 -I{{quote(build + "/lib/include")}} scripts/cmyk_gradient_rgb_oracle.cc -L{{quote(build + "/lib")}} -Wl,-rpath,{{quote(build + "/lib")}} -ljxl -llcms2 -o {{quote(binary)}}
+    {{quote(binary)}} {{quote(profile)}} {{quote(output)}}
+
+cmyk-gradient-rgb-native-check djxl input candidate output:
+    python3 scripts/check_cmyk_gradient_native.py {{quote(djxl)}} {{quote(input)}} {{quote(candidate)}} {{quote(output)}}
+
+cmyk-profile-pinned-fixtures manifest:
+    cargo metadata --manifest-path {{quote(manifest)}} --format-version 1 > "$TMPDIR/cmyk-profile-pinned-metadata.json"
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --lib cmyk -- --test-threads=1
+
+cmyk-profile-default-disabled-fixtures manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features __expert,convenience --lib cmyk -- --test-threads=1
+
+cmyk-lossless-source-evidence manifest output coverage_env:
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder
+    bash -c 'source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" tagged_cmyk_lossless --also-filter separated_cmy_black --also-filter cmyk_streaming --test-target cmyk_source_contract --features __expert,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/validate.rs --source jxl-encoder/src/headers/file_header.rs --source jxl-encoder/src/api/cmyk.rs --source jxl-encoder/tests/cmyk_source_contract.rs --source jxl-encoder/tests/fixtures/ps_cmyk.hex --source scripts/cmyk_raw_frame_oracle.cc' -- {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+cmyk-lossless-source-check manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --test cmyk_source_contract -- --test-threads=1
 
 color-optional-icc-runtime-controls-check manifest:
     cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder
     just color-optional-icc-all-candidate {{quote(manifest)}}
     cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,jpeg-reencoding,chroma-subsampling --test source_color_contract -- -D warnings
 
-cmyk-raw-frame-oracle-build build output:
-    c++ -std=c++17 -O2 -I{{quote(build + "/lib/include")}} scripts/cmyk_raw_frame_oracle.cc -L{{quote(build + "/lib")}} -Wl,-rpath,{{quote(build + "/lib")}} -ljxl -ljxl_cms -o {{quote(output)}}
-    {{quote(output)}} --version
+cmyk-separated-caller-lint manifest:
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --test cmyk_source_contract cmyk_streaming -- --test-threads=1
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --test cmyk_source_contract -- -D warnings
 
-cmyk-native-source-helper source build:
-    cmake -S {{quote(source)}} -B {{quote(build)}} -DCMAKE_PROJECT_INCLUDE={{quote(justfile_directory() + "/scripts/libjxl_original_profile.cmake")}}
-    cmake --build {{quote(build)}} --target jxl-cmyk-frames --parallel 4
-    {{quote(build + "/tools/jxl-cmyk-frames")}} --version
+cmyk-animation-layers-evidence manifest output coverage_env:
+    bash -c 'source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" cmyk_cropped_and_identity_delta --test-target cmyk_animation_layers_contract --features __expert,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/cmyk.rs --source jxl-encoder/src/api/animate.rs --source jxl-encoder/tests/cmyk_animation_layers_contract.rs --source scripts/cmyk_raw_frame_oracle.cc' -- {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
 
 cmyk-source-regions llvm archive reference output:
     python3 scripts/color_admission_coverage.py {{quote(llvm)}} {{quote(output)}} {{quote(archive)}} --cmyk-source --reference-root {{quote(reference)}}
+
+jpeg-sampling-regions llvm archive reference output:
+    python3 scripts/color_admission_coverage.py {{quote(llvm)}} {{quote(output)}} {{quote(archive)}} --jpeg-sampling --reference-root {{quote(reference)}}
+
+cmyk-profile-refresh-and-layers manifest build oracle output coverage_env:
+    cargo metadata --manifest-path {{quote(manifest)}} --format-version 1 > "$TMPDIR/cmyk-profile-final-metadata.json"
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder
+    just cmyk-raw-frame-oracle-build {{quote(build)}} {{quote(oracle)}}
+    just cmyk-animation-layers-evidence {{quote(manifest)}} {{quote(output)}} {{quote(coverage_env)}}
 
 cmyk-final-selected manifest:
     cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder
@@ -2625,6 +2917,11 @@ cmyk-final-selected manifest:
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --test cmyk_animation_layers_contract cmyk_lossless_animation -- --test-threads=1
     cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --lib --test cmyk_source_contract --test cmyk_animation_layers_contract --test black_profile_contract -- -D warnings
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features __expert,convenience --lib cmyk -- --test-threads=1
+
+cmyk-native-source-helper source build:
+    cmake -S {{quote(source)}} -B {{quote(build)}} -DCMAKE_PROJECT_INCLUDE={{quote(justfile_directory() + "/scripts/libjxl_original_profile.cmake")}}
+    cmake --build {{quote(build)}} --target jxl-cmyk-frames --parallel 4
+    {{quote(build + "/tools/jxl-cmyk-frames")}} --version
 
 cmyk-prepared-check manifest:
     cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder
@@ -2646,6 +2943,11 @@ cmyk-source-boundary-check manifest:
 cmyk-float-source-check manifest:
     cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --test cmyk_source_contract -- floating_cmy tagged_hdr_float --test-threads=1
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --test cmyk_source_contract -- -D warnings
+
+cmyk-source-refusal-associated-check manifest:
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --test cmyk_source_contract -- black_model_refusal associated_cmy --test-threads=1
     cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --test cmyk_source_contract -- -D warnings
 
 cmyk-runtime-faults manifest output coverage_env:
@@ -2745,6 +3047,21 @@ cmyk-auxiliary-final-check manifest:
     cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --test cmyk_animation_layers_contract -- -D warnings
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --test cmyk_animation_layers_contract -- --test-threads=1
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert --test cmyk_animation_layers_contract -- cmyk_reference_only cmyk_explicit_add --test-threads=1
+c6-grayscale-final-check manifest:
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,jpeg-reencoding --test jpeg_sampling_contract -- --test-threads=1
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,jpeg-reencoding --test jpeg_sampling_contract -- -D warnings
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,jpeg-reencoding --lib -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --test it -- hash_lock strategy_libjxl_byte_lock divergence_table_drift --test-threads=1
+    cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,jpeg-reencoding
+
+c6-grayscale-callers-check manifest llvm archive output:
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder -p jxl-encoder-cli
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,jpeg-reencoding --test jpeg_sampling_contract -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder-cli --features jpeg-reencoding --test jpeg_sampling -- --test-threads=1
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,jpeg-reencoding --test jpeg_sampling_contract -- -D warnings
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder-cli --features jpeg-reencoding --test jpeg_sampling -- -D warnings
+    python3 scripts/color_admission_coverage.py {{quote(llvm)}} {{quote(output)}} {{quote(archive)}} --jpeg-sampling --reference-root {{quote(manifest)}}/..
 
 jpeg-prefix-metadata-check manifest:
     cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder
@@ -2779,22 +3096,9 @@ jpeg-metadata-final-validation manifest output coverage_env llvm:
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --doc
     cargo clippy --locked --manifest-path {{quote(manifest)}} --workspace --all-targets -- -D warnings
 
-
-c6-grayscale-final-check manifest:
+jpeg-dht-model-check manifest:
     cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder
-    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,jpeg-reencoding --test jpeg_sampling_contract -- --test-threads=1
-    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,jpeg-reencoding --test jpeg_sampling_contract -- -D warnings
-    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,jpeg-reencoding --lib -- --test-threads=1
-    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --test it -- hash_lock strategy_libjxl_byte_lock divergence_table_drift --test-threads=1
-    cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,jpeg-reencoding
-
-c6-grayscale-callers-check manifest llvm archive output:
-    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder -p jxl-encoder-cli
-    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,jpeg-reencoding --test jpeg_sampling_contract -- --test-threads=1
-    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder-cli --features jpeg-reencoding --test jpeg_sampling -- --test-threads=1
-    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,jpeg-reencoding --test jpeg_sampling_contract -- -D warnings
-    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder-cli --features jpeg-reencoding --test jpeg_sampling -- -D warnings
-    python3 scripts/color_admission_coverage.py {{quote(llvm)}} {{quote(output)}} {{quote(archive)}} --jpeg-sampling --reference-root {{quote(manifest)}}/..
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,jpeg-reencoding --test jpeg_sampling_contract unusual -- --test-threads=1
 
 
 jpeg-dht-callers-check manifest:
@@ -2841,6 +3145,15 @@ jpeg-dht-restored-check manifest output coverage_env llvm:
     cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,jpeg-reencoding --test jpeg_sampling_contract -- -D warnings
     cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder -p jxl-encoder-cli --check
 
+gain-map-main-integration-check manifest review output producer_repo decoder_repo:
+    python3 scripts/check_gain_map_review_integration.py {{quote(manifest)}} {{quote(review)}} {{quote(output)}} {{quote(producer_repo)}} {{quote(decoder_repo)}}
+
+jpeg-app0-source-oracle djpeg output fixture="jxl-encoder/tests/fixtures/jbrd/rgb_adobe.jpg":
+    python3 scripts/jpeg_app0_source_oracle.py {{quote(fixture)}} {{quote(djpeg)}} {{quote(output)}}
+
+jpeg-color-scan-production-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" scans:: --also-filter app0:: --also-filter common_grid:: --also-filter unusual:: --test-target jpeg_sampling_contract --features __expert,parallel,jpeg-reencoding --source jxl-encoder/src/jpeg/encode.rs --source jxl-encoder/src/jpeg/parse.rs --source jxl-encoder/tests/jpeg_sampling_contract/app0.rs --source jxl-encoder/tests/jpeg_sampling_contract/scans.rs --source jxl-encoder/tests/jpeg_sampling_contract/common_grid.rs --source jxl-encoder/tests/jpeg_sampling_contract/unusual.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
 jpeg-scan-grid-core-check manifest:
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,jpeg-reencoding --test jpeg_sampling_contract -- --test-threads=1
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,jpeg-reencoding --lib -- --test-threads=1
@@ -2849,10 +3162,6 @@ jpeg-scan-grid-core-check manifest:
     just subsampled-metadata-check {{quote(manifest)}}
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --doc
     cargo clippy --locked --manifest-path {{quote(manifest)}} --workspace --all-targets -- -D warnings
-
-jpeg-scan-grid-callers-check manifest:
-    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,jpeg-reencoding --test jpeg_sampling_contract grid_callers:: -- --test-threads=1
-    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder-cli --features jpeg-reencoding --test jpeg_sampling grid:: -- --test-threads=1
 
 jpeg-scan-grid-production-evidence manifest output coverage_env:
     bash -c 'set -e; source "$1"; python3 scripts/run_jpeg_scan_grid_evidence.py "$2" "$3"' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
@@ -2863,6 +3172,10 @@ jpeg-scan-grid-regions llvm archive reference output:
 jpeg-scan-grid-runtime-faults manifest output coverage_env:
     bash -c 'set -e; source "$1"; python3 scripts/test_jpeg_scan_grid_mutations.py "$2" "$3"' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
 
+jpeg-scan-grid-callers-check manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,jpeg-reencoding --test jpeg_sampling_contract grid_callers:: -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder-cli --features jpeg-reencoding --test jpeg_sampling grid:: -- --test-threads=1
+
 jpeg-scan-grid-normal-check manifest:
     python3 -c 'import os; assert not os.environ.get("RUSTC_WRAPPER"); assert "instrument-coverage" not in os.environ.get("RUSTFLAGS", ""); assert not os.environ.get("CARGO_ENCODED_RUSTFLAGS")'
     rustc -vV
@@ -2871,24 +3184,18 @@ jpeg-scan-grid-normal-check manifest:
     cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,jpeg-reencoding --lib --test jpeg_sampling_contract -- -D warnings
     cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder-cli --features jpeg-reencoding --test jpeg_sampling -- -D warnings
 
-jpeg-scan-grid-focused-check manifest:
-    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,jpeg-reencoding --test jpeg_sampling_contract -- common_grid:: scans:: grid_callers:: --test-threads=1
-    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder-cli --features jpeg-reencoding --test jpeg_sampling grid:: -- --test-threads=1
-    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,jpeg-reencoding --lib --test jpeg_sampling_contract -- -D warnings
-    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder-cli --features jpeg-reencoding --test jpeg_sampling -- -D warnings
-    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder -p jxl-encoder-cli --check
-
 jpeg-scan-grid-cli-production manifest output coverage_env:
     bash -c 'set -e; source "$1"; export __CARGO_LLVM_COV_RUSTC_WRAPPER_CRATE_NAMES=jxl_encoder,cjxl_rs,jpeg_sampling; touch "$(dirname "$2")/jxl-encoder-cli/src/main.rs"; python3 scripts/run_jpeg_scan_grid_evidence.py "$2" "$3" --cli' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
 
 jpeg-scan-grid-cli-regions llvm archive output:
     python3 scripts/jpeg_cli_subprocess_coverage.py {{quote(llvm)}} {{quote(archive)}} {{quote(output)}}
 
-gain-map-main-integration-check manifest review output producer_repo decoder_repo:
-    python3 scripts/check_gain_map_review_integration.py {{quote(manifest)}} {{quote(review)}} {{quote(output)}} {{quote(producer_repo)}} {{quote(decoder_repo)}}
-
-jpeg-app0-source-oracle djpeg output fixture="jxl-encoder/tests/fixtures/jbrd/rgb_adobe.jpg":
-    python3 scripts/jpeg_app0_source_oracle.py {{quote(fixture)}} {{quote(djpeg)}} {{quote(output)}}
+jpeg-scan-grid-focused-check manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,jpeg-reencoding --test jpeg_sampling_contract -- common_grid:: scans:: grid_callers:: --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder-cli --features jpeg-reencoding --test jpeg_sampling grid:: -- --test-threads=1
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,jpeg-reencoding --lib --test jpeg_sampling_contract -- -D warnings
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder-cli --features jpeg-reencoding --test jpeg_sampling -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder -p jxl-encoder-cli --check
 
 jpeg-color-callers-check manifest:
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,jpeg-reencoding --test jpeg_sampling_contract -- app0:: unusual:: --test-threads=1
@@ -2920,13 +3227,49 @@ jpeg-companion-pin-check manifest producer decoder output:
 jpeg-rgb-native-admission cjxl djxl djpeg output sources:
     python3 scripts/jpeg_rgb_native_admission.py {{quote(cjxl)}} {{quote(djxl)}} {{quote(djpeg)}} {{quote(output)}} {{sources}}
 
+conditional-modular-batch-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" reference_property_contract --also-filter delta_palette_contract --also-filter internal_2x_border_model --include-ignored --features __expert,parallel --source jxl-encoder/src/modular/encode_tree.rs --source jxl-encoder/src/modular/reference_property_contract.rs --source jxl-encoder/src/modular/palette.rs --source jxl-encoder/src/modular/delta_palette_contract.rs --source jxl-encoder/src/vardct/resampling.rs --source jxl-encoder/src/vardct/resampling_decoder_contract.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+conditional-modular-regions llvm output archive flag:
+    python3 scripts/color_admission_coverage.py {{quote(llvm)}} {{quote(output)}} {{quote(archive)}} {{quote(flag)}}
+
+conditional-modular-precision-evidence manifest output coverage_env:
+    just conditional-modular-unit-evidence {{quote(manifest)}} {{quote(output)}} {{quote(coverage_env)}} delta_palette_no_delta_and_integer_extra_channels
+
+conditional-modular-core-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" reference_property_contract --also-filter internal_2x_border_model --also-filter reconstruction_model_routes --also-filter batched_stencils_match_frozen_scalar --include-ignored --features __expert,parallel --source jxl-encoder/src/modular/encode_tree.rs --source jxl-encoder/src/modular/reference_property_contract.rs --source jxl-encoder/src/vardct/resampling.rs --source jxl-encoder/src/vardct/resampling_decoder_contract.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
 delta-palette-cli-evidence manifest output coverage_env:
     bash -c 'set -e; source "$1"; export __CARGO_LLVM_COV_RUSTC_WRAPPER_CRATE_NAMES=jxl_encoder,cjxl_rs,delta_palette; touch "$(dirname "$2")/jxl-encoder-cli/src/main.rs"; python3 scripts/run_selected_test_evidence.py "$2" "$3" delta_palette_all_cli --test-target delta_palette --package jxl-encoder-cli --features parallel --source jxl-encoder-cli/src/main.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
 
-delta-palette-final-regions llvm output callers precision patches cli:
-    python3 -c 'from pathlib import Path; import sys; Path(sys.argv[1]).mkdir(exist_ok=False)' {{quote(output)}}
-    python3 scripts/color_admission_coverage.py {{quote(llvm)}} {{quote(output + "/api")}} {{quote(callers)}} {{quote(precision)}} {{quote(patches)}} --delta-palette
-    python3 scripts/jpeg_cli_subprocess_coverage.py {{quote(llvm)}} {{quote(cli)}} {{quote(output + "/cli")}} --palette
+conditional-reference-evidence manifest output coverage_env features="__expert,parallel,parallel-tree-learning":
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" reference_property_contract --include-ignored --features "$4" --source jxl-encoder/src/modular/encode_tree.rs --source jxl-encoder/src/modular/reference_property_contract.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}} {{quote(features)}}
+
+delta-palette-patch-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" delta_palette_with_nonempty_patch --include-ignored --features __expert,parallel --source jxl-encoder/src/vardct/patches.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+conditional-patch-model-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" delta_palette_with_nonempty_patch --also-filter internal_2x_border_model --include-ignored --features __expert,parallel --source jxl-encoder/src/vardct/patches.rs --source jxl-encoder/src/vardct/resampling.rs --source jxl-encoder/src/vardct/resampling_decoder_contract.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+conditional-modular-runtime-faults manifest output coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/test_conditional_modular_mutations.py "$2" "$3"' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+conditional-modular-broad-check manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,parallel-tree-learning --lib
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --test it -- hash_lock strategy_libjxl_byte_lock divergence_table_drift --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,__expert --lib -- selected_wide_reference_absolute_property_matches_native selected_delta_palette_decodes_its_actual_quantized_values delta_palette_no_delta_and_integer_extra_channels delta_palette_with_nonempty_patch internal_2x_border_model reconstruction_model_routes --include-ignored --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --doc
+    cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features __internals --lib
+    cargo clippy --locked --manifest-path {{quote(manifest)}} --workspace --all-targets -- -D warnings
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,parallel-tree-learning --lib --tests -- -D warnings
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder-cli --test delta_palette -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder -p jxl-encoder-cli --check
+
+conditional-modular-lint-check manifest:
+    cargo clippy --locked --manifest-path {{quote(manifest)}} --workspace --all-targets -- -D warnings
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,parallel-tree-learning --lib --tests -- -D warnings
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder-cli --test delta_palette -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder -p jxl-encoder-cli --check
 
 delta-palette-isolated-check manifest:
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,parallel-tree-learning --lib delta_palette_contract -- --include-ignored --test-threads=1
@@ -2938,18 +3281,17 @@ delta-palette-isolated-check manifest:
 qualify-selected-palette manifest selection base output:
     python3 scripts/qualify_selected_modular_source.py {{quote(manifest)}} {{quote(selection)}} {{quote(base)}} {{quote(output)}}
 
+delta-palette-final-regions llvm output callers precision patches cli:
+    python3 -c 'from pathlib import Path; import sys; Path(sys.argv[1]).mkdir(exist_ok=False)' {{quote(output)}}
+    python3 scripts/color_admission_coverage.py {{quote(llvm)}} {{quote(output + "/api")}} {{quote(callers)}} {{quote(precision)}} {{quote(patches)}} --delta-palette
+    python3 scripts/jpeg_cli_subprocess_coverage.py {{quote(llvm)}} {{quote(cli)}} {{quote(output + "/cli")}} --palette
+
 delta-palette-production-evidence manifest output coverage_env:
     bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" delta_palette_contract --include-ignored --features __expert,parallel --source jxl-encoder/src/vardct/patches.rs --source jxl-encoder/tests/support/decoded_frames.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
 
-
-conditional-reference-evidence manifest output coverage_env features="__expert,parallel,parallel-tree-learning":
-    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" reference_property_contract --include-ignored --features "$4" --source jxl-encoder/src/modular/encode_tree.rs --source jxl-encoder/src/modular/reference_property_contract.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}} {{quote(features)}}
-
-conditional-modular-regions llvm output archive flag:
-    python3 scripts/color_admission_coverage.py {{quote(llvm)}} {{quote(output)}} {{quote(archive)}} {{quote(flag)}}
-
 reference-property-extra-evidence manifest output coverage_env:
     bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" selected_reference_property_floating_alpha --include-ignored --features __expert,parallel --source jxl-encoder/src/modular/reference_property_contract.rs --source scripts/libjxl_original_profile.cc --source jxl-encoder/tests/support/native_planes.rs --source jxl-encoder/tests/support/pfm.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
 
 reference-property-isolated-check manifest:
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,parallel-tree-learning --lib reference_property_contract -- --include-ignored --test-threads=1
@@ -2964,6 +3306,28 @@ reference-property-isolated-check manifest:
 
 qualify-selected-reference-property manifest selection base output:
     python3 scripts/qualify_selected_modular_source.py {{quote(manifest)}} {{quote(selection)}} {{quote(base)}} {{quote(output)}} --reference-property
+
+
+reconstruction-model-final-check manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,parallel-tree-learning --lib selected_reference_property_effort_and_custom_boundaries -- --include-ignored --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,parallel-tree-learning --lib -- internal_2x_border_model reconstruction_model_routes batched_stencils_match_frozen_scalar --include-ignored --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,parallel-tree-learning --lib
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --test it -- hash_lock strategy_libjxl_byte_lock divergence_table_drift --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,__expert --lib -- internal_2x_border_model reconstruction_model_routes batched_stencils_match_frozen_scalar --include-ignored --test-threads=1
+    cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features __internals --lib
+    cargo clippy --locked --manifest-path {{quote(manifest)}} --workspace --all-targets -- -D warnings
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,parallel,parallel-tree-learning --lib --tests -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+
+reconstruction-model-restored-fault manifest output coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/test_conditional_modular_mutations.py "$2" "$3" --case model-clamped-support' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+reconstruction-model-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" internal_2x_border_model --also-filter reconstruction_model_routes --also-filter batched_stencils_match_frozen_scalar --include-ignored --features __expert,parallel --source jxl-encoder/src/vardct/resampling.rs --source jxl-encoder/src/vardct/resampling_decoder_contract.rs --source jxl-encoder/src/vardct/resampling_reference_tests.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+
+spline-admission-before-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" strict_ --test-target spline_admission_contract --features __expert,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/api/validate.rs --source jxl-encoder/src/vardct/splines.rs --source jxl-encoder/src/vardct/encoder.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
 
 gain-map-duplicate-check manifest:
     cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder
@@ -2990,23 +3354,6 @@ gain-map-final-validation manifest output coverage_env llvm:
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --lib -- append_gain_map gain_map_append --test-threads=1
 
 
-reconstruction-model-final-check manifest:
-    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,parallel-tree-learning --lib selected_reference_property_effort_and_custom_boundaries -- --include-ignored --test-threads=1
-    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,parallel-tree-learning --lib -- internal_2x_border_model reconstruction_model_routes batched_stencils_match_frozen_scalar --include-ignored --test-threads=1
-    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,parallel-tree-learning --lib
-    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --test it -- hash_lock strategy_libjxl_byte_lock divergence_table_drift --test-threads=1
-    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,__expert --lib -- internal_2x_border_model reconstruction_model_routes batched_stencils_match_frozen_scalar --include-ignored --test-threads=1
-    cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features __internals --lib
-    cargo clippy --locked --manifest-path {{quote(manifest)}} --workspace --all-targets -- -D warnings
-    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,parallel,parallel-tree-learning --lib --tests -- -D warnings
-    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
-
-reconstruction-model-restored-fault manifest output coverage_env:
-    bash -c 'set -e; source "$1"; python3 scripts/test_conditional_modular_mutations.py "$2" "$3" --case model-clamped-support' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
-
-reconstruction-model-evidence manifest output coverage_env:
-    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" internal_2x_border_model --also-filter reconstruction_model_routes --also-filter batched_stencils_match_frozen_scalar --include-ignored --features __expert,parallel --source jxl-encoder/src/vardct/resampling.rs --source jxl-encoder/src/vardct/resampling_decoder_contract.rs --source jxl-encoder/src/vardct/resampling_reference_tests.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
-
 reconstruction-model-isolated-check manifest:
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,parallel-tree-learning --lib -- internal_2x_border_model reconstruction_model_routes batched_stencils_match_frozen_scalar --include-ignored --test-threads=1
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,parallel-tree-learning --lib
@@ -3021,12 +3368,6 @@ reconstruction-model-isolated-check manifest:
 qualify-selected-reconstruction-model manifest selection base output:
     python3 scripts/qualify_selected_modular_source.py {{quote(manifest)}} {{quote(selection)}} {{quote(base)}} {{quote(output)}} --reconstruction-model
 
-spline-admission-evidence manifest output coverage_env selection:
-    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" "$4" --test-target spline_admission_contract --features __expert,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/api/validate.rs --source jxl-encoder/src/vardct/encoder.rs --source jxl-encoder/src/vardct/splines.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}} {{quote(selection)}}
-
-spline-admission-before-evidence manifest output coverage_env:
-    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" strict_ --test-target spline_admission_contract --features __expert,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/api/validate.rs --source jxl-encoder/src/vardct/splines.rs --source jxl-encoder/src/vardct/encoder.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
-
 spline-admission-expanded-before manifest output coverage_env:
     bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" strict_ --test-target spline_admission_contract --features __expert,__internals,__pre_quantized,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/vardct/bitstream.rs --source jxl-encoder/src/vardct/splines.rs --source jxl-encoder/src/vardct/encoder.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
 
@@ -3039,6 +3380,7 @@ spline-original-additional-before manifest base output coverage_env:
 spline-admission-expanded-all-evidence manifest output coverage_env:
     bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" spline --test-target spline_admission_contract --features __expert,__internals,__pre_quantized,parallel,chroma-subsampling,jpeg-reencoding --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/api/validate.rs --source jxl-encoder/src/vardct/bitstream.rs --source jxl-encoder/src/vardct/splines.rs --source jxl-encoder/src/vardct/encoder.rs --source scripts/libjxl_original_profile.cc' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
 
+
 spline-components-evidence manifest output coverage_env:
     bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" vardct::splines::admission_tests --features __expert,__internals,__pre_quantized,parallel,chroma-subsampling,jpeg-reencoding --source jxl-encoder/src/vardct/splines.rs --source jxl-encoder/src/vardct/spline_admission_tests.rs --source jxl-encoder/src/vardct/spline_quantization_native.tsv --source jxl-encoder/src/vardct/encoder.rs --source jxl-encoder/src/vardct/bitstream.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
 
@@ -3047,11 +3389,14 @@ spline-final-evidence manifest output coverage_env:
     just spline-admission-expanded-all-evidence {{quote(manifest)}} {{quote(output + "/callers")}} {{quote(coverage_env)}}
     just spline-components-evidence {{quote(manifest)}} {{quote(output + "/components")}} {{quote(coverage_env)}}
 
+
 spline-restored-faults manifest output coverage_env:
     bash -c 'set -e; source "$1"; python3 scripts/test_spline_mutations.py "$2" "$3"' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
 
+
 spline-native-quantization source build output:
     python3 scripts/frame_header_oracle.py --component spline_quantization {{quote(source)}} {{quote(build)}} {{quote(output)}}
+
 
 spline-isolated-check manifest:
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel,chroma-subsampling,jpeg-reencoding --test spline_admission_contract --lib -- spline --test-threads=1
@@ -3065,8 +3410,10 @@ spline-isolated-check manifest:
     cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel,chroma-subsampling,jpeg-reencoding --lib --test spline_admission_contract -- -D warnings
     cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
 
+
 spline-remaining-faults manifest output coverage_env:
     bash -c 'set -e; source "$1"; python3 scripts/test_spline_mutations.py "$2" "$3" --case subsampling-refusal --case frame-writer-refusal --case section-shape' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
 
 spline-region-evidence llvm manifest output callers components:
     python3 scripts/color_admission_coverage.py {{quote(llvm)}} {{quote(output)}} {{quote(callers)}} {{quote(components)}} --spline-admission --reference-root {{quote(parent_directory(manifest))}}
@@ -3075,6 +3422,7 @@ spline-native-and-region-check source build binary llvm manifest output callers 
     just spline-native-quantization {{quote(source)}} {{quote(build)}} {{quote(binary)}}
     just spline-region-evidence {{quote(llvm)}} {{quote(manifest)}} {{quote(output)}} {{quote(callers)}} {{quote(components)}}
 
+
 qualify-selected-spline manifest selection base output:
     python3 scripts/qualify_selected_modular_source.py {{quote(manifest)}} {{quote(selection)}} {{quote(base)}} {{quote(output)}} --spline-admission
 
@@ -3082,11 +3430,13 @@ spline-final-selected-check llvm manifest selection base output callers componen
     just spline-region-evidence {{quote(llvm)}} {{quote(manifest)}} {{quote(output + "/regions")}} {{quote(callers)}} {{quote(components)}}
     just qualify-selected-spline {{quote(manifest)}} {{quote(selection)}} {{quote(base)}} {{quote(output + "/source")}}
 
+
 spline-final-repaired-check llvm manifest selection base output coverage_env callers:
     mkdir {{quote(output)}}
     just spline-components-evidence {{quote(manifest)}} {{quote(output + "/components")}} {{quote(coverage_env)}}
     just spline-region-evidence {{quote(llvm)}} {{quote(manifest)}} {{quote(output + "/regions")}} {{quote(callers)}} {{quote(output + "/components")}}
     just qualify-selected-spline {{quote(manifest)}} {{quote(selection)}} {{quote(base)}} {{quote(output + "/source")}}
+
 
 spline-continuation-check manifest:
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel,chroma-subsampling,jpeg-reencoding --test spline_admission_contract --lib -- spline --test-threads=1
@@ -3100,6 +3450,7 @@ spline-continuation-check manifest:
 qualify-selected-spline-continuation manifest selection base output:
     python3 scripts/qualify_selected_modular_source.py {{quote(manifest)}} {{quote(selection)}} {{quote(base)}} {{quote(output)}} --spline-admission --continue-spline-checks
 
+
 spline-lint-final-check manifest:
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel,chroma-subsampling,jpeg-reencoding --test spline_admission_contract -- manual_spline_admission --test-threads=1
     cargo clippy --locked --manifest-path {{quote(manifest)}} --workspace --all-targets -- -D warnings
@@ -3109,18 +3460,85 @@ spline-lint-final-check manifest:
 qualify-selected-spline-lint-final manifest selection base output:
     python3 scripts/qualify_selected_modular_source.py {{quote(manifest)}} {{quote(selection)}} {{quote(base)}} {{quote(output)}} --spline-admission --spline-lint-final
 
+
 spline-and-cms-final-lint manifest:
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel,chroma-subsampling,jpeg-reencoding --lib -- finite_source_with_nonfinite_cms_output_is_refused --test-threads=1
     cargo clippy --locked --manifest-path {{quote(manifest)}} --workspace --all-targets -- -D warnings
     cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel,chroma-subsampling,jpeg-reencoding --lib --tests -- -D warnings
     cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
 
+
 stage-spline-candidate manifest base output:
     python3 scripts/stage_spline_admission_candidate.py {{quote(manifest)}} {{quote(base)}} {{quote(output)}}
 
 
+gain-map-matrix-native source build binary:
+    python3 scripts/frame_header_oracle.py --component gain_map_matrix {{quote(source)}} {{quote(build)}} {{quote(binary)}}
+
+
+gain-map-owner-gamut-evidence manifest output coverage_env selection:
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" "$4" --test-target gain_map_color_contract --features __expert,parallel,hdr-gainmap --source jxl-encoder/src/hdr/from_sdr.rs --source jxl-encoder/src/hdr/from_sdr_color.rs --source jxl-encoder/src/hdr/bundle.rs --source jxl-encoder/src/api/ingest.rs --source jxl-encoder/tests/fixtures/gain_map_transfer_v012.tsv --source jxl-encoder/tests/fixtures/gain_map_matrices_v012.tsv --source scripts/gain_map_matrix_oracle.cc' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}} {{quote(selection)}}
+
+
+gain-map-layout-before manifest output coverage_env:
+    just gain-map-owner-gamut-evidence {{quote(manifest)}} {{quote(output)}} {{quote(coverage_env)}} nonlinear_hdr_layouts
+
+
+gain-map-original-input manifest base output coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/test_gain_map_original_input.py "$2" "$3" "$4"' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(base)}} {{quote(output)}}
+
+
+gain-map-all-color-evidence manifest output coverage_env:
+    just gain-map-owner-gamut-evidence {{quote(manifest)}} {{quote(output)}} {{quote(coverage_env)}} ""
+
+
+gain-map-color-component-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" color_prepare --features __expert,parallel,hdr-gainmap --source jxl-encoder/src/hdr/from_sdr.rs --source jxl-encoder/src/hdr/from_sdr_color.rs --source jxl-encoder/src/hdr/from_sdr_color_tests.rs --source jxl-encoder/src/api/ingest.rs --source jxl-encoder/tests/fixtures/gain_map_transfer_v012.tsv --source jxl-encoder/tests/fixtures/gain_map_matrices_v012.tsv' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+
+gain-map-color-mutations manifest output coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/test_gain_map_color_mutations.py "$2" "$3"' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+
+gain-map-color-regions llvm output callers components manifest:
+    python3 scripts/color_admission_coverage.py {{quote(llvm)}} {{quote(output)}} {{quote(callers)}} {{quote(components)}} --gain-map-color --reference-root {{quote(parent_directory(manifest))}}
+
+
+gain-map-shape-evidence manifest output coverage_env:
+    just gain-map-owner-gamut-evidence {{quote(manifest)}} {{quote(output)}} {{quote(coverage_env)}} gain_map_shapes
+
+
+gain-map-color-isolated-check manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,hdr-gainmap --lib -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,hdr-gainmap --test gain_map_color_contract -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,hdr-gainmap,brotli-metadata --test gain_map_duplicate_contract -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,hdr-gainmap --test it hash_lock -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,hdr-gainmap --test it strategy_libjxl_byte_lock -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,hdr-gainmap --test it divergence_table_drift -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert,hdr-gainmap --test gain_map_color_contract -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features hdr-gainmap --doc
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,hdr-gainmap --lib --tests -- -D warnings
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,hdr-gainmap --lib -- -D warnings
+    cargo clippy --locked --manifest-path {{quote(manifest)}} --workspace --all-targets -- -D warnings
+    cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+
+
+qualify-selected-gain-map-color manifest selection base output:
+    python3 scripts/qualify_selected_modular_source.py {{quote(manifest)}} {{quote(selection)}} {{quote(base)}} {{quote(output)}} --gain-map-color
+
+
+gain-map-transfer-native source build binary:
+    python3 scripts/frame_header_oracle.py --component gain_map_transfer {{quote(source)}} {{quote(build)}} {{quote(binary)}}
+
+
 tc17-relative-physical-evidence manifest output coverage_env:
     bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" strict_tc17 --test-target tc17_normalization_contract --features __expert,parallel --source jxl-encoder/src/headers/color_encoding.rs --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/ingest.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+
+gain-map-hlg-before-evidence manifest output coverage_env:
+    mkdir {{quote(output)}}
+    bash -c 'set +e; just gain-map-color-component-evidence "$1" "$2/components" "$3"; component_rc=$?; just gain-map-owner-gamut-evidence "$1" "$2/public" "$3" gain_map_hlg_color; public_rc=$?; test "$component_rc" -eq 101 && test "$public_rc" -eq 101' _ {{quote(manifest)}} {{quote(output)}} {{quote(coverage_env)}}
 
 
 tc17-contract-isolated-check manifest:
@@ -3135,13 +3553,15 @@ qualify-tc17-contract manifest selection base output:
     python3 scripts/qualify_selected_modular_source.py {{quote(manifest)}} {{quote(selection)}} {{quote(base)}} {{quote(output)}} --tc17-contract
 
 
+gain-map-color-transfer-mutations manifest output coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/test_gain_map_color_mutations.py "$2" "$3" --case hlg-channel-ootf --case float-srgb-base --case float-pq-base --case float-hlg-base' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+
 delta-palette-float-evidence manifest output coverage_env selection:
     bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" "$4" --include-ignored --features __expert,parallel --source jxl-encoder/src/modular/palette.rs --source jxl-encoder/src/modular/frame.rs --source jxl-encoder/src/modular/float_pack.rs --source jxl-encoder/src/modular/delta_palette_contract.rs --source jxl-encoder/src/modular/delta_palette_float_contract.rs --source jxl-encoder/tests/support/pfm.rs --source jxl-encoder/tests/support/decoded_frames.rs --source scripts/libjxl_original_profile.cc' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}} {{quote(selection)}}
 
-
 delta-palette-float-minimal-evidence manifest output coverage_env:
     bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" all_offered_delta_palette_float --include-ignored --no-default-features --features std,convenience,__expert --source jxl-encoder/src/modular/palette.rs --source jxl-encoder/src/modular/frame.rs --source jxl-encoder/src/modular/float_pack.rs --source jxl-encoder/src/modular/delta_palette_contract.rs --source jxl-encoder/src/modular/delta_palette_float_contract.rs --source jxl-encoder/tests/support/pfm.rs --source jxl-encoder/tests/support/decoded_frames.rs --source scripts/libjxl_original_profile.cc' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
-
 
 delta-palette-float-isolated-check manifest:
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,parallel-tree-learning --lib
@@ -3150,14 +3570,11 @@ delta-palette-float-isolated-check manifest:
     cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert --lib -- -D warnings
     cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
 
-
 qualify-delta-palette-float manifest selection base output:
     python3 scripts/qualify_selected_modular_source.py {{quote(manifest)}} {{quote(selection)}} {{quote(base)}} {{quote(output)}} --delta-palette-float
 
-
 delta-palette-float-regions llvm output integer default minimal depth associated associated_minimal:
     python3 scripts/color_admission_coverage.py {{quote(llvm)}} {{quote(output)}} {{quote(integer)}} {{quote(default)}} {{quote(minimal)}} {{quote(depth)}} {{quote(associated)}} {{quote(associated_minimal)}} --delta-palette
-
 
 delta-palette-float-final-check manifest selection base output coverage_env normal_target:
     mkdir {{quote(output)}}
@@ -3165,10 +3582,8 @@ delta-palette-float-final-check manifest selection base output coverage_env norm
     just delta-palette-float-minimal-evidence {{quote(manifest)}} {{quote(output + "/minimal")}} {{quote(coverage_env)}}
     CARGO_TARGET_DIR={{quote(normal_target)}} just qualify-delta-palette-float {{quote(manifest)}} {{quote(selection)}} {{quote(base)}} {{quote(output + "/isolated")}}
 
-
 delta-palette-float-associated-minimal-evidence manifest output coverage_env:
     bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" associated_alpha --include-ignored --no-default-features --features std,convenience,__expert --source jxl-encoder/src/modular/mod.rs --source jxl-encoder/src/modular/reference_property_contract.rs --source jxl-encoder/src/modular/delta_palette_float_contract.rs --source jxl-encoder/tests/support/pfm.rs --source jxl-encoder/tests/support/decoded_frames.rs --source scripts/libjxl_original_profile.cc --source jxl-encoder/src/modular/delta_palette_associated_contract.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
-
 
 delta-palette-float-association-final-check manifest selection base output coverage_env normal_target:
     mkdir {{quote(output)}}
@@ -3177,18 +3592,27 @@ delta-palette-float-association-final-check manifest selection base output cover
     just reference-property-extra-evidence {{quote(manifest)}} {{quote(output + "/shared-reader-e4")}} {{quote(coverage_env)}}
     CARGO_TARGET_DIR={{quote(normal_target)}} just qualify-delta-palette-float {{quote(manifest)}} {{quote(selection)}} {{quote(base)}} {{quote(output + "/isolated")}}
 
-
 delta-palette-float-support-binding manifest base output native_identity default minimal depth associated associated_minimal reader:
     python3 scripts/bind_committed_support.py {{quote(manifest)}} {{quote(base)}} {{quote(output)}} {{quote(default)}} {{quote(minimal)}} {{quote(depth)}} {{quote(associated)}} {{quote(associated_minimal)}} {{quote(reader)}} --source jxl-encoder/tests/support/pfm.rs --source jxl-encoder/tests/support/decoded_frames.rs --source scripts/libjxl_original_profile.cc --native-identity {{quote(native_identity)}}
-
 
 progressive-cmyk-evidence manifest output coverage_env selection:
     bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" "$4" --test-target progressive_cmyk_contract --features __expert,parallel --source jxl-encoder/tests/progressive_cmyk_contract/prepared.rs --source jxl-encoder/tests/progressive_cmyk_contract/separated.rs --source jxl-encoder/src/api/cmyk.rs --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/vardct/bitstream.rs --source jxl-encoder/src/vardct/ac_group.rs --source jxl-encoder/tests/fixtures/ps_cmyk.hex --source jxl-encoder/tests/fixtures/cmyk_lcms_swatches.hex --source scripts/cmyk_raw_frame_oracle.cc' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}} {{quote(selection)}}
 
-
 progressive-cmyk-flat-prefix-fault manifest output coverage_env:
     bash -c 'set -e; source "$1"; python3 scripts/test_alpha_squeeze_mutation.py "$2" "$3" --case cmyk-ac-flat-prefix' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
 
+# Current committed production plus checksum-selected auxiliary-level transport.
+frame-level-current-source-check manifest artifacts coverage_env:
+    mkdir {{quote(artifacts)}}
+    just frame-level-small-evidence {{quote(manifest)}} {{quote(artifacts + "/small")}} {{quote(coverage_env)}}
+    just frame-level-core-library-check {{quote(manifest)}} {{quote(artifacts + "/unit")}} {{quote(coverage_env)}}
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --lib -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --test it -- hash_lock strategy_libjxl_byte_lock divergence_table_drift --test-threads=1
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,corpus-tests --lib --test frame_level_auxiliary_contract -- -D warnings
+    cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+    just frame-level-cli-runtime-build {{quote(manifest)}} {{quote(artifacts + "/cli-built")}} {{quote(coverage_env)}}
+    just frame-level-selective-coverage {{quote(manifest)}} {{quote(artifacts + "/exclusion")}} {{quote(artifacts + "/selective-built")}} {{quote(coverage_env)}}
 
 progressive-cmyk-current-source-check manifest artifacts coverage_env:
     mkdir {{quote(artifacts)}}
@@ -3197,7 +3621,6 @@ progressive-cmyk-current-source-check manifest artifacts coverage_env:
     cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel --lib --test progressive_cmyk_contract -- -D warnings
     cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert,__internals,__pre_quantized --lib --test progressive_cmyk_contract -- -D warnings
     cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
-
 
 progressive-cmyk-final-check manifest artifacts coverage_env:
     mkdir {{quote(artifacts)}}
@@ -3208,12 +3631,132 @@ progressive-cmyk-final-check manifest artifacts coverage_env:
     cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert,__internals,__pre_quantized --lib --test progressive_cmyk_contract -- -D warnings
     cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
 
-
+# Retains the separately measured baseline diagnostic gap; failures propagate.
 progressive-cmyk-std-feature-disabled-lint manifest:
     cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features convenience,__expert,__internals,__pre_quantized --lib --test progressive_cmyk_contract -- -D warnings
 
+frame-level-cli-runtime-build manifest output coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" cli_progressive_rate_control --package jxl-encoder-cli --test-target progressive_ac --features rate-control --build-only --driver-only-coverage --source Cargo.lock --source .github/sibling-revisions.tsv --source jxl-encoder-cli/Cargo.toml --source jxl-encoder-cli/src/main.rs --source jxl-encoder/src/frame_level.rs --source jxl-encoder/src/api.rs --source jxl-encoder/src/vardct/encoder.rs --source jxl-encoder/src/vardct/bitstream.rs --source jxl-encoder/src/vardct/rate_control.rs --source jxl-encoder/src/vardct/precomputed.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
 
-# Preserve configured limits through still and animation request adapters.
+frame-level-cli-before-check manifest artifacts coverage_env:
+    mkdir {{quote(artifacts)}}
+    just frame-level-cli-runtime-build {{quote(manifest)}} {{quote(artifacts + "/cli-built")}} {{quote(coverage_env)}}
+    bash -c 'set -e; source "$1"; python3 scripts/run_cli_child_evidence.py "$3/cli-built" -- "$2" "$3/before" cli_small_ --test-target frame_level_auxiliary_contract --features __expert,parallel,corpus-tests --driver-only-coverage --source Cargo.lock --source .github/sibling-revisions.tsv --source jxl-encoder/tests/frame_level_auxiliary_contract/cli_small.rs --source jxl-encoder/tests/frame_level_auxiliary_contract/cli.rs --source jxl-encoder/tests/frame_level_auxiliary_contract/small.rs --source jxl-encoder/tests/frame_level_auxiliary_contract/lossless.rs --source jxl-encoder/tests/frame_level_auxiliary_contract/lf.rs --source scripts/libjxl_original_profile.cc --source jxl-encoder/src/api.rs --source jxl-encoder-cli/src/main.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+
+# Private request adapter only; the public setter remains unexposed.
+request-rate-control-prototype-check manifest artifacts coverage_env:
+    mkdir {{quote(artifacts)}}
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3/runtime" request_rate_control_ --also-filter rate_control_selected_level_ --features __expert,parallel,rate-control,corpus-tests --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/rate_control_contract.rs --source jxl-encoder/src/vardct/tile_distmap.rs --source jxl-encoder/src/vardct/encoder_frame_level_tests.rs --source jxl-encoder/src/vardct/encoder.rs --source jxl-encoder/src/vardct/rate_control.rs --source jxl-encoder/src/vardct/precomputed.rs --source jxl-encoder/src/vardct/bitstream.rs --source jxl-encoder/tests/support/decoded_frames.rs --source jxl-encoder/tests/support/pfm.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,rate-control,corpus-tests --lib -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+
+# Reuse the checksum-bound pure-main CLI for new before caller controls.
+frame-level-cli-followup-before-check manifest artifacts coverage_env cli_archive:
+    mkdir {{quote(artifacts)}}
+    bash -c 'set -e; source "$1"; python3 scripts/run_cli_child_evidence.py "$4" -- "$2" "$3/before" cli_small_rate_control_ --test-target frame_level_auxiliary_contract --features __expert,parallel,corpus-tests --driver-only-coverage --source jxl-encoder/tests/frame_level_auxiliary_contract/cli_small.rs --source jxl-encoder/tests/frame_level_auxiliary_contract/cli.rs --source jxl-encoder/tests/frame_level_auxiliary_contract/small.rs --source jxl-encoder/tests/frame_level_auxiliary_contract/lossless.rs --source jxl-encoder/tests/frame_level_auxiliary_contract/lf.rs --source scripts/libjxl_original_profile.cc --source jxl-encoder/src/api.rs --source jxl-encoder-cli/src/main.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}} {{quote(cli_archive)}}
+
+lf-caller-before-check manifest artifacts coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" animation_lf_requires_ --also-filter prepared_lf_emits_ --also-filter prequantized_attached_patch_ --also-filter prequantized_dc_width_ --test-target lf_caller_contract --features __expert,__internals,__pre_quantized,parallel,corpus-tests --driver-only-coverage --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/vardct/encoder.rs --source jxl-encoder/src/vardct/bitstream.rs --source jxl-encoder/src/vardct/lf_frame.rs --source jxl-encoder/tests/support/decoded_frames.rs --source jxl-encoder/tests/support/pfm.rs --source jxl-encoder/tests/support/encoder_policies.rs --source jxl-encoder/tests/it/with_patches_data.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+
+rate-control-metric-before-evidence manifest artifacts coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" request_rate_control_metric_ --also-filter request_rate_control_planar_metric_ --features __expert,parallel,rate-control --source jxl-encoder/src/vardct/tile_distmap.rs --source jxl-encoder/src/vardct/rate_control.rs --source jxl-encoder/src/budget.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+
+request-rate-control-before-queue manifest artifacts coverage_env:
+    python3 scripts/run_rate_control_before_queue.py {{quote(manifest)}} {{quote(artifacts)}} {{quote(coverage_env)}}
+
+# Updated owner-approved alpha/light source: execute before broad qualification.
+gain-map-approved-contract-check manifest artifacts coverage_env:
+    mkdir {{quote(artifacts)}}
+    just gain-map-color-component-evidence {{quote(manifest)}} {{quote(artifacts + "/components")}} {{quote(coverage_env)}}
+    just gain-map-all-color-evidence {{quote(manifest)}} {{quote(artifacts + "/public")}} {{quote(coverage_env)}}
+    just gain-map-color-isolated-check {{quote(manifest)}}
+    just gain-map-color-mutations {{quote(manifest)}} {{quote(artifacts + "/mutations")}} {{quote(coverage_env)}}
+
+# Moving the existing pure intensity resolver must preserve default bytes.
+rate-control-feature-fix-check manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,rate-control,__expert --test rate_control_feature_contract -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,rate-control --test rate_control_feature_contract -- --test-threads=1
+    cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,rate-control,__expert --lib
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,rate-control,__expert --lib -- -D warnings
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,rate-control --lib w44_recon_a10_intensity_target -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,rate-control --test it rate_control:: -- --test-threads=1
+    just alpha-squeeze-broad-baseline {{quote(manifest)}}
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+    cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,rate-control --example bench_buffering_rss_rate_control
+    cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__pre_quantized,parallel,rate-control --test it
+
+# Isolate animation before behavior from the already measured prepared callers.
+lf-caller-animation-before-check manifest artifacts coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" animation_lf_requires_ --test-target lf_caller_contract --features __expert,__internals,__pre_quantized,parallel,corpus-tests --driver-only-coverage --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/vardct/encoder.rs --source jxl-encoder/src/vardct/bitstream.rs --source jxl-encoder/src/vardct/lf_frame.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+
+prepared-payload-fix-check manifest artifacts coverage_env:
+    mkdir {{quote(artifacts)}}
+    python3 scripts/coverage_exclude_patch_search.py {{quote(manifest)}} {{quote(artifacts + "/exclusion")}}
+    bash -c 'set -e; source "$1"; export RUSTC_BOOTSTRAP=1; python3 scripts/run_selected_test_evidence.py "$2" "$3/runtime" prepared_lf_emits_ --also-filter prequantized_attached_patch_ --also-filter prequantized_dc_width_ --test-target lf_caller_contract --features __expert,__internals,__pre_quantized,parallel,corpus-tests --coverage-exclusions "$3/exclusion/manifest.json" --source jxl-encoder/src/api.rs --source jxl-encoder/src/vardct/encoder.rs --source jxl-encoder/src/vardct/bitstream.rs --source jxl-encoder/src/vardct/lf_frame.rs --source jxl-encoder/tests/it/with_patches_data.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    bash -c 'set -e; source "$1"; export RUSTC_BOOTSTRAP=1; python3 scripts/test_prepared_payload_mutations.py "$2" "$3/mutations" --coverage-exclusions "$3/exclusion/manifest.json"' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    python3 scripts/coverage_exclude_patch_search.py {{quote(manifest)}} {{quote(artifacts + "/exclusion")}} --restore
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel,corpus-tests --lib --test lf_caller_contract -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+
+rate-control-metric-fix-check manifest artifacts coverage_env:
+    just rate-control-metric-before-evidence {{quote(manifest)}} {{quote(artifacts)}} {{quote(coverage_env)}}
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,rate-control --lib tile_distmap -- --test-threads=1
+    bash -c 'set -e; source "$1"; python3 scripts/test_prepared_payload_mutations.py "$2" "$3/mutations" --metric' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,rate-control --lib -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+
+animation-lf-refusal-check manifest artifacts coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" animation_lf_requires_ --test-target lf_caller_contract --features __expert,__internals,__pre_quantized,parallel,corpus-tests --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/vardct/encoder.rs --source jxl-encoder/src/vardct/bitstream.rs --source jxl-encoder/src/vardct/lf_frame.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,__expert,__internals,__pre_quantized,corpus-tests --test lf_caller_contract animation_lf_requires_ -- --test-threads=1
+    bash -c 'set -e; source "$1"; python3 scripts/test_prepared_payload_mutations.py "$2" "$3/mutations" --animation' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel,corpus-tests --lib --test lf_caller_contract -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+
+rate-control-tile-lifetime-before-check manifest artifacts coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" request_rate_control_tile_map_ --also-filter vardct::tile_distmap::tests:: --features __expert,parallel,rate-control --source jxl-encoder/src/vardct/tile_distmap.rs --source jxl-encoder/src/vardct/rate_control.rs --source jxl-encoder/src/budget.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+
+# Production v6 runtime/library/locks already passed. Continue from the export
+# reconciliation failure without rerunning unchanged successful tests.
+gain-map-final-continuation-check manifest artifacts coverage_env:
+    mkdir {{quote(artifacts)}}
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,hdr-gainmap --lib --tests -- -D warnings
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,hdr-gainmap --lib -- -D warnings
+    cargo clippy --locked --manifest-path {{quote(manifest)}} --workspace --all-targets -- -D warnings
+    cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+    just gain-map-color-mutations {{quote(manifest)}} {{quote(artifacts + "/mutations")}} {{quote(coverage_env)}}
+
+gain-map-final-sensitivity-check manifest artifacts coverage_env:
+    mkdir {{quote(artifacts)}}
+    just gain-map-color-component-evidence {{quote(manifest)}} {{quote(artifacts + "/components")}} {{quote(coverage_env)}}
+    just gain-map-all-color-evidence {{quote(manifest)}} {{quote(artifacts + "/public")}} {{quote(coverage_env)}}
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert,hdr-gainmap --test gain_map_color_contract -- --test-threads=1
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,hdr-gainmap --lib --test gain_map_color_contract -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+    just gain-map-color-mutations {{quote(manifest)}} {{quote(artifacts + "/mutations")}} {{quote(coverage_env)}}
+
+metric-map-final-check manifest artifacts coverage_env:
+    mkdir {{quote(artifacts)}}
+    just rate-control-metric-before-evidence {{quote(manifest)}} {{quote(artifacts + "/map")}} {{quote(coverage_env)}}
+    just rate-control-tile-lifetime-before-check {{quote(manifest)}} {{quote(artifacts + "/tiles")}} {{quote(coverage_env)}}
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,rate-control --lib tile_distmap -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,rate-control --test rate_control_feature_contract -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,__expert,rate-control --test rate_control_feature_contract -- --test-threads=1
+    bash -c 'set -e; source "$1"; python3 scripts/test_prepared_payload_mutations.py "$2" "$3/mutations" --metric' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,rate-control --lib --test rate_control_feature_contract -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+
+# The feature runtime/minimal controls passed before a capped compiler job was
+# killed. Use the existing coverage environment directly, avoiding nested
+# cargo-llvm-cov instrumentation of the entire dependency graph.
+rate-control-feature-continuation-check manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --lib -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --test it -- hash_lock strategy_libjxl_byte_lock divergence_table_drift --test-threads=1
+    cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,rate-control --example bench_buffering_rss_rate_control
+    cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__pre_quantized,parallel,rate-control --test it
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,rate-control --lib --test rate_control_feature_contract -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+
 lossless-config-limits-before-check manifest artifacts coverage_env:
     bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" inherited_lossless_limits_reach_ --also-filter animation_explicit_dimension_limits_reach_ --test-target lossless_config_limits_contract --features __expert,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/limits.rs --source jxl-encoder/src/api/animate.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
 
@@ -3227,6 +3770,8 @@ lossless-config-limits-after-check manifest artifacts coverage_env:
     cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
     bash -c 'set -e; source "$1"; python3 scripts/test_prepared_payload_mutations.py "$2" "$3/mutations" --lossless-limits' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
 
+# Supplemental admission controls keep a new loop-limit before separate from
+# the already qualified inherited/dimension fixes.
 request-limits-loop-before-check manifest artifacts coverage_env:
     bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" animation_explicit_loop_limits_ --test-target lossless_config_limits_contract --features __expert,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/limits.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
 
@@ -3236,8 +3781,24 @@ request-limits-supplement-check manifest artifacts coverage_env:
     cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --lib --test lossless_config_limits_contract -- -D warnings
     cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
 
+prepared-patch-alpha-supplement-check manifest artifacts coverage_env:
+    mkdir {{quote(artifacts)}}
+    python3 scripts/coverage_exclude_patch_search.py {{quote(manifest)}} {{quote(artifacts + "/exclusion")}}
+    bash -c 'set -e; source "$1"; export RUSTC_BOOTSTRAP=1; python3 scripts/run_selected_test_evidence.py "$2" "$3/runtime" prequantized_attached_patch_dictionary_preserves_alpha --test-target lf_caller_contract --features __expert,__internals,__pre_quantized,parallel,corpus-tests --coverage-exclusions "$3/exclusion/manifest.json" --source jxl-encoder/src/api.rs --source jxl-encoder/src/vardct/encoder.rs --source jxl-encoder/src/vardct/bitstream.rs --source jxl-encoder/src/vardct/lf_frame.rs --source jxl-encoder/tests/it/with_patches_data.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    bash -c 'set -e; source "$1"; export RUSTC_BOOTSTRAP=1; python3 scripts/test_prepared_payload_mutations.py "$2" "$3/mutations" --patch-alpha --coverage-exclusions "$3/exclusion/manifest.json"' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    python3 scripts/coverage_exclude_patch_search.py {{quote(manifest)}} {{quote(artifacts + "/exclusion")}} --restore
+
+raw-lf-upsampling-before-check manifest artifacts coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" raw_lf_upsampling_requires_ --test-target lf_caller_contract --features __expert,__internals,__pre_quantized,parallel,corpus-tests --source jxl-encoder/src/api.rs --source jxl-encoder/src/vardct/encoder.rs --source jxl-encoder/src/vardct/bitstream.rs --source jxl-encoder/src/vardct/lf_frame.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+
 request-limits-existing-animation-check manifest:
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,parallel --test it animation:: -- --test-threads=1
+
+prepared-metric-broad-check manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel,rate-control --lib -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel,rate-control --test it -- hash_lock strategy_libjxl_byte_lock divergence_table_drift animation:: --test-threads=1
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel,rate-control --lib --test lf_caller_contract -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
 
 request-limits-display-extents-check manifest artifacts coverage_env:
     bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" animation_invalid_display_extents_ --test-target lossless_config_limits_contract --features __expert,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/limits.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
@@ -3245,30 +3806,218 @@ request-limits-display-extents-check manifest artifacts coverage_env:
     cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --lib --test lossless_config_limits_contract -- -D warnings
     cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
 
+raw-lf-upsampling-after-check manifest artifacts coverage_env:
+    mkdir {{quote(artifacts)}}
+    just raw-lf-upsampling-before-check {{quote(manifest)}} {{quote(artifacts + "/runtime")}} {{quote(coverage_env)}}
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3/prequantized-factors" prepared_lf_emits_ --test-target lf_caller_contract --features __expert,__internals,__pre_quantized,parallel,corpus-tests --source jxl-encoder/src/api.rs --source jxl-encoder/src/vardct/encoder.rs --source jxl-encoder/src/vardct/bitstream.rs --source jxl-encoder/src/vardct/lf_frame.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,__expert,__internals,__pre_quantized,corpus-tests --test lf_caller_contract -- raw_lf_upsampling_requires_ prepared_lf_emits_ --test-threads=1
+    cargo run --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features corpus-tests --example prepared_frame_fixture_setup -- {{quote(artifacts + "/fixture-root.txt")}}
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features corpus-tests --example prepared_frame_fixture_setup -- -D warnings
+    bash -c 'set -e; source "$1"; python3 scripts/test_prepared_payload_mutations.py "$2" "$3/mutations" --lf-upsampling' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel,corpus-tests --lib --test lf_caller_contract -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel --lib -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel --test it -- hash_lock strategy_libjxl_byte_lock divergence_table_drift --test-threads=1
 
-# Pinned rate-control metric accounting and exact-map controls.
-rate-control-metric-before-evidence manifest artifacts coverage_env:
-    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" request_rate_control_metric_ --also-filter request_rate_control_planar_metric_ --features __expert,parallel,rate-control --source jxl-encoder/src/vardct/tile_distmap.rs --source jxl-encoder/src/vardct/rate_control.rs --source jxl-encoder/src/budget.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
 
-rate-control-metric-fix-check manifest artifacts coverage_env:
-    just rate-control-metric-before-evidence {{quote(manifest)}} {{quote(artifacts)}} {{quote(coverage_env)}}
-    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,rate-control --lib tile_distmap -- --test-threads=1
-    bash -c 'set -e; source "$1"; python3 scripts/test_prepared_payload_mutations.py "$2" "$3/mutations" --metric' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+# Runtime/default/minimal raw LF controls passed before fixture-helper compilation.
+raw-lf-upsampling-continuation-check manifest artifacts coverage_env:
+    mkdir {{quote(artifacts)}}
+    cargo run --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features corpus-tests --example prepared_frame_fixture_setup -- {{quote(artifacts + "/fixture-root.txt")}}
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features corpus-tests --example prepared_frame_fixture_setup -- -D warnings
+    bash -c 'set -e; source "$1"; python3 scripts/test_prepared_payload_mutations.py "$2" "$3/mutations" --lf-upsampling' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel,corpus-tests --lib --test lf_caller_contract -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel --lib -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel --test it -- hash_lock strategy_libjxl_byte_lock divergence_table_drift --test-threads=1
+
+gain-map-current-final-check manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,hdr-gainmap --lib -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,hdr-gainmap --doc
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,hdr-gainmap --lib --test gain_map_color_contract -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+
+gain-map-import-format-check manifest:
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,hdr-gainmap --lib --test gain_map_color_contract -- -D warnings
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,hdr-gainmap --lib -- -D warnings
+
+prepared-legacy-lf-check manifest artifacts coverage_env:
+    mkdir {{quote(artifacts)}}
+    python3 scripts/coverage_exclude_patch_search.py {{quote(manifest)}} {{quote(artifacts + "/exclusion")}}
+    bash -c 'set -e; source "$1"; export RUSTC_BOOTSTRAP=1; python3 scripts/run_selected_test_evidence.py "$2" "$3/runtime" prepared_legacy_patch_detection_with_lf_ --test-target lf_caller_contract --features __expert,__internals,__pre_quantized,parallel,corpus-tests --coverage-exclusions "$3/exclusion/manifest.json" --source jxl-encoder/src/api.rs --source jxl-encoder/src/vardct/encoder.rs --source jxl-encoder/src/vardct/bitstream.rs --source jxl-encoder/tests/it/with_patches_data.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    bash -c 'set -e; source "$1"; export RUSTC_BOOTSTRAP=1; python3 scripts/test_prepared_payload_mutations.py "$2" "$3/mutations" --legacy-lf --coverage-exclusions "$3/exclusion/manifest.json"' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    python3 scripts/coverage_exclude_patch_search.py {{quote(manifest)}} {{quote(artifacts + "/exclusion")}} --restore
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel,corpus-tests --lib --test lf_caller_contract -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+
+request-rate-control-current-private-check manifest artifacts coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" request_rate_control_ --features __expert,parallel,rate-control,corpus-tests --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/rate_control_contract.rs --source jxl-encoder/src/api/ingest.rs --source jxl-encoder/src/api/cms.rs --source jxl-encoder/src/vardct/encoder.rs --source jxl-encoder/src/vardct/rate_control.rs --source jxl-encoder/src/vardct/tile_distmap.rs --source jxl-encoder/src/vardct/precomputed.rs --source jxl-encoder/src/vardct/bitstream.rs --source jxl-encoder/src/budget.rs --source scripts/cmyk_raw_frame_oracle.cc --source scripts/libjxl_original_profile.cc' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert,rate-control --lib api::rate_control_contract -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,rate-control,jpeg-reencoding,chroma-subsampling,__external_metric --lib -- request_rate_control_refuses_subsampling request_rate_control_refuses_an_external --test-threads=1
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,rate-control,jpeg-reencoding,chroma-subsampling,__external_metric --lib -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+
+request-rate-control-canonical-check manifest artifacts coverage_env:
+    mkdir {{quote(artifacts)}}
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3/runtime" request_rate_control_survives_canonicalized --features __expert,parallel,rate-control,corpus-tests --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/rate_control_contract.rs --source jxl-encoder/src/vardct/encoder.rs --source jxl-encoder/src/vardct/rate_control.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    bash -c 'set -e; source "$1"; python3 scripts/test_prepared_payload_mutations.py "$2" "$3/mutations" --request-rate' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
     cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,rate-control --lib -- -D warnings
     cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
 
-rate-control-tile-lifetime-before-check manifest artifacts coverage_env:
-    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" request_rate_control_tile_map_ --also-filter vardct::tile_distmap::tests:: --features __expert,parallel,rate-control --source jxl-encoder/src/vardct/tile_distmap.rs --source jxl-encoder/src/vardct/rate_control.rs --source jxl-encoder/src/budget.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+request-rate-control-typed-attribution-check manifest artifacts coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" request_rate_control_keeps_swizzled_float --features __expert,parallel,rate-control,corpus-tests --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/rate_control_contract.rs --source jxl-encoder/src/api/ingest.rs --source jxl-encoder/src/vardct/encoder.rs --source scripts/libjxl_original_profile.cc' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
 
-metric-map-final-check manifest artifacts coverage_env:
+prepared-current-landing-check manifest artifacts:
     mkdir {{quote(artifacts)}}
-    just rate-control-metric-before-evidence {{quote(manifest)}} {{quote(artifacts + "/map")}} {{quote(coverage_env)}}
-    just rate-control-tile-lifetime-before-check {{quote(manifest)}} {{quote(artifacts + "/tiles")}} {{quote(coverage_env)}}
-    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,rate-control --lib tile_distmap -- --test-threads=1
+    cargo run --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features corpus-tests --example prepared_frame_fixture_setup -- {{quote(artifacts + "/fixture-root.txt")}}
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,__expert,__internals,__pre_quantized,corpus-tests --test lf_caller_contract -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel,hdr-gainmap --lib -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel,hdr-gainmap --test it -- hash_lock strategy_libjxl_byte_lock divergence_table_drift --test-threads=1
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel,corpus-tests,hdr-gainmap --lib --test lf_caller_contract -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+
+request-rate-control-metadata-check manifest artifacts coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" request_rate_control_keeps_icc_boxes --features __expert,parallel,rate-control,corpus-tests --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/rate_control_contract.rs --source jxl-encoder/src/vardct/encoder.rs --source scripts/libjxl_original_profile.cc' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+
+# HLG original-output fidelity is a separate retained failing decoder control.
+request-rate-control-independent-check manifest artifacts coverage_env:
+    mkdir {{quote(artifacts)}}
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3/callers" request_rate_control_preserves_layout_alpha_policy_and_rows --also-filter request_rate_control_retains_gamma_and_refuses_profile_mismatch --also-filter request_rate_control_validates_limits_and_unsupported_units --also-filter request_rate_control_refuses_subsampling_that_bypasses_its_controller --also-filter request_rate_control_keeps_icc_boxes_orientation_and_requested_depth --also-filter request_rate_control_rejects_invalid_bounds_and_incompatible_requests --also-filter request_rate_control_observes_late_stop_and_preserves_the_destination --also-filter request_rate_control_budget_changes_delivered_pixels --also-filter request_rate_control_refuses_an_external_scorer_before_callback_work --also-filter request_rate_control_keeps_cmyk_profile_physical_color_and_exact_extras --also-filter request_rate_control_survives_canonicalized_strided_input --also-filter rate_control_color_domain_matches_native --features __expert,parallel,rate-control,jpeg-reencoding,chroma-subsampling,__external_metric,corpus-tests --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/rate_control_contract.rs --source jxl-encoder/src/api/ingest.rs --source jxl-encoder/src/vardct/encoder.rs --source jxl-encoder/src/vardct/rate_control.rs --source scripts/libjxl_original_profile.cc' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert,rate-control --lib -- request_rate_control_preserves_layout_alpha_policy_and_rows request_rate_control_retains_gamma_and_refuses_profile_mismatch request_rate_control_validates_limits_and_unsupported_units request_rate_control_keeps_icc_boxes_orientation_and_requested_depth request_rate_control_rejects_invalid_bounds_and_incompatible_requests request_rate_control_observes_late_stop_and_preserves_the_destination request_rate_control_budget_changes_delivered_pixels request_rate_control_keeps_cmyk_profile_physical_color_and_exact_extras request_rate_control_survives_canonicalized_strided_input --test-threads=1
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3/unset-locks" hash_lock --also-filter strategy_libjxl_byte_lock --also-filter divergence_table_drift --test-target it --features __expert,__internals,parallel,rate-control --source jxl-encoder/src/api.rs --source jxl-encoder/src/vardct/encoder.rs --source jxl-encoder/src/vardct/rate_control.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,rate-control,jpeg-reencoding,chroma-subsampling,__external_metric --lib -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+
+rate-control-direction-before-check manifest artifacts coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" rate_control_adjustment_improves_the_observed_native_tile_metric --features __expert,parallel,rate-control --source jxl-encoder/src/vardct/rate_control.rs --source jxl-encoder/src/vardct/rate_control_direction_tests.rs --source jxl-encoder/src/vardct/encoder.rs --source jxl-encoder/src/vardct/tile_distmap.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+
+request-rate-control-unset-continuation-check manifest artifacts coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" hash_lock --also-filter strategy_libjxl_byte_lock --also-filter divergence_table_drift --test-target it --features __expert,__internals,parallel,rate-control --source jxl-encoder/src/api.rs --source jxl-encoder/src/vardct/encoder.rs --source jxl-encoder/src/vardct/rate_control.rs --source jxl-encoder/tests/strategy_libjxl_byte_lock.golden --source docs/LIBJXL_DIVERGENCES.md --source jxl-encoder/src/gate_registry.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,rate-control,jpeg-reencoding,chroma-subsampling,__external_metric --lib -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+
+frame-level-current-continuation-check manifest artifacts coverage_env:
+    mkdir {{quote(artifacts)}}
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,__expert --test frame_level_auxiliary_contract small_frames_ -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --lib -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --test it -- hash_lock strategy_libjxl_byte_lock divergence_table_drift --test-threads=1
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,corpus-tests --lib --test frame_level_auxiliary_contract -- -D warnings
+    cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+    just frame-level-cli-runtime-build {{quote(manifest)}} {{quote(artifacts + "/cli-built")}} {{quote(coverage_env)}}
+    just frame-level-selective-coverage {{quote(manifest)}} {{quote(artifacts + "/exclusion")}} {{quote(artifacts + "/selective-built")}} {{quote(coverage_env)}}
+
+rate-control-direction-after-check manifest artifacts coverage_env:
+    mkdir {{quote(artifacts)}}
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3/runtime" rate_control_adjustment_improves_the_observed_native_tile_metric --also-filter above_target_quantizer_updates_never_reverse_at_integer_rounding --also-filter above_target_quantizer_scales_finer_by_the_error_ratio --features __expert,parallel,rate-control --source jxl-encoder/src/vardct/rate_control.rs --source jxl-encoder/src/vardct/rate_control_direction_tests.rs --source jxl-encoder/src/vardct/encoder.rs --source jxl-encoder/src/vardct/tile_distmap.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    bash -c 'set -e; source "$1"; python3 scripts/test_prepared_payload_mutations.py "$2" "$3/mutations" --rate-direction' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,__expert,rate-control --lib rate_control_adjustment_improves_the_observed_native_tile_metric -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,rate-control --test it rate_control:: -- --test-threads=1
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,rate-control --lib -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+
+rate-control-rounding-before-check manifest artifacts coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" above_target_quantizer_updates_never_reverse_at_integer_rounding --features __expert,parallel,rate-control --source jxl-encoder/src/vardct/rate_control.rs --source jxl-encoder/src/vardct/rate_control_direction_tests.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+
+rate-control-direction-broad-check manifest artifacts coverage_env:
+    mkdir {{quote(artifacts)}}
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,rate-control --lib -- --test-threads=1
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3/locks" hash_lock --also-filter strategy_libjxl_byte_lock --also-filter divergence_table_drift --test-target it --features __expert,__internals,parallel,rate-control --source jxl-encoder/src/vardct/rate_control.rs --source jxl-encoder/src/vardct/rate_control_direction_tests.rs --source jxl-encoder/src/vardct/encoder.rs --source jxl-encoder/tests/strategy_libjxl_byte_lock.golden --source docs/LIBJXL_DIVERGENCES.md --source jxl-encoder/src/gate_registry.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,__expert,rate-control --lib -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+
+# Current H14 carrier callers; the public request controller is qualified separately.
+frame-level-prepared-current-check manifest artifacts coverage_env:
+    mkdir {{quote(artifacts)}}
+    cargo run --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features corpus-tests --example prepared_frame_fixture_setup -- {{quote(artifacts + "/fixture-root.txt")}}
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3/runtime" prepared_lf_emits_ --also-filter prequantized_attached_patch_ --also-filter prequantized_dc_width_ --also-filter raw_lf_upsampling_requires_ --test-target lf_caller_contract --features __expert,__internals,__pre_quantized,parallel,corpus-tests --source jxl-encoder/src/api.rs --source jxl-encoder/src/vardct/encoder.rs --source jxl-encoder/src/vardct/bitstream.rs --source jxl-encoder/src/frame_level.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,__expert,__internals,__pre_quantized,corpus-tests --test lf_caller_contract -- --test-threads=1
+
+frame-level-core-test-closure-check manifest artifacts coverage_env:
+    mkdir {{quote(artifacts)}}
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3/runtime" small_frames_ --test-target frame_level_auxiliary_contract --features __expert,parallel,corpus-tests --source jxl-encoder/tests/support/frame_level_helpers.rs --source jxl-encoder/tests/frame_level_auxiliary_contract/small.rs --source jxl-encoder/tests/frame_level_auxiliary_contract/lossless.rs --source jxl-encoder/tests/frame_level_auxiliary_contract/lf.rs --source jxl-encoder/src/api.rs --source jxl-encoder/src/vardct/encoder.rs --source jxl-encoder/src/vardct/bitstream.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,__expert --test frame_level_auxiliary_contract -- --test-threads=1
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --test frame_level_auxiliary_contract -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+
+frame-level-core-format-check manifest:
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+
+# Frozen decoder revisions: actual native/primary pixels and unchanged encoding locks.
+decoder-pin-current-check manifest artifacts coverage_env:
+    mkdir {{quote(artifacts)}}
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3/runtime" rate_control_color_ --also-filter rate_control_adjustment_improves_ --features __expert,parallel,rate-control --source Cargo.lock --source .github/sibling-revisions.tsv --source jxl-encoder/Cargo.toml --source jxl-encoder-cli/Cargo.toml --source jxl-encoder/src/vardct/rate_control.rs --source jxl-encoder/src/vardct/rate_control_direction_tests.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,rate-control --test rate_control_feature_contract -- --test-threads=1
-    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,__expert,rate-control --test rate_control_feature_contract -- --test-threads=1
-    bash -c 'set -e; source "$1"; python3 scripts/test_prepared_payload_mutations.py "$2" "$3/mutations" --metric' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,rate-control,__expert --test rate_control_feature_contract -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,rate-control --test it hash_lock -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,rate-control --test it strategy_libjxl_byte_lock -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,parallel,rate-control --test it divergence_table_drift -- --test-threads=1
     cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,rate-control --lib --test rate_control_feature_contract -- -D warnings
+    cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,rate-control,__expert --lib
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+
+stage-current-decoder-pins export base decoder_revision output:
+    python3 scripts/stage_current_decoder_pins.py {{quote(export)}} {{quote(base)}} . ../zenjxl-decoder-144 {{quote(decoder_revision)}} {{quote(output)}}
+
+# Approved request API: native/primary source, metadata, precision and refusal contracts.
+request-rate-control-public-library-check manifest artifacts coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" request_rate_control_ --also-filter rate_control_selected_level_ --features __expert,__internals,__pre_quantized,parallel,rate-control,corpus-tests,jpeg-reencoding,chroma-subsampling,__external_metric --source Cargo.lock --source .github/sibling-revisions.tsv --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/rate_control_contract.rs --source jxl-encoder/src/api/ingest.rs --source jxl-encoder/src/api/cmyk.rs --source jxl-encoder/src/vardct/encoder.rs --source jxl-encoder/src/vardct/encoder_frame_level_tests.rs --source jxl-encoder/src/vardct/rate_control.rs --source jxl-encoder/src/vardct/tile_distmap.rs --source jxl-encoder/src/vardct/precomputed.rs --source jxl-encoder/src/vardct/bitstream.rs --source scripts/libjxl_original_profile.cc' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+
+# Child profiles are retained separately from the integration driver's profile.
+request-rate-control-public-cli-check manifest artifacts coverage_env:
+    bash -c 'set -e; source "$1"; export __CARGO_LLVM_COV_RUSTC_WRAPPER_CRATE_NAMES="$__CARGO_LLVM_COV_RUSTC_WRAPPER_CRATE_NAMES,cjxl_rs"; python3 scripts/run_selected_test_evidence.py "$2" "$3" cli_small_ --package jxl-encoder-cli --test-target rate_control_request --features rate-control --source Cargo.lock --source jxl-encoder-cli/Cargo.toml --source jxl-encoder-cli/src/main.rs --source jxl-encoder-cli/tests/rate_control_request.rs --source jxl-encoder/tests/frame_level_auxiliary_contract/cli_small.rs --source jxl-encoder/tests/fixtures/cli_gamma50000.hex --source jxl-encoder/src/api.rs --source jxl-encoder/src/vardct/encoder.rs --source jxl-encoder/src/vardct/rate_control.rs --source scripts/libjxl_original_profile.cc' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+
+request-rate-control-public-feature-check manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,rate-control --lib -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert,rate-control --lib request_rate_control_ -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder-cli --features rate-control --test progressive_ac cli_progressive_rate_control -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,parallel,rate-control --test it -- hash_lock strategy_libjxl_byte_lock divergence_table_drift --test-threads=1
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel,rate-control,corpus-tests,jpeg-reencoding,chroma-subsampling,__external_metric --lib -- -D warnings
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder-cli --features rate-control --test rate_control_request -- -D warnings
+    cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder -p jxl-encoder-cli --check
+
+# Compile the current request controller's large-area gate for an eligible host.
+request-rate-control-large-runtime-build manifest output coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" all_offered_request_rate_control_lf_frame_levels --package jxl-encoder --test-target frame_level_auxiliary_contract --features __expert,parallel,rate-control,corpus-tests --include-ignored --build-only --source Cargo.lock --source .github/sibling-revisions.tsv --source jxl-encoder/tests/frame_level_auxiliary_contract/lf.rs --source jxl-encoder/tests/support/encoder_policies.rs --source jxl-encoder/src/api.rs --source jxl-encoder/src/vardct/encoder.rs --source jxl-encoder/src/vardct/rate_control.rs --source jxl-encoder/src/vardct/bitstream.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+request-rate-control-public-mutations-check manifest artifacts coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/test_prepared_payload_mutations.py "$2" "$3" --request-rate' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+
+container-policy-before-check manifest artifacts coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" configured_ --also-filter pinned_v012_container_controls --test-target container_policy_contract --features __expert,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/ingest.rs --source jxl-encoder/src/container.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+
+container-policy-final-check manifest artifacts coverage_env:
+    mkdir {{quote(artifacts)}}
+    just container-policy-before-check {{quote(manifest)}} {{quote(artifacts + "/runtime")}} {{quote(coverage_env)}}
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert --test container_policy_contract -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --lib -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --test it -- hash_lock strategy_libjxl_byte_lock divergence_table_drift --test-threads=1
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --lib --test container_policy_contract -- -D warnings
+    cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+
+container-policy-regions output llvm archive:
+    python3 scripts/color_admission_coverage.py {{quote(llvm)}} {{quote(output)}} {{quote(archive)}} --container-policy
+
+container-policy-icc-final-check manifest artifacts coverage_env:
+    mkdir {{quote(artifacts)}}
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3/runtime" configured_never_keeps_icc_and_drops_only_container_metadata --test-target container_policy_contract --features __expert,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/ingest.rs --source jxl-encoder/src/api/container.rs --source jxl-encoder/src/container.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert --test container_policy_contract -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --lib -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --test it -- hash_lock strategy_libjxl_byte_lock divergence_table_drift --test-threads=1
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --lib --test container_policy_contract -- -D warnings
+    cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+
+container-policy-wrappers-lint-check manifest:
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --test container_policy_contract -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+
+container-policy-boxes-supplement-check manifest artifacts coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" configured_optional_boxes_and_animation_profile_branches --also-filter configured_policy_reaches_every_pixel_output_wrapper --test-target container_policy_contract --features __expert,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/ingest.rs --source jxl-encoder/src/api/container.rs --source jxl-encoder/src/container.rs --source jxl-encoder/tests/fixtures/ps_cmyk.hex' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --test container_policy_contract -- -D warnings
     cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
 
 # Retain individual verdicts while running independent qualifications serially.
@@ -3279,22 +4028,49 @@ serialized-qualification-queue plan output:
 stage-archived-runtime archive template output:
     python3 scripts/stage_archived_runtime.py {{quote(archive)}} {{quote(template)}} {{quote(output)}}
 
-# Archives every file before reclaiming an explicitly selected inactive Cargo target.
-archive-inactive-cargo source output:
-    python3 scripts/archive_inactive_cargo.py {{quote(source)}} {{quote(output)}} --reclaim
 
-container-policy-boxes-supplement-check manifest artifacts coverage_env:
-    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" configured_optional_boxes_and_animation_profile_branches --also-filter configured_policy_reaches_every_pixel_output_wrapper --test-target container_policy_contract --features __expert,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/ingest.rs --source jxl-encoder/src/api/container.rs --source jxl-encoder/src/container.rs --source jxl-encoder/tests/fixtures/ps_cmyk.hex' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
-    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --test container_policy_contract -- -D warnings
-    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+# Record the unmodified CLI's large-input admission and destination behavior.
+cli-large-admission runtime output:
+    python3 scripts/run_cli_large_admission.py {{quote(runtime)}} {{quote(output)}}
 
+request-rate-control-jpeg-route-check manifest artifacts coverage_env:
+    bash -c 'set -e; source "$1"; export __CARGO_LLVM_COV_RUSTC_WRAPPER_CRATE_NAMES="$__CARGO_LLVM_COV_RUSTC_WRAPPER_CRATE_NAMES,cjxl_rs"; python3 scripts/run_selected_test_evidence.py "$2" "$3" cli_small_rate_control_rejects_jpeg_domain_routes_before_writing --package jxl-encoder-cli --test-target rate_control_request --features rate-control,jpeg-reencoding --source Cargo.lock --source jxl-encoder-cli/src/main.rs --source jxl-encoder-cli/tests/rate_control_request.rs --source jxl-encoder/tests/frame_level_auxiliary_contract/cli_small.rs --source scripts/libjxl_original_profile.cc' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+
+# Existing CLI contracts, including the optional JPEG and metadata paths.
+request-rate-control-complete-cli-check manifest artifacts coverage_env:
+    mkdir {{quote(artifacts)}}
+    bash -c 'set -e; source "$1"; export __CARGO_LLVM_COV_RUSTC_WRAPPER_CRATE_NAMES="$__CARGO_LLVM_COV_RUSTC_WRAPPER_CRATE_NAMES,cjxl_rs"; python3 scripts/run_selected_test_evidence.py "$2" "$3/runtime" cli_small_ --package jxl-encoder-cli --test-target rate_control_request --features rate-control,jpeg-reencoding,brotli-metadata --source Cargo.lock --source jxl-encoder-cli/src/main.rs --source jxl-encoder-cli/tests/rate_control_request.rs --source jxl-encoder/tests/frame_level_auxiliary_contract/cli_small.rs --source scripts/libjxl_original_profile.cc' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder-cli --features rate-control,jpeg-reencoding,brotli-metadata --tests -- --test-threads=1
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder-cli --features rate-control,jpeg-reencoding,brotli-metadata --test rate_control_request -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder -p jxl-encoder-cli --check
+
+request-rate-control-lossless-refusal-check manifest artifacts coverage_env:
+    bash -c 'set -e; source "$1"; export __CARGO_LLVM_COV_RUSTC_WRAPPER_CRATE_NAMES="$__CARGO_LLVM_COV_RUSTC_WRAPPER_CRATE_NAMES,cjxl_rs"; python3 scripts/run_selected_test_evidence.py "$2" "$3" cli_small_rate_control_rejects_lossless_pixel_routes_before_writing --package jxl-encoder-cli --test-target rate_control_request --features rate-control --source Cargo.lock --source jxl-encoder-cli/src/main.rs --source jxl-encoder-cli/tests/rate_control_request.rs --source jxl-encoder/tests/frame_level_auxiliary_contract/cli_small.rs --source scripts/libjxl_original_profile.cc' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
 
 container-policy-minimal-check manifest:
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert --test container_policy_contract -- --test-threads=1
 
+# Continue the exact source after the retained CLI run stopped on ENOSPC.
+request-rate-control-cli-continuation-check manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder-cli --features rate-control,jpeg-reencoding,brotli-metadata --test rate_control_gaborish_gate --test shifted_alpha --test strategy_flag --test streaming_input_output -- --test-threads=1
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder-cli --features rate-control,jpeg-reencoding,brotli-metadata --test rate_control_request -- -D warnings
+    cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features rate-control --lib
+    cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,rate-control --lib
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder -p jxl-encoder-cli --check
+
+request-controller-patch-check manifest artifacts coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" request_controller_keeps_winning_dictionary_with_lf_and_alpha --test-target request_rate_control_patch_contract --features __expert,parallel,rate-control,corpus-tests --source jxl-encoder/src/api.rs --source jxl-encoder/src/vardct/encoder.rs --source jxl-encoder/src/vardct/rate_control.rs --source jxl-encoder/tests/request_rate_control_patch_contract.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,rate-control,corpus-tests --test request_rate_control_patch_contract -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+
 # Retain selected members without downloading a multi-gigabyte CI ZIP.
 ci-artifact-members repository artifact output pattern:
     python3 scripts/extract_ci_artifact_members.py {{quote(repository)}} {{quote(artifact)}} {{quote(output)}} --member {{quote(pattern)}}
+
+request-controller-patch-lint-check manifest:
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,rate-control,corpus-tests --test request_rate_control_patch_contract -- -D warnings
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,__expert,rate-control,corpus-tests --test request_rate_control_patch_contract -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
 
 # Caller provides CODEC_CORPUS_DIR and guarded v0.12 tools; run through run-heavy.
 request-controller-dictionary-check manifest:
@@ -3304,19 +4080,94 @@ request-controller-dictionary-check manifest:
     cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,__expert,rate-control,corpus-tests --test request_rate_control_patch_contract -- -D warnings
     cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
 
-# Compare only complete named dictionary matrices and preserve individual hashes.
+request-decoder-border-pin-check manifest artifacts:
+    mkdir -p {{quote(artifacts)}}
+    cargo metadata --locked --manifest-path {{quote(manifest)}} --format-version=1 --no-deps > {{quote(artifacts)}}/metadata.json
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel --test alpha_squeeze_matrix --test alpha_squeeze_contract --test alpha_squeeze_progressive --test squeeze_group_geometry -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel,rate-control,jpeg-reencoding,chroma-subsampling,__external_metric --lib -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,parallel,rate-control --test it -- hash_lock strategy_libjxl_byte_lock divergence_table_drift --test-threads=1
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel,rate-control,jpeg-reencoding,chroma-subsampling,__external_metric --lib -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder -p jxl-encoder-cli --check
+
+retain-test-objects qualification target output:
+    python3 scripts/retain_completed_test_objects.py {{quote(qualification)}} {{quote(target)}} {{quote(output)}}
+
+# Minimal feature replay is independent of the full-feature dictionary witness.
+request-controller-dictionary-minimal-check manifest artifacts:
+    mkdir -p {{quote(artifacts)}}
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,__expert,rate-control,corpus-tests --test request_rate_control_patch_contract -- --test-threads=1
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,__expert,rate-control,corpus-tests --test request_rate_control_patch_contract -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+
 request-dictionary-replay-identity baseline candidate output:
     python3 scripts/compare_request_dictionary_replays.py {{quote(baseline)}} {{quote(candidate)}} {{quote(output)}}
 
-# Caller provides guarded v0.12 tools and uses run-heavy for local execution.
-alpha-large-multiplier-check manifest:
-    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --test alpha_squeeze_matrix high_precision_alpha_large_quantizers -- --test-threads=1
-    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,rate-control --test alpha_large_multiplier_contract -- --test-threads=1
-    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert,rate-control --test alpha_squeeze_matrix high_precision_alpha_large_quantizers -- --test-threads=1
-    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert,rate-control --test alpha_large_multiplier_contract -- --test-threads=1
+# Continue after the retained q66 Cargo filter-argument error; do not relabel it green.
+request-decoder-border-pin-continuation-check manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,parallel,rate-control --test it -- hash_lock strategy_libjxl_byte_lock divergence_table_drift --test-threads=1
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel,rate-control,jpeg-reencoding,chroma-subsampling,__external_metric --lib -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder -p jxl-encoder-cli --check
+
+animation-alpha-before-check manifest artifacts coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" animation_alpha_distance --test-target animation_alpha_contract --features __expert,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/animate.rs --source scripts/libjxl_original_profile.cc' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+
+animation-alpha-fixed-check manifest artifacts coverage_env:
+    mkdir -p {{quote(artifacts)}}
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3/default" alpha_ --test-target animation_alpha_contract --features __expert,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/animate.rs --source scripts/libjxl_original_profile.cc' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3/minimal" alpha_ --test-target animation_alpha_contract --no-default-features --features std,convenience,__expert --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/animate.rs --source scripts/libjxl_original_profile.cc' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,parallel --test animation_contract --test it -- animation hash_lock strategy_libjxl_byte_lock divergence_table_drift --test-threads=1
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --lib --test animation_alpha_contract -- -D warnings
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert --lib --test animation_alpha_contract -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+
+alpha-large-tree-before-check manifest artifacts coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" alpha_large_multiplier --test-target animation_alpha_contract --features __expert,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/modular/encode_tree.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+
+alpha-large-tree-independent-check manifest artifacts coverage_env:
+    mkdir -p {{quote(artifacts)}}
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3/matrix" high_precision_alpha_large_quantizers --test-target alpha_squeeze_matrix --features __expert,parallel --source jxl-encoder/src/modular/encode_tree.rs --source jxl-encoder/src/vardct/bitstream.rs; python3 scripts/run_selected_test_evidence.py "$2" "$3/controller" alpha_ --test-target alpha_large_multiplier_contract --features __expert,parallel,rate-control --source jxl-encoder/src/api.rs --source jxl-encoder/src/modular/encode_tree.rs --source jxl-encoder/src/vardct/bitstream.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert,rate-control --test alpha_squeeze_matrix --test alpha_large_multiplier_contract -- high_precision_alpha_large_quantizers alpha_ --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,parallel,rate-control,jpeg-reencoding --lib -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,parallel,rate-control --test it -- hash_lock strategy_libjxl_byte_lock divergence_table_drift --test-threads=1
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,rate-control --lib --test alpha_squeeze_matrix --test alpha_large_multiplier_contract -- -D warnings
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert,rate-control --lib --test alpha_squeeze_matrix --test alpha_large_multiplier_contract -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
 
 alpha-tree-regions output llvm +archives:
     python3 scripts/color_admission_coverage.py {{quote(llvm)}} {{quote(output)}} {{archives}} --alpha-tree
+
+animation-alpha-forward-regions output llvm +archives:
+    python3 scripts/color_admission_coverage.py {{quote(llvm)}} {{quote(output)}} {{archives}} --animation-alpha-forward
+
+alpha-large-tree-continuation-check manifest artifacts coverage_env:
+    mkdir -p {{quote(artifacts)}}
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3/controller" alpha_ --test-target alpha_large_multiplier_contract --features __expert,parallel,rate-control --source jxl-encoder/src/api.rs --source jxl-encoder/src/modular/encode_tree.rs --source jxl-encoder/src/vardct/bitstream.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert,rate-control --test alpha_squeeze_matrix high_precision_alpha_large_quantizers -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert,rate-control --test alpha_large_multiplier_contract -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,parallel,rate-control,jpeg-reencoding --lib -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,parallel,rate-control --test it -- hash_lock strategy_libjxl_byte_lock divergence_table_drift --test-threads=1
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,rate-control --lib --test alpha_squeeze_matrix --test alpha_large_multiplier_contract -- -D warnings
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert,rate-control --lib --test alpha_squeeze_matrix --test alpha_large_multiplier_contract -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+
+animation-alpha-caller-check manifest artifacts coverage_env:
+    mkdir -p {{quote(artifacts)}}
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3/default" animation_alpha_ --test-target animation_alpha_contract --features __expert,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/animate.rs; python3 scripts/run_selected_test_evidence.py "$2" "$3/layers" alpha_animation_ --test-target animation_alpha_layers_contract --features __expert,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/animate.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3/minimal" animation_alpha_ --test-target animation_alpha_contract --no-default-features --features std,convenience,__expert --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/animate.rs; python3 scripts/run_selected_test_evidence.py "$2" "$3/minimal-layers" alpha_animation_ --test-target animation_alpha_layers_contract --no-default-features --features std,convenience,__expert --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/animate.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,parallel --test animation_contract --test it -- animation hash_lock strategy_libjxl_byte_lock divergence_table_drift --test-threads=1
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --lib --test animation_alpha_contract --test animation_alpha_layers_contract -- -D warnings
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert --lib --test animation_alpha_contract --test animation_alpha_layers_contract -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+
+alpha-coding-fault-check manifest artifacts coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/test_alpha_coding_mutations.py "$2" "$3"' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+
+animation-alpha-caller-continuation-check manifest artifacts coverage_env:
+    mkdir -p {{quote(artifacts)}}
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3/layers" alpha_animation_ --test-target animation_alpha_layers_contract --features __expert,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/animate.rs; python3 scripts/run_selected_test_evidence.py "$2" "$3/minimal-layers" alpha_animation_ --test-target animation_alpha_layers_contract --no-default-features --features std,convenience,__expert --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/animate.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --lib --test animation_alpha_contract --test animation_alpha_layers_contract -- -D warnings
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert --lib --test animation_alpha_contract --test animation_alpha_layers_contract -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
 
 # Requires the caller-selected guarded v0.12 original-profile observer.
 animation-alpha-options-check manifest:
@@ -3327,21 +4178,40 @@ animation-alpha-options-check manifest:
     cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert --lib --test animation_alpha_contract --test animation_alpha_layers_contract -- -D warnings
     cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
 
+animation-alpha-existing-precision-check manifest artifacts coverage_env:
+    mkdir -p {{quote(artifacts)}}
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3/default" animation_ --test-target progressive_ac_contract --features __expert,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/animate.rs; python3 scripts/run_selected_test_evidence.py "$2" "$3/minimal" animation_ --test-target progressive_ac_contract --no-default-features --features std,convenience,__expert --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/animate.rs; python3 scripts/run_selected_test_evidence.py "$2" "$3/cmyk" cmyk_ --test-target cmyk_animation_layers_contract --features __expert,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/animate.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+
 alpha-coding-faults manifest output coverage_env:
     bash -c 'set -e; source "$1"; python3 scripts/test_alpha_coding_mutations.py "$2" "$3"' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
 
-animation-alpha-forward-regions output llvm +archives:
-    python3 scripts/color_admission_coverage.py {{quote(llvm)}} {{quote(output)}} {{archives}} --animation-alpha-forward
+
+extra-count-before-check manifest artifacts coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" extra_metadata_count_exceeds_wire_limit --test-target extra_metadata_contract --features __expert,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/headers/file_header.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+
+extra-count-native source build output:
+    python3 scripts/frame_header_oracle.py --component extra_metadata {{quote(source)}} {{quote(build)}} {{quote(output)}}
+    {{quote(output)}} --counts
 
 animation-alpha-compatibility-check manifest:
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --test progressive_ac_contract animation_ -- --test-threads=1
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert --test progressive_ac_contract animation_ -- --test-threads=1
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --test cmyk_animation_layers_contract -- --test-threads=1
 
-# Native syntax range and Level 10 input admission are separate observations.
-extra-count-native source build output:
-    just extra-metadata-native {{quote(source)}} {{quote(build)}} {{quote(output)}}
-    {{quote(output)}} --counts
+extra-count-candidate-check manifest artifacts coverage_env:
+    mkdir -p {{quote(artifacts)}}
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3/default" extra_metadata_count_ --test-target extra_metadata_contract --features __expert,__internals,__pre_quantized,parallel,rate-control --also-filter extra_metadata_prepared_entries --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/validate.rs --source jxl-encoder/src/container.rs --source jxl-encoder/src/headers/file_header.rs --source jxl-encoder/src/headers/extra_channels.rs --source jxl-encoder/src/vardct/encoder.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert,__internals,__pre_quantized,rate-control --test extra_metadata_contract -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,parallel,rate-control --lib extra_channel_count -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,parallel,rate-control --test it -- hash_lock strategy_libjxl_byte_lock divergence_table_drift --test-threads=1
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel,rate-control --lib --test extra_metadata_contract -- -D warnings
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert,__internals,__pre_quantized,rate-control --lib --test extra_metadata_contract -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+
+extra-count-sensitivity-check manifest artifacts coverage_env *cases:
+    mkdir -p {{quote(artifacts)}}
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3/header" extra_channel_count_wire_bound_precedes_header_writes --features __expert,__internals,parallel,rate-control --source jxl-encoder/src/headers/file_header.rs; python3 scripts/run_selected_test_evidence.py "$2" "$3/canonical" extra_metadata_count_canonicalized_admission_precedes_budget --also-filter extra_metadata_count_canonicalization_retains_nonopaque_alpha_in_count --test-target extra_metadata_contract --features __expert,__internals,__pre_quantized,parallel,rate-control --source jxl-encoder/src/api.rs; output="$3/faults"; manifest="$2"; shift 3; python3 scripts/test_extra_count_mutations.py "$manifest" "$output" "$@"' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}} {{cases}}
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
 
 extra-count-check manifest:
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel,rate-control --test extra_metadata_contract -- --test-threads=1
