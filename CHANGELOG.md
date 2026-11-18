@@ -4,7 +4,8 @@
 
 - Correct selected modular reference-residual absolute properties at all three
   gather/emission sites; preserve complete finite binary32 source words in
-  learned single/multi-group streams. See docs/CONDITIONAL_MODULAR_CONTRACT.md.
+  learned single/multi-group streams (`3de75ce5`). See
+  docs/CONDITIONAL_MODULAR_CONTRACT.md.
 
 - Declare the actual Gradient predictor for selected near-lossless palette
   deltas; preserve quantized color and exact alpha through affected callers

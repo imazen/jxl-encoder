@@ -2940,3 +2940,27 @@ qualify-selected-palette manifest selection base output:
 
 delta-palette-production-evidence manifest output coverage_env:
     bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" delta_palette_contract --include-ignored --features __expert,parallel --source jxl-encoder/src/vardct/patches.rs --source jxl-encoder/tests/support/decoded_frames.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+
+conditional-reference-evidence manifest output coverage_env features="__expert,parallel,parallel-tree-learning":
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" reference_property_contract --include-ignored --features "$4" --source jxl-encoder/src/modular/encode_tree.rs --source jxl-encoder/src/modular/reference_property_contract.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}} {{quote(features)}}
+
+conditional-modular-regions llvm output archive flag:
+    python3 scripts/color_admission_coverage.py {{quote(llvm)}} {{quote(output)}} {{quote(archive)}} {{quote(flag)}}
+
+reference-property-extra-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" selected_reference_property_floating_alpha --include-ignored --features __expert,parallel --source jxl-encoder/src/modular/reference_property_contract.rs --source scripts/libjxl_original_profile.cc --source jxl-encoder/tests/support/native_planes.rs --source jxl-encoder/tests/support/pfm.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+reference-property-isolated-check manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,parallel-tree-learning --lib reference_property_contract -- --include-ignored --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,parallel-tree-learning --lib
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --test it -- hash_lock strategy_libjxl_byte_lock divergence_table_drift --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,__expert --lib reference_property_contract -- --include-ignored --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --doc
+    cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --lib
+    cargo clippy --locked --manifest-path {{quote(manifest)}} --workspace --all-targets -- -D warnings
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,parallel-tree-learning --lib --tests -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+
+qualify-selected-reference-property manifest selection base output:
+    python3 scripts/qualify_selected_modular_source.py {{quote(manifest)}} {{quote(selection)}} {{quote(base)}} {{quote(output)}} --reference-property
