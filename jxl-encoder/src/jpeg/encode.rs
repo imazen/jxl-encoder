@@ -362,13 +362,11 @@ fn encode_jpeg_to_jxl_inner(
         ),
     ];
 
-    // Frame-level block dimensions: padded to multiples of the max sampling factor shift.
-    // For 4:4:4 this produces identical results to the Y component's dimensions.
-    // For 4:2:0, this rounds up to even block counts.
-    let max_hs = channel_shifts.iter().map(|&(hs, _)| hs).max().unwrap_or(0);
-    let max_vs = channel_shifts.iter().map(|&(_, vs)| vs).max().unwrap_or(0);
-    let xsize_blocks = div_ceil(width, 8 << max_hs) << max_hs;
-    let ysize_blocks = div_ceil(height, 8 << max_vs) << max_vs;
+    // FrameDimensions uses the maximum absolute SOF factor, even when every
+    // component shares it and all relative channel shifts are zero. Using
+    // relative shifts here omits MCU padding blocks from common-factor input.
+    let xsize_blocks = div_ceil(width, 8 << max_raw_hs) << max_raw_hs;
+    let ysize_blocks = div_ceil(height, 8 << max_raw_vs) << max_raw_vs;
 
     // The DC offset is keyed on the wire-format `color_transform`
     // value (`is_ycbcr_color_transform` above):

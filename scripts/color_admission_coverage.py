@@ -20,6 +20,7 @@ p.add_argument('--extra-metadata', action='store_true')
 p.add_argument('--jpeg-metadata', action='store_true')
 p.add_argument('--jpeg-dht', action='store_true')
 p.add_argument('--gain-map', action='store_true')
+p.add_argument('--jpeg-scan-grid', action='store_true')
 p.add_argument('--display-extents', action='store_true')
 p.add_argument('--animation-state', action='store_true')
 p.add_argument('--animation-deltas', action='store_true')
@@ -108,6 +109,24 @@ if a.gain_map:
     observe('jxl-encoder/src/hdr/bundle.rs', 'append_gain_map_bundle')
     (a.output / 'regions.json').write_text(json.dumps(dict(inputs=identities, functions=rows,
         note='Exact source bodies; mapped regions, not complete input/option combinations.'), indent=2))
+    sys.exit(0)
+
+if a.jpeg_scan_grid:
+    observe('jxl-encoder/src/jpeg/encode.rs', 'compute_jpeg_upsampling')
+    observe('jxl-encoder/src/jpeg/encode.rs', 'encode_jpeg_to_jxl_inner',
+            window=('let xsize_blocks = div_ceil(width, 8 << max_raw_hs)', 2))
+    source = (reference_root / 'jxl-encoder/src/jpeg/parse.rs').read_text().splitlines()
+    begin = next(i for i,line in enumerate(source) if 'for (scan, jbrd_scan) in jpeg.scan_info' in line)
+    end = next(i for i in range(begin,len(source)) if 'scan.extra_zero_runs = ' in source[i])
+    observe('jxl-encoder/src/jpeg/parse.rs', 'extract_coefficients_zenjpeg',
+            window=('for (scan, jbrd_scan) in jpeg.scan_info', end-begin+2))
+    source = (reference_root / 'jxl-encoder/src/jpeg/jbrd.rs').read_text().splitlines()
+    begin = next(i for i,line in enumerate(source) if '// Scan more info' in line)
+    end = next(i for i in range(begin+1,len(source)) if '// Inter-marker data lengths' in source[i])
+    observe('jxl-encoder/src/jpeg/jbrd.rs', 'encode_jbrd',
+            window=('// Scan more info', end-begin))
+    (a.output / 'regions.json').write_text(json.dumps(dict(inputs=identities, functions=rows,
+        note='Sampling helper, corrected grid and scan metadata windows only; dependency coverage is separate.'), indent=2))
     sys.exit(0)
 
 if a.jpeg_dht:

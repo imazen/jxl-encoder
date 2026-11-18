@@ -1788,6 +1788,20 @@ separate queue items. Broad/coverage/remote verdicts must be read independently.
 
 ## Known Bugs (ACTIVE)
 
+### 2026-11-18: common absolute JPEG sampling frame grid
+
+A 16x8 grayscale 2x2 source has the native-matching header but the encoder
+uses relative shifts to derive frame padding. All relative shifts are zero,
+so it emits 2x1 blocks instead of 2x2: primary AnsChecksumMismatch and native
+decode refusal. Equal-factor YCbCr and partial MCU axes reproduce the same
+root cause. A shared raw-shift correction and paired scan metadata dependency
+pins pass controlled rendering/reconstruction, broad library/unchanged locks
+and corrected focused normal lint. Fresh API and actual CLI-child regions
+cover all eight grid regions; defensive import/writer error gaps remain.
+Progressive common-factor input is a follow-up control, so C6 stays open.
+[Owning contract](docs/JPEG_RECONSTRUCTION_CONTRACT.md).
+
+
 ### RESOLVED 2026-11-18: optional subsampling changed explicit source color under ICC
 
 The RGB8 coefficient route coded source samples directly under the output ICC.

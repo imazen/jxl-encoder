@@ -2865,6 +2865,13 @@ Remaining layout inventory is tracked separately in the progressive contract.
 | Site | Current behavior | Reference contract | Status |
 |---|---|---|---|
 | `jpeg::encode_jpeg_to_jxl_inner` sampling selection | Compute absolute JPEG sampling modes for one- and three-component inputs through the same component map. Relative downsampling remains derived separately. | Part 2 A.1 / Part 1 F.2; pinned v0.12 retains grayscale SOF factors in all three fields. | Selected original-writer streams reconstruct changed SOF bytes before repair. Both decoders now reconstruct exact originals; ordinary/cancellable/bare/parsed/recompression/gain-map/CLI callers and independent fields are checked. No strategy gate, constant or registry metadata change. Exact affected-region evidence and limits: JPEG_RECONSTRUCTION_CONTRACT.md. |
+
+### Issue 144: JPEG scan metadata and absolute-factor padding
+
+| Site | Encoder | Pinned libjxl v0.12 / format | Evidence and scope |
+|---|---|---|---|
+| `jpeg::encode::encode_jpeg_to_jxl_inner` frame grid | Pad with maximum raw horizontal/vertical sampling shifts; relative shifts still select per-channel coordinates. | `FrameDimensions::Set` uses `MaxHShift`/`MaxVShift`, retaining common absolute factors. Part 1 F.2. | Old equal-factor grayscale/YCbCr partial-MCU streams fail both decoders despite matching headers. Selected complete native/primary pixel and JPEG-byte controls pass; no strategy gate or gate-registry metadata changes. |
+| `.github/sibling-revisions.tsv`, `jpeg::parse::extract_coefficients_zenjpeg` | Frozen producer `5071e85c` tracks baseline trailing ZRLs; decoder `f8e0f0de` reconstructs trailing runs after final nonzero AC and uses visible noninterleaved scan grids. | Part 2 A.5; unmodified native v0.12 reconstructs the original baseline/progressive controls exactly. | Companion source-region/fault evidence stays separate from encoder coverage. Current-main producer dependency upgrades are excluded from the encoder pin. |
 ### Issue 144 C1: gain-map multiplicity at public append entries
 
 | Site | Proposed behavior | Reference contract | Status |

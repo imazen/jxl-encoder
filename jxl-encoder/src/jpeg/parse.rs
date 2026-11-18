@@ -967,19 +967,12 @@ fn extract_coefficients_zenjpeg(
     // ONE entry per SOS marker in the same bitstream order, so the indexes
     // align 1:1 for valid JPEGs.
     //
-    // For baseline JPEGs zenjpeg currently routes the entropy decode through
-    // a path that does NOT call `decode_progressive_scan` and therefore does
-    // not push a JbrdScanInfo. That's fine — baseline JPEGs never emit EOB
-    // runs > 1 or ZRL-chains preceding EOB by construction (no compliant
-    // encoder ever does), so `reset_points` and `extra_zero_runs` are
-    // intrinsically empty there. The marker-scanner's default empty Vecs
-    // are correct as-is.
-    //
-    // For progressive JPEGs (the case the 2 known DIFF unsplash cases
-    // exercise), zenjpeg pushes one JbrdScanInfo per SOS in order. We
-    // pair by index; if for any reason counts disagree (e.g. truncated
-    // last scan), we simply skip the merge for the unmatched tail —
-    // the empty default is still safe.
+    // The pinned producer also tracks legal baseline trailing ZRL symbols;
+    // they are not determined by coefficient values alone. Baseline reset
+    // points remain empty; progressive records retain their existing signals.
+    // Pair records by bitstream order. Unmatched truncated tails retain the
+    // scanner defaults; this path does not establish exact reconstruction of
+    // a malformed or incomplete JPEG entropy segment.
     for (scan, jbrd_scan) in jpeg.scan_info.iter_mut().zip(jbrd_meta.scans.iter()) {
         // Sanity check: the spectral / approximation parameters must match.
         // If they don't, the bitstream ordering between marker scanner and
