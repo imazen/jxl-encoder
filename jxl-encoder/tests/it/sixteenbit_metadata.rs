@@ -254,7 +254,7 @@ fn test_lossy_rgba16_encodes_and_decodes() {
         .encode(pixels, width, height, PixelLayout::Rgba16)
         .expect("lossy 16-bit RGBA encode failed");
 
-    assert_eq!(&jxl[..2], &[0xFF, 0x0A]);
+    super::jxl_signature::assert_signature(&jxl);
 
     let (dec_w, dec_h, _, channels) = decode_oxide(&jxl);
     assert_eq!(dec_w, width as usize);

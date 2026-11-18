@@ -87,7 +87,7 @@ fn sanitize_mode_accepts_nan_input() {
         .with_non_finite_action(NonFiniteAction::Sanitize)
         .encode(cast_slice(&pixels), w, h, PixelLayout::RgbLinearF32)
         .expect("Sanitize mode should accept and replace non-finite values");
-    assert_eq!(&bytes[..2], &[0xFF, 0x0A], "missing JXL signature");
+    super::jxl_signature::assert_signature(&bytes);
 }
 
 #[test]

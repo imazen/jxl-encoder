@@ -16,6 +16,9 @@
 #[path = "../../examples/distance_targeting_probe/decode.rs"]
 mod primary_decode;
 
+#[path = "../support/jxl_signature.rs"]
+mod jxl_signature;
+
 mod afv_idct_parity;
 mod alloc_budget;
 mod alpha_squeeze_chunk1_framework;

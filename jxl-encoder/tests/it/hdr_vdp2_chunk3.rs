@@ -121,7 +121,7 @@ fn vdp2_pq_pipeline_decodes_via_jxl_oxide() {
     let bytes =
         encode_pq(&pixels, w, h, 1.0, 1000.0, HdrLoss::Vdp2).expect("Vdp2 PQ pipeline must encode");
     assert!(!bytes.is_empty(), "encoded bitstream must be non-empty");
-    assert_eq!(&bytes[..2], &[0xFF, 0x0A], "JXL signature missing");
+    super::jxl_signature::assert_signature(&bytes);
 
     let (dw, dh) = decode_jxl_oxide(&bytes).expect("jxl-oxide must decode VDP2-encoded PQ bytes");
     assert_eq!(dw, w as usize);

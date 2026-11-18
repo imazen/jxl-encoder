@@ -349,7 +349,7 @@ pub fn wrap_in_container_with_jbrd_and_level_and_jumbf(
 /// The codestream and level of a container that holds only the signature,
 /// `ftyp`, an optional `jxll` and one `jxlc` box: what [`wrap_encoded`] writes
 /// for a level-10 codestream without metadata.
-fn bare_container_codestream(data: &[u8]) -> Option<(&[u8], u8)> {
+pub(crate) fn bare_container_codestream(data: &[u8]) -> Option<(&[u8], u8)> {
     if !is_container(data) {
         return None;
     }

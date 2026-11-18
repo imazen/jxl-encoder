@@ -107,6 +107,50 @@ fn hash_bytes(data: &[u8]) -> u64 {
 // (0.4.0 narrowing): this suite compiles under default features, and the
 // header/bit-writer internals it re-serialized are now `pub(crate)`.
 
+/// Include every container prefix byte in a float fixture's header fingerprint.
+fn float_file_header_extent(data: &[u8], codestream_header: usize) -> usize {
+    if data.starts_with(&[0xff, 0x0a]) {
+        return codestream_header;
+    }
+    assert!(data.starts_with(&[0, 0, 0, 12, b'J', b'X', b'L', b' ', 13, 10, 135, 10]));
+    let mut offset = 0;
+    while offset < data.len() {
+        assert!(data.len() - offset >= 8);
+        let short = u32::from_be_bytes(data[offset..offset + 4].try_into().unwrap());
+        let (size, header) = match short {
+            0 => (data.len() - offset, 8),
+            1 => {
+                assert!(data.len() - offset >= 16);
+                (
+                    usize::try_from(u64::from_be_bytes(
+                        data[offset + 8..offset + 16].try_into().unwrap(),
+                    ))
+                    .unwrap(),
+                    16,
+                )
+            }
+            value => (value as usize, 8),
+        };
+        assert!(size >= header && size <= data.len() - offset);
+        if &data[offset + 4..offset + 8] == b"jxlc" {
+            assert_eq!(
+                offset + size,
+                data.len(),
+                "these fixtures have one final jxlc box"
+            );
+            assert!(data[offset + header..].starts_with(&[0xff, 0x0a]));
+            return offset + header + codestream_header;
+        }
+        assert_ne!(
+            &data[offset + 4..offset + 8],
+            b"jxlp",
+            "fragmented fixtures need an explicit fingerprint layout"
+        );
+        offset += size;
+    }
+    panic!("missing float-fixture codestream");
+}
+
 /// Hash both header and frame portions, returning (header_hash, frame_hash).
 /// `hash_split` + `assert_hashes` for a FLOAT-input lossy cell (#109 F0).
 ///
@@ -125,6 +169,13 @@ fn assert_hashes_float(
     bits_per_sample: u32,
     exponent_bits: u32,
 ) {
+    if let Some(directory) = std::env::var_os("JXL_FLOAT_LOCK_ARTIFACT_DIR") {
+        let directory = std::path::PathBuf::from(directory);
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join(format!("{name}.jxl"));
+        assert!(!path.exists(), "preserve existing float-lock artifact");
+        std::fs::write(path, data).unwrap();
+    }
     let header_len = jxl_encoder::test_helpers::measure_file_header_len_float(
         width,
         height,
@@ -134,6 +185,9 @@ fn assert_hashes_float(
         bits_per_sample,
         exponent_bits,
     );
+    // Fingerprint every container byte with the header; frame bytes keep their
+    // existing boundary and expected fingerprint after Level10 wrapping.
+    let header_len = float_file_header_extent(data, header_len);
     assert!(
         header_len <= data.len(),
         "{name}: header_len {header_len} > data.len() {}",

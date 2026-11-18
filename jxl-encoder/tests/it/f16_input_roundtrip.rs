@@ -255,7 +255,7 @@ fn rgb_linear_f16_roundtrips_through_jxl_rs_and_jxl_oxide() {
         .encode_request(16, 16, PixelLayout::RgbLinearF16)
         .encode(&f16_bytes)
         .expect("lossy RgbLinearF16 must encode");
-    assert_eq!(&jxl[..2], &[0xFF, 0x0A], "must be a bare JXL codestream");
+    super::jxl_signature::assert_signature(&jxl);
 
     // jxl-rs (primary).
     let (w_rs, h_rs, dec_rgb) = decode_jxl_rs_rgb_f32(&jxl);

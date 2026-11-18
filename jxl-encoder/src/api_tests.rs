@@ -7503,14 +7503,23 @@ fn assert_float_pair_codes_identically(
     has_alpha: bool,
     what: &str,
 ) {
+    fn codestream(bytes: &[u8]) -> &[u8] {
+        if crate::container::is_bare_codestream(bytes) {
+            return bytes;
+        }
+        let (payload, level) = crate::container::bare_container_codestream(bytes)
+            .expect("float pair has a bare codestream or its required single-jxlc container");
+        assert_eq!(level, 10, "floating source metadata requires Level 10");
+        payload
+    }
     let hdr32 =
         crate::test_helpers::measure_file_header_len_float(w, h, true, has_alpha, false, 32, 8);
     let hdr16 =
         crate::test_helpers::measure_file_header_len_float(w, h, true, has_alpha, false, 16, 5);
 
     assert_eq!(
-        &bytes_f32[hdr32..],
-        &bytes_f16[hdr16..],
+        &codestream(bytes_f32)[hdr32..],
+        &codestream(bytes_f16)[hdr16..],
         "{what}F16 must code the SAME payload as {what}F32 for f16-representable input"
     );
 
