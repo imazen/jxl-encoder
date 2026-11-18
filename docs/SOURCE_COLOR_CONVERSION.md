@@ -341,3 +341,13 @@ available19294 MiB). The first new singular-primary diagnostic assertion expecte
 the word singular; the actual error names the determinant bound. Its corrected
 assertion retains a typed failure and the precise determinant diagnostic.
 All established byte expectations, thresholds and ignores remain unchanged.
+
+
+### November 18: optional ICC Linux x64 oracle provisioning
+
+CI run 44276902750 reached the optional source-to-ICC tests on Linux x64,
+but the setup action supplied the original-profile decoder oracle only on
+Linux ARM. The sample tests failed explicitly on the missing environment
+binding. The setup action now builds and exports that oracle on both Linux
+architectures, retaining the checksum-pinned static cjxl/djxl on x64.
+The cache key includes the oracle sources on both architectures.

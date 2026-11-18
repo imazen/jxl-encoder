@@ -6592,3 +6592,13 @@ zensim-loop. `just ci-iteration-regressions <frozen-manifest>` passes all 1669
 library tests (29 existing ignores), the skewed ANS histogram regression and
 three single-symbol ANS tests. This is CI maintenance, not a repair for the
 outstanding PQ agreement or quality-ordering findings.
+
+
+### 2026-11-18: optional ICC Linux x64 oracle provisioning
+
+CI run 44276902750 reached the optional source-to-ICC tests on Linux x64,
+but the setup action supplied the original-profile decoder oracle only on
+Linux ARM. The sample tests failed explicitly on the missing environment
+binding. The setup action now builds and exports that oracle on both Linux
+architectures, retaining the checksum-pinned static cjxl/djxl on x64.
+The cache key includes the oracle sources on both architectures.
