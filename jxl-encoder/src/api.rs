@@ -153,6 +153,7 @@ pub struct EncodeStats {
     /// field is false, and a stream that carries it while claiming level 5
     /// violates the level it declares.
     needs_modular_32bit: bool,
+    needs_frame_level10: bool,
 }
 
 impl EncodeStats {
@@ -6921,7 +6922,8 @@ impl<'a> EncodeRequest<'a> {
             has_black,
             icc_size,
             !stats.needs_modular_32bit,
-        )?;
+        )?
+        .max(if stats.needs_frame_level10 { 10 } else { 5 });
 
         // Wrap in container if metadata (EXIF/XMP/JUMBF/colr/hCdR) is
         // present OR if the level requires a container (level != 5
@@ -7965,6 +7967,10 @@ impl<'a> EncodeRequest<'a> {
             mode: EncodeMode::Lossless,
             ans: cfg.ans(),
             needs_modular_32bit: !file_header.metadata.modular_16bit_buffer_sufficient(),
+            needs_frame_level10: writer
+                .frame_level(file_header.width, file_header.height, None)
+                .map_err(EncodeError::from)?
+                == 10,
             ..Default::default()
         };
         Ok((writer.finish_with_padding(), stats))
@@ -9295,7 +9301,7 @@ impl<'a> EncodeRequest<'a> {
         if std::env::var_os("__JXL_ENC_PHASE_TIMING").is_some() {
             eprintln!("encode_lossy: conv+setup={:?}", _t_conv.elapsed());
         }
-        let output = enc
+        let tracked = enc
             .encode_with_extras_stop_src(
                 encode_w,
                 encode_h,
@@ -9308,6 +9314,7 @@ impl<'a> EncodeRequest<'a> {
             )
             .map_err(EncodeError::from)?;
 
+        let output = tracked.output;
         #[cfg(feature = "__env_var_diagnostics")]
         if std::env::var_os("__JXL_ENC_PHASE_TIMING").is_some() {
             eprintln!("encode_lossy: inner-call={:?}", _t_pre.elapsed());
@@ -9321,6 +9328,7 @@ impl<'a> EncodeRequest<'a> {
             mode: EncodeMode::Lossy,
             strategy_counts: output.strategy_counts,
             needs_modular_32bit: output.needs_modular_32bit,
+            needs_frame_level10: tracked.frame_level == 10,
             gaborish: cfg.gaborish(),
             ans: cfg.ans(),
             butteraugli_iters: butteraugli_iters_actual,
@@ -10909,6 +10917,10 @@ impl LosslessEncoder {
                 mode: EncodeMode::Lossless,
                 ans: cfg.ans(),
                 needs_modular_32bit: !file_header.metadata.modular_16bit_buffer_sufficient(),
+                needs_frame_level10: writer
+                    .frame_level(file_header.width, file_header.height, None)
+                    .map_err(EncodeError::from)?
+                    == 10,
                 ..Default::default()
             };
             Ok::<_, EncodeError>((writer.finish_with_padding(), stats))
@@ -10931,7 +10943,8 @@ impl LosslessEncoder {
             false,
             icc_size,
             !stats.needs_modular_32bit,
-        )?;
+        )?
+        .max(if stats.needs_frame_level10 { 10 } else { 5 });
 
         let boxes = crate::container::EncodedBoxes {
             exif: self.exif.as_deref(),

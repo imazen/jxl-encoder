@@ -83,6 +83,17 @@ pub(crate) fn validate_xyb_planes(
     Ok(())
 }
 
+/// Private transport for the container-owning request path.
+pub(crate) struct TrackedVarDctOutput {
+    pub(crate) output: VarDctOutput,
+    pub(crate) frame_level: u8,
+}
+
+pub(crate) struct FrameBytes {
+    pub(crate) data: Vec<u8>,
+    pub(crate) frame_level: u8,
+}
+
 /// Output of a VarDCT encode operation.
 pub struct VarDctOutput {
     /// Encoded JXL codestream bytes.
@@ -3575,6 +3586,7 @@ impl VarDctEncoder {
                     &[ec],
                     stop,
                 )
+                .map(|tracked| tracked.output)
             }
         }
     }
@@ -3616,7 +3628,7 @@ impl VarDctEncoder {
         linear_src: LinearSource<'_>,
         extras: &[crate::api::ExtraChannel<'_>],
         stop: Option<&dyn Stop>,
-    ) -> Result<VarDctOutput> {
+    ) -> Result<TrackedVarDctOutput> {
         self.encode_with_extras_stop_impl(width, height, linear_src, extras, stop)
     }
 
@@ -3638,6 +3650,7 @@ impl VarDctEncoder {
             extras,
             stop,
         )
+        .map(|tracked| tracked.output)
     }
 
     /// Keep container admission equal to the serialized metadata promise,
@@ -3662,7 +3675,7 @@ impl VarDctEncoder {
         linear_src: LinearSource<'_>,
         extras: &[crate::api::ExtraChannel<'_>],
         stop: Option<&dyn Stop>,
-    ) -> Result<VarDctOutput> {
+    ) -> Result<TrackedVarDctOutput> {
         // Materialize the internal `VardctExtra` views, validating
         // dimensions + bit depth + dim_shift up-front before any work.
         let mut views: Vec<super::extras::VardctExtra<'_>> = Vec::with_capacity(extras.len());
@@ -3856,6 +3869,17 @@ impl VarDctEncoder {
         Ok(())
     }
 
+    /// Classify emitted frames on the same display canvas as the file header.
+    pub(crate) fn output_frame_level(
+        &self,
+        writer: &crate::bit_writer::BitWriter,
+        width: usize,
+        height: usize,
+    ) -> Result<u8> {
+        let header = self.build_file_header(width, height, &[]);
+        writer.frame_level(header.width, header.height, None)
+    }
+
     /// Shared implementation backing both [`Self::encode`] and
     /// [`Self::encode_with_extras`]. Takes already-validated extras as
     /// the internal `VardctExtra` view; performs the RGB-shape check
@@ -3867,7 +3891,7 @@ impl VarDctEncoder {
         mut linear_src: LinearSource<'_>,
         extras: &[super::extras::VardctExtra<'_>],
         stop: Option<&dyn Stop>,
-    ) -> Result<VarDctOutput> {
+    ) -> Result<TrackedVarDctOutput> {
         let linear_rgb = linear_src.slice();
         // Earliest cancellation checkpoint — polled BEFORE any encode work, on
         // EVERY entropy path (two-pass, single-pass, and the `num_sections == 4`
@@ -6683,10 +6707,13 @@ impl VarDctEncoder {
                 }
             }
             crate::debug_rect::flush("");
-            return Ok(VarDctOutput {
-                data,
-                strategy_counts,
-                needs_modular_32bit: self.output_needs_modular_32bit(width, height, extras),
+            return Ok(TrackedVarDctOutput {
+                frame_level: data.frame_level,
+                output: VarDctOutput {
+                    data: data.data,
+                    strategy_counts,
+                    needs_modular_32bit: self.output_needs_modular_32bit(width, height, extras),
+                },
             });
         }
 
@@ -7058,10 +7085,14 @@ impl VarDctEncoder {
 
         let strategy_counts = ac_strategy.strategy_histogram();
         crate::debug_rect::flush("");
-        Ok(VarDctOutput {
-            data: writer.finish_with_padding(),
-            strategy_counts,
-            needs_modular_32bit: self.output_needs_modular_32bit(width, height, &[]),
+        let frame_level = self.output_frame_level(&writer, width, height)?;
+        Ok(TrackedVarDctOutput {
+            frame_level,
+            output: VarDctOutput {
+                data: writer.finish_with_padding(),
+                strategy_counts,
+                needs_modular_32bit: self.output_needs_modular_32bit(width, height, &[]),
+            },
         })
     }
 
@@ -7713,7 +7744,7 @@ impl VarDctEncoder {
                 "encode_from_precomputed: patches={_ms_patches:.1} ms, cfl={_ms_cfl:.1} ms, transform_and_quantize={_ms_xform:.1} ms, sharpness={_ms_sharp:.1} ms, encode_two_pass={_ms_two:.1} ms",
             );
         }
-        res
+        res.map(|tracked| tracked.data)
     }
 
     /// Pre-quantized AC entry point. Skips `transform_and_quantize`
@@ -7932,6 +7963,7 @@ impl VarDctEncoder {
             None,
             None,
         )
+        .map(|tracked| tracked.data)
     }
 }
 

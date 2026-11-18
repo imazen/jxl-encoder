@@ -12,7 +12,7 @@ use super::ac_strategy::AcStrategyMap;
 use super::chroma_from_luma::CflMap;
 use super::common::*;
 use super::dc_coding::collect_ac_metadata_tokens_region;
-use super::encoder::{BuiltEntropyCode, VarDctEncoder};
+use super::encoder::{BuiltEntropyCode, FrameBytes, VarDctEncoder};
 use super::frame::{DistanceParams, write_quant_scales, write_toc};
 use super::noise::{NoiseParams, write_noise_params};
 use crate::api::ProgressiveMode;
@@ -2900,7 +2900,7 @@ impl VarDctEncoder {
         splines: Option<&super::splines::SplinesData>,
         float_dc: Option<&[Vec<f32>; 3]>,
         stop: Option<&dyn enough::Stop>,
-    ) -> Result<Vec<u8>> {
+    ) -> Result<FrameBytes> {
         let mut writer = BitWriter::with_capacity(width * height * 4);
 
         // Write file header. Every extra channel passed in here goes
@@ -3005,7 +3005,11 @@ impl VarDctEncoder {
             stop,
         )?;
 
-        Ok(writer.finish_with_padding())
+        let frame_level = self.output_frame_level(&writer, width, height)?;
+        Ok(FrameBytes {
+            frame_level,
+            data: writer.finish_with_padding(),
+        })
     }
 
     /// Write a VarDCT frame to a BitWriter (two-pass mode).

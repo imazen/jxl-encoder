@@ -345,6 +345,9 @@ published. See docs/RELEASE_0.4.0.md for the publish gates.)
 
 ### Fixed
 
+- Preserve emitted-frame level requirements through still/streaming auxiliary
+  and prepared payload finalization, including cumulative LF/reference area.
+
 - Preserve explicit RGB JPEG interpretation under unrelated APP0 metadata;
   reject non-unit RGB JPEG sampling instead of discarding its factors.
 

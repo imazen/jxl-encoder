@@ -1,9 +1,10 @@
 # Frame-dependent codestream levels
 
-Issue 144 H14 remains open for still-image auxiliary-frame propagation and LF
-caller verification. Animation now classifies the actual emitted sequence:
-consecutive zero-duration frame area above 2^28 pixels or a positive duration
-below 1/120 second requires Level 10. Successful header records travel with
+Issue 144 H14 now propagates actual emitted-frame requirements through the
+container-owning still/streaming paths as well as animation. The optional
+CLI rate-control bypass is a separate outstanding caller. Consecutive
+zero-duration frame area above 2^28 pixels or a positive duration below 1/120
+second requires Level 10. Successful header records travel with
 selected writer bytes, including winning full-frame deltas; discarded trials
 do not contribute. No public API or preset value changes.
 
@@ -268,7 +269,7 @@ initial replay on a non-executable artifact mount fails before launch and is
 retained; executable staging uses a caller-selected suitable filesystem.
 
 
-## November 19 auxiliary source-identity gate
+## Historical November 19 auxiliary source-identity gate
 
 The all-offered upsampled replay passes with frozen binary
 69acdde7484b62131af0ed9925e5c43cd7162a08c4a46fb1c7aad229e7a94a5c.
@@ -279,7 +280,7 @@ parsing, primary/native reconstructed samples and streaming/legacy/writer/stride
 identity pass. Wrapper all-offered-upsampled-2026-11-19 exits 0 / 1259 seconds, run-heavy
 peak RSS 6.28 GiB / minimum available 39,369 MiB. This measures that retained run only.
 
-Source comparison establishes a remaining qualification gap. The frozen
+At that stage source comparison established a qualification gap. The frozen
 output_frame_level, encode_two_pass and request encode_prepared bodies match
 the current candidate, but enclosing lossless/lossy/streaming and encode_inner
 bodies predate the landed CMYK, modular-width and spline updates. This is not
@@ -364,3 +365,47 @@ records in `frame-level-auxiliary-contract/run-11` through `run-15`. The wrapper
 exits 1 in 24 seconds, run-heavy peak RSS 1.02 GiB, minimum available 18,324 MiB.
 These are before failures. No rate-control or prepared-LF repair is qualified
 by this run.
+
+## November 19: still/streaming auxiliary finalization
+
+Successful frame records now remain attached to the selected still, prepared,
+precomputed and prequantized VarDCT payload internally. Still and streaming
+lossless capture the selected writer's frame requirement. Container finalizers
+take the maximum of header and emitted-sequence requirements. Public raw byte
+return signatures and preset values are unchanged. Raw surfaces retain their
+caller-owned container contract; request wrappers consume the private level.
+
+The refreshed archived source binary
+`041b0c619b5f5a73333436d234ea16d6c5df05cf16ca5186ed87eca2fb61a89d`
+completes all 17 offered bindings for upsampled patch references, lossless
+patches and LF frames. Each family retains streams, journals, source identities
+and completed primary/native rendering. The LF-off control observes area
+268435456 at Level 5; LF-on observes 272629760 at Level 10, with identical
+still/streaming bytes. Its completed profile is
+`d3960f80b298914b1518e66e33360d39e5ab3b05edf5964d2940917568823bc9`.
+The LF wrapper reports peak RSS 14.22 GiB and minimum available 31956 MiB.
+Its 8736-second wall includes serialized intermissions and is not latency.
+
+Those large results are not relabeled as whole-current-head executions.
+Exact classifier, two-pass and enclosing still/streaming transport bodies
+match the selected current source. `encode_inner` differs only by the already
+landed LF-plus-upsampling refusal. The LF cells use scale one; upsampled cells
+have LF disabled. This establishes why that new precondition accepts these
+inputs; it supplies no executed-region credit for the newer guard.
+
+The current-main continuation passes small packed/strided/writer/streaming
+controls, the library baseline, unchanged normal/strict locks and divergence
+checks, strict focused lint, no-default build and scoped formatting. Its
+retained CLI and selective production binaries are build-only evidence.
+Wrapper rc0, 761 seconds, peak RSS 1.59 GiB, minimum available 17488 MiB.
+A separate current instrumented small-frame replay completes full primary and
+native pixels. Direct current raw/prepared LF, attached dictionary/alpha,
+DC-width and geometry checks also pass in instrumented default and minimal
+builds (wrapper rc0, 698 seconds, peak RSS 0.93 GiB, minimum available 17598 MiB).
+Existing ignore annotations, thresholds and expected bytes are unchanged.
+
+The earlier exact region report above remains scoped to its recorded bodies
+and windows; it does not cover allocation failures or every input. Current
+small/prepared profiles and the large sequence profiles retain separate
+identities. The CLI controller's source/metadata/container bypass remains
+under the separately approved request-API repair.

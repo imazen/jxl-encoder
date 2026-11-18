@@ -6976,3 +6976,15 @@ Complete encoder CI44427177805 is green at `fa4da9fb`; selected CMYK physical
 controls and the progressive-CMYK follow-up retain their own scopes. The latter
 continues under V1. See docs/COLOR_METADATA_CONTRACT.md,
 docs/EXTRA_METADATA_CONTRACT.md and docs/CMYK_SOURCE_CONTRACT.md.
+
+### RESOLVED 2026-11-19: still/streaming auxiliary frame levels
+
+Selected payloads now carry their actual emitted-sequence level requirement
+through private VarDCT results and lossless still/streaming writer finalization.
+All 17 offered large upsampled/reference, lossless-patch and LF bindings complete
+with full primary/native rendering on their retained source. Current source
+binding distinguishes the newer accepted LF/upsampling precondition; current
+small/prepared, library, unchanged lock/drift, focused lint, no-default and
+format gates pass. [Exact evidence and limits](docs/FRAME_LEVEL_CONTRACT.md).
+The separately approved optional CLI request/controller repair remains open;
+no new public API is included in this change.
