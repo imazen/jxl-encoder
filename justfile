@@ -2406,3 +2406,6 @@ frame-level-all-offered-evidence manifest output coverage_env:
 
 frame-level-winning-delta-evidence manifest output coverage_env:
     bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" strict_winning --driver-only-coverage --test-target frame_level_delta_contract --features __expert,parallel --source jxl-encoder/src/frame_level.rs --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/api/ingest.rs --source jxl-encoder/src/bit_writer.rs --source jxl-encoder/src/headers/frame_header.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+jpeg-native-edge-controls cjxl djxl output:
+    python3 scripts/jpeg_native_edge_controls.py {{quote(cjxl)}} {{quote(djxl)}} {{quote(output)}}
