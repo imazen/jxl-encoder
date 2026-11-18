@@ -2605,3 +2605,12 @@ color-optional-icc-runtime-controls-check manifest:
     cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder
     just color-optional-icc-all-candidate {{quote(manifest)}}
     cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,jpeg-reencoding,chroma-subsampling --test source_color_contract -- -D warnings
+
+cmyk-raw-frame-oracle-build build output:
+    c++ -std=c++17 -O2 -I{{quote(build + "/lib/include")}} scripts/cmyk_raw_frame_oracle.cc -L{{quote(build + "/lib")}} -Wl,-rpath,{{quote(build + "/lib")}} -ljxl -ljxl_cms -o {{quote(output)}}
+    {{quote(output)}} --version
+
+cmyk-native-source-helper source build:
+    cmake -S {{quote(source)}} -B {{quote(build)}} -DCMAKE_PROJECT_INCLUDE={{quote(justfile_directory() + "/scripts/libjxl_original_profile.cmake")}}
+    cmake --build {{quote(build)}} --target jxl-cmyk-frames --parallel 4
+    {{quote(build + "/tools/jxl-cmyk-frames")}} --version
