@@ -18,6 +18,22 @@ if (root / '.git').exists() or not (root.parent.parent / 'provenance.json').is_f
     p.error('requires an owned clean-source export')
 a.output.mkdir(exist_ok=False)
 cases = [
+    ('width-cli-output', 'jxl-encoder/src/vardct/encoder.rs',
+     'needs_modular_32bit: self.output_needs_modular_32bit(width, height, extras)',
+     'needs_modular_32bit: self.force_modular_32bit.load(core::sync::atomic::Ordering::Relaxed)',
+     'modular_width', 'png16_alpha_declares_level_ten'),
+    ('width-static-output', 'jxl-encoder/src/vardct/encoder.rs',
+     'needs_modular_32bit: self.output_needs_modular_32bit(width, height, &[])',
+     'needs_modular_32bit: self.force_modular_32bit.load(core::sync::atomic::Ordering::Relaxed)',
+     'modular_width_level_contract', 'every_offered_policy'),
+    ('width-two-pass-output', 'jxl-encoder/src/vardct/encoder.rs',
+     'needs_modular_32bit: self.output_needs_modular_32bit(width, height, extras)',
+     'needs_modular_32bit: self.force_modular_32bit.load(core::sync::atomic::Ordering::Relaxed)',
+     'modular_width_level_contract', 'strict_source_and_extra_precision'),
+    ('width-extra-precision', 'jxl-encoder/src/vardct/encoder.rs',
+     '.build_file_header(width, height, &information)',
+     '.build_file_header(width, height, &[])',
+     'modular_width_level_contract', 'strict_source_and_extra_precision'),
     ('level-record', 'jxl-encoder/src/headers/frame_header.rs',
      '        writer.record_frame(self)', '        Ok(())', None, 'frame_level::'),
     ('level-compact-record', 'jxl-encoder/src/headers/frame_header.rs',
@@ -403,6 +419,13 @@ for name, source, before, after, target, selection in cases:
             command += ['--source', 'jxl-encoder/src/frame_level.rs',
                         '--source', 'jxl-encoder/src/bit_writer.rs',
                         '--source', 'jxl-encoder/src/headers/frame_header.rs']
+        if name == 'width-cli-output':
+            command += ['--package', 'jxl-encoder-cli', '--features', 'jpeg-reencoding',
+                        '--source', 'jxl-encoder-cli/src/main.rs',
+                        '--source', 'jxl-encoder/src/headers/file_header.rs']
+        elif name.startswith('width-'):
+            command += ['--features', '__expert,jpeg-reencoding',
+                        '--source', 'jxl-encoder/src/headers/file_header.rs']
         if name.startswith('anim-'):
             command += ['--source', 'jxl-encoder/src/api/animate.rs',
                         '--source', 'jxl-encoder/src/api/animation.rs',

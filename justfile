@@ -2431,3 +2431,132 @@ archived-runtime-stage archive template output:
 archived-runtime-control archive template runtime output:
     just archived-runtime-stage {{quote(archive)}} {{quote(template)}} {{quote(runtime)}}
     just frame-level-archived-replay {{quote(archive)}} {{quote(runtime)}} {{quote(output)}} small_frames_keep_level_five
+
+# Issue 144: pinned modular-width declaration evidence.
+decoder-dht-pin-validation manifest:
+    cargo metadata --locked --manifest-path {{quote(manifest)}} --no-deps --format-version 1 > "$TMPDIR/decoder-dht-pin-metadata.json"
+    cargo test --locked --manifest-path {{quote(manifest)}} --workspace --all-targets --features __expert,jpeg-reencoding -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} --workspace --doc --features __expert,jpeg-reencoding
+    cargo clippy --locked --manifest-path {{quote(manifest)}} --workspace --all-targets --features __expert,jpeg-reencoding -- -D warnings
+    cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,jpeg-reencoding
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder -p jxl-encoder-simd -p jxl-encoder-cli -p jxl-encoder-macros -p zenjxl-tuning-runner -- --check
+
+modular-width-previous-lock-control binary:
+    {{quote(binary)}} hash_lock --nocapture --test-threads=1
+
+modular-width-lock-control manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,jpeg-reencoding --test it hash_lock -- --nocapture --test-threads=1
+
+modular-width-lock-evidence manifest revision output:
+    python3 scripts/modular_width_lock_evidence.py {{quote(manifest)}} {{quote(revision)}} {{quote(output)}}
+
+modular-width-pixel-replay manifest pairs output:
+    cargo run --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,jpeg-reencoding --example modular_width_pixel_replay -- {{quote(pairs)}} {{quote(output)}}
+
+modular-width-strict-check manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,jpeg-reencoding --test modular_width_level_contract strict_source_and_extra_precision -- --nocapture --test-threads=1
+
+modular-width-offered-check manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,jpeg-reencoding --test modular_width_level_contract every_offered_policy -- --nocapture --test-threads=1
+
+modular-width-focused manifest:
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder
+    just modular-width-strict-check {{quote(manifest)}}
+    just modular-width-offered-check {{quote(manifest)}}
+    just modular-width-lock-control {{quote(manifest)}}
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,jpeg-reencoding --test animation_contract -- --test-threads=1
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,jpeg-reencoding --lib --test animation_contract --test modular_width_level_contract --test it --example modular_width_pixel_replay -- -D warnings
+
+modular-width-coverage manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" "" --test-target modular_width_level_contract --features __expert,jpeg-reencoding --source jxl-encoder/src/vardct/encoder.rs --source jxl-encoder/src/api.rs --source jxl-encoder/src/headers/file_header.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+modular-width-faults manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/test_alpha_squeeze_mutation.py "$2" "$3" --case width-static-output --case width-two-pass-output --case width-extra-precision' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+modular-width-regions llvm output archive reference_root:
+    python3 scripts/color_admission_coverage.py {{quote(llvm)}} {{quote(output)}} {{quote(archive)}} --modular-width-levels --reference-root {{quote(reference_root)}}
+
+modular-width-minimal manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert --test modular_width_level_contract -- --test-threads=1
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert --lib --test modular_width_level_contract -- -D warnings
+    cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features
+
+modular-width-header-coverage manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" modular_16bit_rule --features __expert,jpeg-reencoding --source jxl-encoder/src/headers/file_header.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+modular-width-region-union llvm output matrix header reference_root:
+    python3 scripts/color_admission_coverage.py {{quote(llvm)}} {{quote(output)}} {{quote(matrix)}} {{quote(header)}} --modular-width-levels --reference-root {{quote(reference_root)}}
+
+modular-width-post-fault-validation manifest artifacts coverage_env:
+    just modular-width-header-coverage {{quote(manifest)}} {{quote(artifacts + "/header")}} {{quote(coverage_env)}}
+    just modular-width-minimal {{quote(manifest)}}
+    just modular-width-focused {{quote(manifest)}}
+    just decoder-dht-pin-validation {{quote(manifest)}}
+
+modular-width-library-continuation manifest:
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,jpeg-reencoding --lib api_tests::test_pixel_layout_f16 -- --test-threads=1
+    just decoder-dht-pin-validation {{quote(manifest)}}
+
+modular-width-cli-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" "" --package jxl-encoder-cli --test-target modular_width --features jpeg-reencoding --source jxl-encoder-cli/src/main.rs --source jxl-encoder/src/vardct/encoder.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+modular-width-cli-fault manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/test_alpha_squeeze_mutation.py "$2" "$3" --case width-cli-output' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+modular-width-final-locks manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,jpeg-reencoding,parallel,parallel-tree-learning --test modular_width_level_contract --test animation_contract -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --test it -- strategy_libjxl_byte_lock divergence_table_drift --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel --test alpha_squeeze_matrix precomputed_and_prequantized -- --test-threads=1
+
+modular-width-jpeg-fixtures manifest root_file:
+    cargo run --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features jpeg-reencoding --example jpeg_fixture_setup -- {{quote(root_file)}}
+
+modular-width-format-control manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,jpeg-reencoding --test it -- f16_input_roundtrip::rgb_linear_f16_roundtrips hdr_vdp2_chunk3::vdp2_pq_pipeline_decodes non_finite_action::sanitize_mode sixteenbit_metadata::test_lossy_rgba16 --test-threads=1
+
+modular-width-format-evidence manifest revision output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/modular_width_format_evidence.py "$2" "$3" "$4"' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(revision)}} {{quote(output)}}
+
+modular-width-workspace-resume manifest previous_log output:
+    python3 scripts/resume_workspace_validation.py {{quote(manifest)}} {{quote(previous_log)}} {{quote(output)}}
+
+modular-width-maintenance-lint manifest:
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,jpeg-reencoding --lib --test it -- -D warnings
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder-cli --features jpeg-reencoding --test modular_width -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder -p jxl-encoder-cli -- --check
+
+modular-width-cli-final manifest artifacts coverage_env:
+    just modular-width-cli-fault {{quote(manifest)}} {{quote(artifacts)}} {{quote(coverage_env)}}
+    just modular-width-maintenance-lint {{quote(manifest)}}
+
+modular-width-custom-harness binary:
+    {{quote(binary)}}
+
+modular-width-workspace-receipted manifest previous_log original_receipt prior_progress output:
+    python3 scripts/resume_workspace_validation.py {{quote(manifest)}} {{quote(previous_log)}} {{quote(output)}} --pass-receipt {{quote(original_receipt)}} --previous-receipt {{quote(prior_progress)}}
+
+modular-width-cargo-custom-harness manifest:
+    cargo test --locked --verbose --manifest-path {{quote(manifest)}} -p jxl-encoder-simd --bench kernel_tiers -- --test-threads=1
+
+modular-width-cargo-custom-harness-check manifest:
+    just modular-width-cargo-custom-harness {{quote(manifest)}}
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder-simd --bench kernel_tiers -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder-simd -- --check
+
+modular-width-workspace-postchecks manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} --workspace --doc --features __expert,jpeg-reencoding
+    cargo clippy --locked --manifest-path {{quote(manifest)}} --workspace --all-targets --features __expert,jpeg-reencoding -- -D warnings
+    cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,jpeg-reencoding
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder -p jxl-encoder-simd -p jxl-encoder-cli -p jxl-encoder-macros -p zenjxl-tuning-runner -- --check
+
+modular-width-workspace-lint-continuation manifest:
+    cargo clippy --keep-going --locked --manifest-path {{quote(manifest)}} --workspace --all-targets --features __expert,jpeg-reencoding -- -D warnings
+    cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,jpeg-reencoding
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder -p jxl-encoder-simd -p jxl-encoder-cli -p jxl-encoder-macros -p zenjxl-tuning-runner -- --check
+
+modular-width-scoped-final manifest:
+    cargo clippy --locked --manifest-path {{quote(manifest)}} --workspace --lib --tests --bins --features __expert,jpeg-reencoding -- -D warnings
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,jpeg-reencoding --example modular_width_pixel_replay --example jpeg_pixel_parity --example lossy_multiseed_isolate_ab -- -D warnings
+    cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,jpeg-reencoding
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder -p jxl-encoder-simd -p jxl-encoder-cli -p jxl-encoder-macros -p zenjxl-tuning-runner -- --check

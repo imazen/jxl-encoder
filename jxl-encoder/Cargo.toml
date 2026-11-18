@@ -3416,3 +3416,7 @@ required-features = ["__expert"]
 [[example]]
 name = "color_gamma_decode"
 required-features = ["__expert"]
+
+[[example]]
+name = "modular_width_pixel_replay"
+required-features = ["__expert"]
