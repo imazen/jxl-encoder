@@ -1832,8 +1832,8 @@ impl LosslessConfig {
     /// `container::wrap_in_container`, which meant a second writer of the
     /// same ISO/IEC 18181-2 boxes living downstream.
     ///
-    /// Metadata implies a container, so the output is never a bare
-    /// codestream when any field is set.
+    /// Metadata boxes follow the configured container policy. `Never`
+    /// drops container metadata and rejects outputs requiring Level 10.
     #[track_caller]
     pub fn encode_animation_with_metadata(
         &self,
@@ -6167,6 +6167,13 @@ impl<'a> ExtraChannel<'a> {
 }
 
 impl<'a> EncodeRequest<'a> {
+    fn container_mode(&self) -> ContainerMode {
+        match self.config {
+            ConfigRef::Lossless(config) => config.container_mode,
+            ConfigRef::Lossy(config) => config.container_mode,
+        }
+    }
+
     // CMYK source interpretation comes from its required ICC, including
     // separate CMY/Black buffers. Omitted simple-selector fields cannot choose
     // a source transfer function or perceptual-loop domain.
@@ -6356,6 +6363,7 @@ impl<'a> EncodeRequest<'a> {
             self.height,
             self.metadata,
             self.brotli_metadata_quality,
+            self.container_mode(),
         )?;
         crate::error::check_stop(self.stop).map_err(at_from)?;
         Ok(output)
@@ -6941,7 +6949,8 @@ impl<'a> EncodeRequest<'a> {
             self.metadata,
             self.brotli_metadata_quality,
             level,
-        );
+            self.container_mode(),
+        )?;
 
         stats.output_size = output.len();
         // Poll before handing bytes to any caller-owned destination, including
@@ -10952,13 +10961,14 @@ impl LosslessEncoder {
             jumbf: self.jumbf.as_deref(),
             ..Default::default()
         };
-        let output = crate::container::wrap_encoded(
+        let output = crate::api::ingest::wrap_output(
             codestream,
             self.icc_profile.as_deref(),
-            level,
             &boxes,
             self.brotli_metadata_quality,
-        );
+            level,
+            self.cfg.container_mode,
+        )?;
 
         stats.output_size = output.len();
         Ok(EncodeResult {

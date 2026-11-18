@@ -2960,3 +2960,10 @@ Remaining layout inventory is tracked separately in the progressive contract.
 | Site | Encoder behavior | Reference units | Qualification |
 |---|---|---|---|
 | `vardct/rate_control.rs::adjust_quant_field` | Multiply by error/target for unmet tiles; enforce minimum finer progress after damping, subject to caller bounds | v0.12 `Quantizer::inv_quant_ac` divides decoded AC steps by the integer field. This separate controller is not the complete libjxl search policy. | Strict-first native/primary pixel and prepared-entry checks, all seventeen audit bindings, integer/damping controls and restored arithmetic faults pass. No gate or registry-value changes. Broad/unchanged-lock checks and all 33 update regions pass; surrounding loop gaps and limits: RATE_CONTROL_CONTRACT.md. |
+
+
+### Issue 144: configured container finalization
+
+| Site | Encoder policy | Pinned v0.12 / format control | Status |
+|---|---|---|---|
+| `api/ingest::{wrap_output,wrap_metadata_container,finish_animation_output}` and `container::wrap_encoded` | Consume the existing policy at pixel output owners. Always forces framing; Auto preserves existing output; Never drops box metadata, preserves codestream ICC and rejects Level10. No strategy gate. | v0.12 container1 forces framing; native container0 is automatic and can frame Level10. The existing Never API explicitly promises a stricter refusal. | Shared correctness repair, November19; no default byte movement or gate-registry value change. Caller evidence and pending destination-wrapper/region audit: FRAME_LEVEL_CONTRACT.md. |

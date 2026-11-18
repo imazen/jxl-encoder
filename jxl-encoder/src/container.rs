@@ -406,8 +406,9 @@ pub(crate) fn wrap_encoded(
     level: u8,
     boxes: &EncodedBoxes<'_>,
     brotli_quality: Option<u32>,
+    force_container: bool,
 ) -> Vec<u8> {
-    if boxes.is_empty() && !level_requires_container(level) {
+    if !force_container && boxes.is_empty() && !level_requires_container(level) {
         return codestream;
     }
     let mut meta = Vec::new();
@@ -2271,7 +2272,7 @@ mod tests {
             hcdr: Some(b"hdr"),
             ..Default::default()
         };
-        let result = wrap_encoded(codestream.clone(), Some(&icc), 5, &boxes, None);
+        let result = wrap_encoded(codestream.clone(), Some(&icc), 5, &boxes, None, false);
         assert_eq!(
             types(&result),
             [
@@ -2288,7 +2289,8 @@ mod tests {
                 Some(&icc),
                 5,
                 &EncodedBoxes::default(),
-                None
+                None,
+                false,
             ),
             codestream
         );

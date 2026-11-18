@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+- Honor configured Always/Never container policies in pixel requests,
+  streaming and animation; reject unframed Level 10 output and retain
+  codestream ICC when dropping container-only metadata.
+
 - Pin isolated current-decoder HLG/global-squeeze repairs; use the current
   native decoder alias for optional controller measurements with Level 10
   format precision. Preserve the released compatibility oracle.

@@ -7,7 +7,7 @@
 
 /// Container-wrap policy for the encoded JXL output.
 ///
-/// Mirrors libjxl `cjxl --container 0|1`. The default ([`Auto`]) wraps
+/// The default ([`Auto`]) wraps
 /// the codestream in a JXL container (`JXL ` signature box +
 /// `jxlc`/`jxlp` data boxes + any metadata boxes) **only** when
 /// required — i.e., the codestream uses a level that requires the
@@ -21,6 +21,10 @@
 /// dropped); this fails the encode (returns
 /// [`crate::EncodeError::InvalidInput`]) if the codestream level requires a
 /// container, since the result would be unreadable.
+///
+/// Pixel requests, streaming encoders and animations consume this policy.
+/// JPEG reconstruction methods explicitly return containers; their separate
+/// raw-codestream methods explicitly return codestreams.
 ///
 /// [`Auto`]: ContainerMode::Auto
 /// [`Always`]: ContainerMode::Always
@@ -39,7 +43,8 @@ pub enum ContainerMode {
     /// / JUMBF / colr / hCdR silently (they have nowhere to go without
     /// the container). Returns [`crate::EncodeError::InvalidInput`] when the
     /// codestream level requires a container (e.g. level 10).
-    /// Equivalent to libjxl `--container 0`.
+    /// Stricter than libjxl v0.12 CLI `--container=0`, which may wrap
+    /// when the level requires a container.
     Never,
 }
 

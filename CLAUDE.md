@@ -7000,3 +7000,15 @@ and permits Level 10 format precision; request resource caps remain separate.
 Released 0.3 compatibility tests remain pinned independently. Integration
 qualification is recorded in [RATE_CONTROL_CONTRACT.md](docs/RATE_CONTROL_CONTRACT.md);
 the approved public request/CLI change remains a separate PR requirement.
+
+
+### 2026-11-19: configured pixel-output container policy
+
+The stored container selection was not consumed by pixel finalizers. Shared
+request/streaming/animation finalization now honors Always and Never, including
+Level10 refusal and preserved embedded ICC. Default Auto bytes and existing
+locks remain unchanged. The final minimal caller matrix and default library/
+locks/lint pass; destination-wrapper/region checks and the approved controller
+CLI integration remain separately in progress. Native CLI container0 is
+automatic; our documented Never is deliberately stricter.
+[Evidence and current limits](docs/FRAME_LEVEL_CONTRACT.md).

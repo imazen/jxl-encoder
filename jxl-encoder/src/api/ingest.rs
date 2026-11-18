@@ -1278,7 +1278,8 @@ pub(crate) fn wrap_metadata_container(
     metadata: Option<&ImageMetadata<'_>>,
     brotli_quality: Option<u32>,
     level: u8,
-) -> Vec<u8> {
+    mode: ContainerMode,
+) -> Result<Vec<u8>> {
     let boxes = metadata.map_or_else(Default::default, |m| crate::container::EncodedBoxes {
         exif: m.exif,
         xmp: m.xmp,
@@ -1286,7 +1287,35 @@ pub(crate) fn wrap_metadata_container(
         colr: m.colr_payload,
         hcdr: m.hcdr_payload,
     });
-    crate::container::wrap_encoded(codestream, icc, level, &boxes, brotli_quality)
+    wrap_output(codestream, icc, &boxes, brotli_quality, level, mode)
+}
+
+/// Apply the configured policy at every pixel-output owner.
+/// ICC stays inside the codestream even when container-only metadata is dropped.
+pub(crate) fn wrap_output(
+    codestream: Vec<u8>,
+    icc: Option<&[u8]>,
+    boxes: &crate::container::EncodedBoxes<'_>,
+    brotli_quality: Option<u32>,
+    level: u8,
+    mode: ContainerMode,
+) -> Result<Vec<u8>> {
+    if mode == ContainerMode::Never {
+        if level != 5 {
+            return Err(at!(EncodeError::InvalidInput {
+                message: "container mode Never cannot represent a Level 10 codestream".into(),
+            }));
+        }
+        return Ok(codestream);
+    }
+    Ok(crate::container::wrap_encoded(
+        codestream,
+        icc,
+        level,
+        boxes,
+        brotli_quality,
+        mode == ContainerMode::Always,
+    ))
 }
 
 /// Pick the codestream level required for an image with the given
@@ -1318,6 +1347,7 @@ pub(crate) fn finish_animation_output(
     height: u32,
     metadata: Option<&ImageMetadata<'_>>,
     brotli_metadata_quality: Option<u32>,
+    mode: ContainerMode,
 ) -> Result<Vec<u8>> {
     use crate::headers::extra_channels::ExtraChannelType;
     let num_ec = encoded.metadata.extra_channels.len() as u32;
@@ -1339,13 +1369,14 @@ pub(crate) fn finish_animation_output(
     )?
     .max(encoded.frame_level);
 
-    Ok(wrap_metadata_container(
+    wrap_metadata_container(
         encoded.codestream,
         metadata.and_then(|m| m.icc_profile),
         metadata,
         brotli_metadata_quality,
         level,
-    ))
+        mode,
+    )
 }
 
 pub(crate) fn compute_required_level(

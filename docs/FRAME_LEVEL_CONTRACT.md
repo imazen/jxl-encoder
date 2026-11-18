@@ -419,3 +419,44 @@ nonzero record remains retained. Removing those lines changes no function
 body, assertion or mapped line position, and the separate scoped format check
 passes. CI explicitly selects small default/minimal controls after native
 reference tools are installed; large families remain caller-selected probes.
+
+
+## November 19: configured pixel-output container policy
+
+The actual CLI controller follow-up and separate ordinary requests reproduce
+ignored container policies: `Always` returned a bare32x17 stream, and `Never`
+accepted the262145x1 Level10 output. The config stored the selection but no
+output finalizer read it. `container-policy-before-gates-v1` retains both
+ordinary failing regressions and successful unmodified v0.12 controls.
+
+Still/prepared requests, the lossless streaming finalizer and animation now
+apply the same private policy helper. Lossy streaming already reuses the
+request path. `Always` forces framing; `Auto` preserves prior byte choices;
+`Never` drops container-only metadata and returns InvalidInput when the
+computed header/frame level requires framing. Embedded ICC stays inside the
+codestream: complete extracted codestream bytes agree across all three
+policies on the frozen sRGB ICC controls.
+
+The native v0.12 CLI's `--container=0` can wrap when required. Our existing
+`ContainerMode::Never` contract is stricter and promises a refusal; that
+intentional API difference remains. JPEG reconstruction and explicit raw
+codestream methods have their separate mandatory-wrapper/raw contracts and
+do not pass through these pixel finalizers.
+
+The final minimal-feature matrix passes every selected request, legacy,
+streaming, animation, metadata and dimension-level case under all17 offered
+policies. The final default ICC control, default library, unchanged normal/
+strict byte locks and divergence checks, strict focused Clippy, minimal
+compilation and scoped format checks pass. Earlier combined default batches
+retain their failing ICC observer-domain verdict; their ordinary/streaming/
+animation/level cases pass. The corrected ICC observer explicitly requests
+native sRGB and maps the primary's documented linear fallback for the frozen
+sRGB profile, preserving the0.01 source and0.001 decoder-agreement bounds.
+
+Accepted source: `container-policy-core-selected-v4`; final qualification:
+`container-policy-final-isolated-v4` and `container-policy-final-gates-v4`.
+Wrapper rc0,216seconds,peak RSS1.56GiB,minimum available17,499MiB. These are
+build/test resources, not encoder latency. Additional destination-wrapper
+checks and the mapped-region audit remain in progress; test counts do not
+establish coverage. The separately approved request-controller/CLI API remains
+under qualification and is not part of this shared policy change.
