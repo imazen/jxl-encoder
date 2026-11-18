@@ -6602,3 +6602,13 @@ Linux ARM. The sample tests failed explicitly on the missing environment
 binding. The setup action now builds and exports that oracle on both Linux
 architectures, retaining the checksum-pinned static cjxl/djxl on x64.
 The cache key includes the oracle sources on both architectures.
+
+
+### RESOLVED 2026-11-18: optional ICC quantization controls crossed CMS implementations
+
+The skcms/static CI reference produces native error 0.005721271 where the
+frozen LCMS control allowed 0.0057188603. Independent cjpeg coefficient
+controls now run through the same pinned v0.12 tools as the tested streams.
+The 0.005 floor and 2e-6 allowance remain unchanged; production bytes do not
+change. Local LCMS and static reference controls pass. See
+[the source-color contract](docs/SOURCE_COLOR_CONVERSION.md#november-18-runtime-matched-optional-icc-quantization-controls).

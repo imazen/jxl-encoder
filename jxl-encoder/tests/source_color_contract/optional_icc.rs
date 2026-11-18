@@ -2,19 +2,141 @@
 use super::*;
 use jxl_encoder::{ChromaSubsampling, ImageMetadata};
 
-// Native LCMS -> RGB8 -> cjpeg q100 -> cjxl/djxl v0.12 controls.
-// Quantization is part of this RGB8 path; compare physical source error
-// against both the original floor and the independently observed control.
+// Native LCMS -> RGB8 -> cjpeg q100 controls retain their independent JPEG
+// coefficients. Decode those with the selected v0.12 tools so the reference
+// includes the same runtime CMS and floating-point implementation as the cell.
+fn reference_sha256(data: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hash = Sha256::new();
+    hash.update(data);
+    let mut out = String::with_capacity(64);
+    for byte in hash.finalize().iter() {
+        out.push_str(&format!("{byte:02x}"));
+    }
+    out
+}
+
 fn native_quantization_bound(label: &str, source: [f32; 3]) -> f32 {
-    let row = include_str!("optional_icc_native.tsv")
-        .lines()
-        .find(|row| row.starts_with(&format!("{label}\t")))
+    static CONTROLS: std::sync::OnceLock<std::collections::BTreeMap<String, [f32; 3]>> =
+        std::sync::OnceLock::new();
+    let controls = CONTROLS.get_or_init(|| {
+        let root = directory();
+        let controls: serde_json::Value =
+            serde_json::from_str(include_str!("optional_icc_jpeg_controls.json")).unwrap();
+        let unhex = |text: &str| {
+            assert!(text.len().is_multiple_of(2));
+            (0..text.len())
+                .step_by(2)
+                .map(|i| u8::from_str_radix(&text[i..i + 2], 16).unwrap())
+                .collect::<Vec<_>>()
+        };
+        let prefix = unhex(controls["prefix_hex"].as_str().unwrap());
+        let suffix = unhex(controls["suffix_hex"].as_str().unwrap());
+        let cjxl = jxl_encoder::test_helpers::cjxl_path();
+        let djxl = jxl_encoder::test_helpers::djxl_path();
+        std::fs::write(
+            root.join("tools.json"),
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "cjxl":cjxl,"djxl":djxl,
+                "cjxl_sha256":reference_sha256(&std::fs::read(&cjxl).unwrap()),
+                "djxl_sha256":reference_sha256(&std::fs::read(&djxl).unwrap())
+            }))
+            .unwrap(),
+        )
         .unwrap();
-    let reference: Vec<f32> = row
-        .split('\t')
-        .skip(1)
-        .map(|x| x.parse().unwrap())
-        .collect();
+        let mut result = std::collections::BTreeMap::new();
+        for row in controls["cases"].as_array().unwrap() {
+            let label = row["label"].as_str().unwrap();
+            let out = root.join(label);
+            std::fs::create_dir(&out).unwrap();
+            let profile: &[u8] = match row["profile"].as_str().unwrap() {
+                "p3" => zenpixels_convert::icc_profiles::DISPLAY_P3_V4,
+                "2020" => zenpixels_convert::icc_profiles::REC2020_V4,
+                other => panic!("unknown native control profile: {other}"),
+            };
+            assert_eq!(
+                reference_sha256(profile),
+                row["profile_sha256"].as_str().unwrap()
+            );
+            let mut jpeg = prefix.clone();
+            jpeg.extend(unhex(row["middle_hex"].as_str().unwrap()));
+            jpeg.extend_from_slice(&suffix);
+            assert_eq!(
+                reference_sha256(&jpeg),
+                row["jpeg_sha256"].as_str().unwrap()
+            );
+            assert_eq!(&jpeg[..2], &[0xff, 0xd8]);
+            // Add the independently bound ICC metadata without changing any
+            // quantization table, coefficient or entropy-coded JPEG byte.
+            let mut tagged = vec![0xff, 0xd8, 0xff, 0xe2];
+            tagged.extend_from_slice(&u16::try_from(profile.len() + 16).unwrap().to_be_bytes());
+            tagged.extend_from_slice(b"ICC_PROFILE\0");
+            tagged.extend_from_slice(&[1, 1]);
+            tagged.extend_from_slice(profile);
+            tagged.extend_from_slice(&jpeg[2..]);
+            let input = out.join("native.jpg");
+            let stream = out.join("native.jxl");
+            let image = out.join("native.pfm");
+            std::fs::write(&input, tagged).unwrap();
+            for (name, tool, from, to, arguments) in [
+                (
+                    "encode",
+                    &cjxl,
+                    &input,
+                    &stream,
+                    &["--lossless_jpeg=1", "-e", "3", "--num_threads=1"][..],
+                ),
+                (
+                    "decode",
+                    &djxl,
+                    &stream,
+                    &image,
+                    &["--num_threads=1", "--color_space=RGB_D65_SRG_Rel_Lin"][..],
+                ),
+            ] {
+                let command = std::process::Command::new(tool)
+                    .arg(from)
+                    .arg(to)
+                    .args(arguments)
+                    .output()
+                    .unwrap();
+                std::fs::write(
+                    out.join(format!("{name}.log")),
+                    [command.stdout, command.stderr].concat(),
+                )
+                .unwrap();
+                assert!(command.status.success(), "native {name} for {label}");
+            }
+            let pixels = pfm::read_pfm_samples(&image, (32, 17));
+            assert_eq!(pixels.len(), 32 * 17 * 3);
+            assert!(pixels.iter().all(|x| x.is_finite()));
+            let first: [f32; 3] = pixels[..3].try_into().unwrap();
+            assert!(
+                pixels
+                    .iter()
+                    .enumerate()
+                    .all(|(i, &v)| v.to_bits() == first[i % 3].to_bits())
+            );
+            assert!(
+                result.insert(label.to_owned(), first).is_none(),
+                "duplicate native quantization control"
+            );
+        }
+        assert_eq!(
+            result.len(),
+            15,
+            "complete native quantization fixture selection"
+        );
+        std::fs::write(
+            root.join("runtime.json"),
+            serde_json::to_vec_pretty(&result).unwrap(),
+        )
+        .unwrap();
+        result
+    });
+    let reference = controls
+        .get(label)
+        .expect("missing independent quantization control");
     let quantization_error = reference
         .iter()
         .zip(source)

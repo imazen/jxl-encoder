@@ -351,3 +351,22 @@ Linux ARM. The sample tests failed explicitly on the missing environment
 binding. The setup action now builds and exports that oracle on both Linux
 architectures, retaining the checksum-pinned static cjxl/djxl on x64.
 The cache key includes the oracle sources on both architectures.
+
+
+### November 18: runtime-matched optional ICC quantization controls
+
+CI run 44284604052 reached the numerical comparisons, then found a native
+error of 0.005721271 against the LCMS-table bound of 0.0057188603 on the
+skcms/static reference runtime. The test now retains the independent cjpeg
+coefficient streams as factored hexadecimal text and decodes them with each
+run's version-guarded v0.12 cjxl/djxl. ICC hashes and JPEG hashes bind the
+inputs; coefficient bytes are preserved when attaching the matching profile.
+The 0.005 floor and 2e-6 comparison allowance are unchanged. This replaces a
+cross-CMS frozen numerical oracle with a runtime-matched native control; it
+does not change production encoding or establish arbitrary-profile accuracy.
+
+Both selected static and local LCMS reference runs pass every affected
+optional-ICC source test. The reference files, complete sample checks and
+tool hashes are retained with each run. The earlier frozen TSV remains a
+historical LCMS observation. The fixture generator reproduces the committed
+text exactly from the independent native artifacts.

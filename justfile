@@ -2600,3 +2600,8 @@ color-optional-icc-broad manifest:
     cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features __expert,jpeg-reencoding,chroma-subsampling --lib --test optional_icc_minimal_contract -- -D warnings
     cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder -- --check
 
+
+color-optional-icc-runtime-controls-check manifest:
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder
+    just color-optional-icc-all-candidate {{quote(manifest)}}
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,jpeg-reencoding,chroma-subsampling --test source_color_contract -- -D warnings
