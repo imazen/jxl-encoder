@@ -5638,6 +5638,7 @@ struct LossyPixels {
     bit_depth_16: bool,
     synthesised_black_u8: Option<Vec<u8>>,
     synthesised_black_u16: Option<Vec<u16>>,
+    cmyk_guard: [crate::budget::BudgetGuard; 2],
 }
 
 /// Retain the first observed stop for the duration of one request. Some
@@ -6037,6 +6038,11 @@ impl<'a> ExtraChannel<'a> {
     /// the Black extra channel is forbidden at level 5
     /// (`compute_codestream_level`).
     ///
+    /// Attach a matching CMYK ICC through [`ImageMetadata`] and
+    /// [`EncodeRequest::with_metadata`]. Lossy integer source conversion uses
+    /// that profile; lossless storage preserves the supplied CMY/K codes.
+    /// A separately supplied Black channel retains its own sample precision.
+    ///
     /// In practice callers should prefer [`PixelLayout::Cmyk8`] which
     /// splits interleaved CMYK input into 3 colour planes + an
     /// automatically-synthesised Black extra channel. Exposed for
@@ -6055,8 +6061,9 @@ impl<'a> ExtraChannel<'a> {
     /// Attach a 16-bit Black (K) channel. Same `0 = full ink,
     /// 65535 = no ink` convention as [`Self::black`]; the channel
     /// info is marked as 16-bit so the decoder preserves the full
-    /// precision. Pairs with [`PixelLayout::Cmyk16`] when callers
-    /// keep their K plane separate from C/M/Y.
+    /// precision. Use RGB(A) layouts carrying CMY when K is separate.
+    /// [`PixelLayout::Cmyk16`] already supplies Black from its fourth component
+    /// and rejects an additional Black buffer.
     pub fn black_u16(data: &'a [u16]) -> Self {
         let mut info = crate::headers::extra_channels::ExtraChannelInfo {
             ec_type: crate::headers::extra_channels::ExtraChannelType::Black,
@@ -6149,6 +6156,21 @@ impl<'a> ExtraChannel<'a> {
 }
 
 impl<'a> EncodeRequest<'a> {
+    // CMYK source interpretation comes from its required ICC, including
+    // separate CMY/Black buffers. Omitted simple-selector fields cannot choose
+    // a source transfer function or perceptual-loop domain.
+    fn lossy_source_color_encoding(&self) -> Option<&crate::ColorEncoding> {
+        if self.layout.is_cmyk()
+            || self.extra_channels.iter().any(|extra| {
+                extra.info.ec_type == crate::headers::extra_channels::ExtraChannelType::Black
+            })
+        {
+            None
+        } else {
+            self.color_encoding.as_ref()
+        }
+    }
+
     /// Match the peak actually written after color and metadata resolution.
     fn resolved_intensity_target(&self) -> f32 {
         self.intensity_target
@@ -6158,8 +6180,7 @@ impl<'a> EncodeRequest<'a> {
                     return 255.0;
                 }
                 let transfer = self
-                    .color_encoding
-                    .as_ref()
+                    .lossy_source_color_encoding()
                     .map(|color| color.transfer_function)
                     .or_else(|| {
                         if self.source_gamma.is_some() {
@@ -6181,8 +6202,9 @@ impl<'a> EncodeRequest<'a> {
     ///
     /// Lossless frames retain their integer samples. Lossy input uses the same
     /// transfer-function conversion as a still request; an ICC profile is
-    /// embedded as the output profile and does not itself transform input.
-    /// Use `with_color_encoding` to specify the lossy input interpretation.
+    /// embedded as the output profile for RGB inputs. CMYK inputs require a
+    /// CMYK profile and use it to interpret CMY/K before lossy conversion.
+    /// Use `with_color_encoding` to specify the lossy RGB input interpretation.
     /// Custom row strides, extra channels, non-Full444 chroma subsampling and
     /// automatic alpha association are rejected; pack frames and select alpha
     /// association explicitly first.
@@ -6246,7 +6268,7 @@ impl<'a> EncodeRequest<'a> {
             validate_lossy_source_encoding(
                 self.layout,
                 self.source_gamma,
-                self.color_encoding.as_ref(),
+                self.lossy_source_color_encoding(),
             )?;
         }
         validate_icc_presence(
@@ -6256,6 +6278,7 @@ impl<'a> EncodeRequest<'a> {
         validate_icc_model(
             self.layout,
             self.metadata.and_then(|metadata| metadata.icc_profile),
+            self.layout.is_cmyk(),
         )?;
         validate_metadata_sizes(
             self.metadata.and_then(|m| m.icc_profile),
@@ -6548,6 +6571,10 @@ impl<'a> EncodeRequest<'a> {
     /// - codestream `BitDepth.bits_per_sample` is `bits`
     /// - decoder sees the correct precision metadata
     ///
+    /// CMYK stored in u8 also supports reduced precisions `1..=8`; CMY
+    /// normalization and the synthesized Black descriptor use that precision.
+    /// A separate Black buffer retains the precision of its constructor.
+    ///
     /// `bits` must be in `1..=16`; out-of-range values are clamped.
     /// Streaming-encoder parity is also wired (LossyEncoder +
     /// LosslessEncoder both expose this builder).
@@ -6698,7 +6725,7 @@ impl<'a> EncodeRequest<'a> {
             validate_lossy_source_encoding(
                 self.layout,
                 self.source_gamma,
-                self.color_encoding.as_ref(),
+                self.lossy_source_color_encoding(),
             )?;
         }
         validate_icc_presence(
@@ -6708,6 +6735,10 @@ impl<'a> EncodeRequest<'a> {
         validate_icc_model(
             self.layout,
             self.metadata.and_then(|metadata| metadata.icc_profile),
+            self.layout.is_cmyk()
+                || self.extra_channels.iter().any(|extra| {
+                    extra.info.ec_type == crate::headers::extra_channels::ExtraChannelType::Black
+                }),
         )?;
         for extra in self.extra_channels {
             extra.info.validate().map_err(at_from)?;
@@ -7747,7 +7778,13 @@ impl<'a> EncodeRequest<'a> {
         if let Some(bits) = self.bits_per_sample {
             file_header.metadata.bit_depth.bits_per_sample = bits;
             for ec in &mut file_header.metadata.extra_channels {
-                ec.bit_depth.bits_per_sample = bits;
+                // A separate Black buffer carries its own precision. Only
+                // interleaved CMYK inherits the layout's precision override.
+                if self.layout.is_cmyk()
+                    || ec.ec_type != crate::headers::extra_channels::ExtraChannelType::Black
+                {
+                    ec.bit_depth.bits_per_sample = bits;
+                }
             }
         }
         // Premultiplied-alpha signaling (lossless portion of #13).
@@ -7925,7 +7962,37 @@ impl<'a> EncodeRequest<'a> {
         pixels: &[u8],
         w: usize,
         h: usize,
+        budget: &alloc::sync::Arc<crate::budget::MemoryBudget>,
     ) -> core::result::Result<LossyPixels, EncodeError> {
+        let source_cmyk = self.layout.is_cmyk()
+            || self.extra_channels.iter().any(|extra| {
+                extra.info.ec_type == crate::headers::extra_channels::ExtraChannelType::Black
+            });
+        if source_cmyk {
+            if self.layout.is_cmyk()
+                && self.extra_channels.iter().any(|extra| {
+                    extra.info.ec_type == crate::headers::extra_channels::ExtraChannelType::Black
+                })
+            {
+                return Err(EncodeError::InvalidInput { message: "CMYK layout already synthesises a Black extra channel; remove the user-supplied Black channel".into() });
+            }
+            if self.source_gamma.is_some()
+                || self
+                    .color_encoding
+                    .as_ref()
+                    .is_some_and(|color| !color.want_icc)
+            {
+                return Err(EncodeError::InvalidInput { message: "CMYK source interpretation requires its ICC profile without a simple color or gamma override".into() });
+            }
+            #[cfg(not(feature = "std"))]
+            return Err(EncodeError::InvalidConfig {
+                message: "CMYK profile conversion requires std".into(),
+            });
+            #[cfg(feature = "std")]
+            return self.prepare_cmyk_pixels(pixels, w, h, budget);
+        }
+        #[cfg(not(feature = "std"))]
+        let _ = budget;
         // Build linear f32 RGB and extract alpha from input layout.
         // Grayscale layouts are expanded to RGB (R=G=B) for VarDCT encoding.
         // When source_gamma is set, use gamma linearization instead of sRGB TF.
@@ -7984,32 +8051,6 @@ impl<'a> EncodeRequest<'a> {
             && self.color_encoding.as_ref().is_some_and(|ce| {
                 ce.transfer_function == crate::headers::color_encoding::TransferFunction::Bt709
             });
-        // CMYK arms (Cmyk8/Cmyk16) deinterleave the K plane and stash
-        // it here for the extras-list construction further down. Set
-        // by the matching layout arm; consumed where the extras Vec
-        // is built. Mutually exclusive with the input check that
-        // rejects a caller-supplied Black extra when the layout
-        // already synthesises one.
-        let mut synthesised_black_u8: Option<Vec<u8>> = None;
-        let mut synthesised_black_u16: Option<Vec<u16>> = None;
-        // Reject a caller-supplied Black extra when the layout already
-        // synthesises one — otherwise the codestream would carry two
-        // Black entries and the second K plane would never reach the
-        // decoder. Same guard as the lossless one-shot path
-        // (api.rs:4242-4248, f2deff72).
-        if self.layout.is_cmyk()
-            && self.extra_channels.iter().any(|ec| {
-                ec.info.ec_type == crate::headers::extra_channels::ExtraChannelType::Black
-            })
-        {
-            return Err(EncodeError::InvalidInput {
-                message: format!(
-                    "PixelLayout::{:?} already synthesises a Black extra channel; \
-                     remove the user-supplied ExtraChannel::black(...)",
-                    self.layout,
-                ),
-            });
-        }
         #[cfg(feature = "__env_var_diagnostics")]
         let _t_conv = crate::clock::Instant::now();
         // Strict parity (W45-RECON part 10): under `srgb_eotf_libjxl_parity`
@@ -8263,98 +8304,8 @@ impl<'a> EncodeRequest<'a> {
                 let alpha = extract_alpha_f32(floats, 4, 3, self.stop);
                 (rgb, Some(alpha), false)
             }
-            // Lossy CMYK. The C/M/Y planes are routed through the
-            // VarDCT (XYB) pipeline via a 1-CMY × (1-K) subtractive
-            // → linear-RGB transform (chunk 3, follow-on to 1b222af),
-            // and the K plane is split off and attached as an
-            // `ExtraChannelType::Black` extra below (handled by the
-            // existing alpha+extras flow). This is the same wire shape
-            // libjxl uses for lossy CMYK — three colour planes carrying
-            // colour in XYB plus a Black extra carrying K
-            // (lib/jxl/enc_image_bundle.cc:57).
-            //
-            // The 1-CMY × (1-K) mapping is the naive uncalibrated
-            // subtractive model: each ink absorbs its complementary
-            // primary, K darkens uniformly. It is NOT colorimetric —
-            // a future chunk can wire either the caller-supplied
-            // CMYK ICC profile (option A) or a hardcoded SWOP/FOGRA
-            // matrix (option B). What it does provide is gamut-
-            // direction correctness: pure cyan input now encodes as
-            // a cyan-ish XYB sample (no red leak), so the perceptual
-            // quantiser allocates bits sensibly. Chunk 2 (1b222af)
-            // shipped a placeholder that treated CMY bytes as if they
-            // were sRGB-encoded R/G/B — a fully-saturated cyan ink
-            // encoded as bright red, an obvious wrong gamut sector.
-            //
-            // The K plane survives the round-trip losslessly because
-            // it travels as a modular extra channel, not through XYB.
-            // Caller gamma + ICC are ignored on the CMY input — they
-            // would only make sense once chunk A/B colour management
-            // lands. Synthesised K is stashed in the per-arm locals
-            // `synthesised_black_u8` / `synthesised_black_u16` and
-            // picked up by the extras-list construction further down.
-            PixelLayout::Cmyk8 => {
-                let n = w * h;
-                if pixels.len() != n * 4 {
-                    return Err(EncodeError::InvalidInput {
-                        message: format!(
-                            "Cmyk8 expects {} bytes ({}x{} × 4), got {}",
-                            n * 4,
-                            w,
-                            h,
-                            pixels.len(),
-                        ),
-                    });
-                }
-                // Deinterleave CMYK → 3-channel CMY + separate K plane.
-                // One pass over the input.
-                let mut cmy = Vec::with_capacity(n * 3);
-                let mut k = Vec::with_capacity(n);
-                for i in 0..n {
-                    if i & 0xF_FFFF == 0 && self.stop.is_some_and(|st| st.check().is_err()) {
-                        break;
-                    }
-                    let base = i * 4;
-                    cmy.push(pixels[base]);
-                    cmy.push(pixels[base + 1]);
-                    cmy.push(pixels[base + 2]);
-                    k.push(pixels[base + 3]);
-                }
-                let linear = cmyk_u8_to_linear_f32_rgb(&cmy, &k, self.stop);
-                synthesised_black_u8 = Some(k);
-                (linear, None, false)
-            }
-            PixelLayout::Cmyk16 => {
-                let n = w * h;
-                if pixels.len() != n * 8 {
-                    return Err(EncodeError::InvalidInput {
-                        message: format!(
-                            "Cmyk16 expects {} bytes ({}x{} × 8), got {}",
-                            n * 8,
-                            w,
-                            h,
-                            pixels.len(),
-                        ),
-                    });
-                }
-                // Deinterleave 16-bit CMYK → 6 bytes of CMY u16 +
-                // separate K u16 plane. Native-endian, matches the
-                // lossless Cmyk16 arm.
-                let mut cmy = Vec::with_capacity(n * 3 * 2);
-                let mut k = Vec::with_capacity(n);
-                for i in 0..n {
-                    if i & 0xF_FFFF == 0 && self.stop.is_some_and(|st| st.check().is_err()) {
-                        break;
-                    }
-                    let base = i * 8;
-                    cmy.extend_from_slice(&pixels[base..base + 6]);
-                    let k_lo = pixels[base + 6];
-                    let k_hi = pixels[base + 7];
-                    k.push(u16::from_ne_bytes([k_lo, k_hi]));
-                }
-                let linear = cmyk_u16_to_linear_f32_rgb(&cmy, &k, u16_max, self.stop);
-                synthesised_black_u16 = Some(k);
-                (linear, None, true)
+            PixelLayout::Cmyk8 | PixelLayout::Cmyk16 => {
+                unreachable!("CMYK input is handled before transfer-function conversion")
             }
         };
         // Pixel converters early-exit with a partial buffer on stop; the
@@ -8431,8 +8382,12 @@ impl<'a> EncodeRequest<'a> {
             linear_rgb,
             alpha,
             bit_depth_16,
-            synthesised_black_u8,
-            synthesised_black_u16,
+            synthesised_black_u8: None,
+            synthesised_black_u16: None,
+            cmyk_guard: [
+                crate::budget::BudgetGuard::inert(),
+                crate::budget::BudgetGuard::inert(),
+            ],
         })
     }
 
@@ -8484,7 +8439,8 @@ impl<'a> EncodeRequest<'a> {
             bit_depth_16,
             synthesised_black_u8,
             synthesised_black_u16,
-        } = self.prepare_lossy_pixels(cfg, pixels, w, h)?;
+            cmyk_guard: _cmyk_guard,
+        } = self.prepare_lossy_pixels(cfg, pixels, w, h, budget)?;
 
         // Alpha is coded losslessly in a lossy encode, so it is coded from the
         // input samples rather than the 8-bit copy above (which only feeds the
@@ -8870,14 +8826,14 @@ impl<'a> EncodeRequest<'a> {
         #[cfg(feature = "butteraugli-loop")]
         {
             enc.butteraugli_iters =
-                cfg.butteraugli_iters_for_input(self.layout, self.color_encoding.as_ref());
+                cfg.butteraugli_iters_for_input(self.layout, self.lossy_source_color_encoding());
             // EX-J11 chunk 4: resolve `HdrLoss::Auto` to a concrete
             // loss now (using caller's `with_color_encoding` if set,
             // else `PixelLayout::implied_transfer_function()`), so the
             // per-iter butteraugli loop reads a fixed variant. PQ /
             // HLG content lands on `Vdp2`; everything else on
             // `Butteraugli` (SDR hash-locks stay byte-identical).
-            enc.hdr_loss = cfg.resolve_hdr_loss(self.layout, self.color_encoding.as_ref());
+            enc.hdr_loss = cfg.resolve_hdr_loss(self.layout, self.lossy_source_color_encoding());
             // #74/#11 (2026-07-15): DISABLE the perceptual quantization loop on the
             // DEFAULT HDR path (PQ/HLG content, which `HdrLoss::Auto` routes to
             // `Vdp2`). MEASURED (benchmarks/hdr_buttloop_blowup_2026-07-15.* +
@@ -8983,6 +8939,13 @@ impl<'a> EncodeRequest<'a> {
                 _ => None,
             }
         });
+        if self.layout.is_cmyk()
+            || self.extra_channels.iter().any(|extra| {
+                extra.info.ec_type == crate::headers::extra_channels::ExtraChannelType::Black
+            })
+        {
+            enc.color_encoding = None;
+        }
         enc.non_finite_action = cfg.non_finite_action;
         enc.budget = Some(alloc::sync::Arc::clone(budget));
         // Premultiplied input: the samples were coded as given; the
@@ -9268,10 +9231,14 @@ impl<'a> EncodeRequest<'a> {
             // (api.rs:3920) bumps to level 10 when
             // `self.layout.is_cmyk()` is true.
             if let Some(ref k_u8) = synthesised_black_u8 {
-                v.push(crate::api::ExtraChannel::black(k_u8));
+                let mut black = crate::api::ExtraChannel::black(k_u8);
+                black.info.bit_depth.bits_per_sample = self.bits_per_sample.unwrap_or(8);
+                v.push(black);
             }
             if let Some(ref k_u16) = synthesised_black_u16 {
-                v.push(crate::api::ExtraChannel::black_u16(k_u16));
+                let mut black = crate::api::ExtraChannel::black_u16(k_u16);
+                black.info.bit_depth.bits_per_sample = self.bits_per_sample.unwrap_or(16);
+                v.push(black);
             }
             if let Some(ec) = alpha_extra(&encode_alpha, &alpha_u16) {
                 v.push(ec);
@@ -9370,7 +9337,7 @@ impl<'a> EncodeRequest<'a> {
         let _source_guard =
             crate::budget::MemoryBudget::reserve_opt(Some(budget), source_bytes as u64)
                 .map_err(EncodeError::from)?;
-        let prepared = self.prepare_lossy_pixels(cfg, pixels, width, rows)?;
+        let prepared = self.prepare_lossy_pixels(cfg, pixels, width, rows, budget)?;
         let matrix = self
             .color_encoding
             .as_ref()
@@ -9920,7 +9887,11 @@ impl LossyEncoder {
             self.color_encoding.as_ref(),
         )?;
         validate_icc_presence(self.color_encoding.as_ref(), self.icc_profile.as_deref())?;
-        validate_icc_model(self.layout, self.icc_profile.as_deref())?;
+        validate_icc_model(
+            self.layout,
+            self.icc_profile.as_deref(),
+            self.layout.is_cmyk(),
+        )?;
         let mut request = self
             .cfg
             .encode_request(self.width, self.height, self.layout);
@@ -10576,7 +10547,11 @@ impl LosslessEncoder {
             crate::vardct::xyb::validate_color_encoding(ce).map_err(at_from)?;
         }
         validate_icc_presence(self.color_encoding.as_ref(), self.icc_profile.as_deref())?;
-        validate_icc_model(self.layout, self.icc_profile.as_deref())?;
+        validate_icc_model(
+            self.layout,
+            self.icc_profile.as_deref(),
+            self.layout.is_cmyk(),
+        )?;
         let mut request = self
             .cfg
             .encode_request(self.width, self.height, self.layout);
@@ -10604,7 +10579,11 @@ impl LosslessEncoder {
         // `EncodeRequest::encode_inner`.
         self.cfg.validate().map_err(at_from)?;
         validate_icc_presence(self.color_encoding.as_ref(), self.icc_profile.as_deref())?;
-        validate_icc_model(self.layout, self.icc_profile.as_deref())?;
+        validate_icc_model(
+            self.layout,
+            self.icc_profile.as_deref(),
+            self.layout.is_cmyk(),
+        )?;
         // Defensive caps on caller-supplied metadata buffers (mirrors
         // EncodeRequest::encode_inner).
         validate_metadata_sizes(
@@ -11639,3 +11618,6 @@ mod planar_admission_tests_95 {
     feature = "jpeg-reencoding"
 ))]
 mod cms;
+
+#[cfg(feature = "std")]
+mod cmyk;

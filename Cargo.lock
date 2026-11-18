@@ -1980,7 +1980,7 @@ dependencies = [
  "exr",
  "gif",
  "image-webp",
- "moxcms",
+ "moxcms 0.8.1",
  "num-traits",
  "png",
  "qoi",
@@ -2203,6 +2203,7 @@ dependencies = [
  "jxl-vardct",
  "jxl_transforms 0.4.3",
  "linear-srgb",
+ "moxcms 0.9.0",
  "once_cell",
  "postcard",
  "rayon",
@@ -2641,6 +2642,15 @@ name = "moxcms"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bb85c154ba489f01b25c0d36ae69a87e4a1c73a72631fc6c0eb6dde34a73e44b"
+dependencies = [
+ "num-traits",
+ "pxfm",
+]
+
+[[package]]
+name = "moxcms"
+version = "0.9.0"
+source = "git+https://github.com/imazen/moxcms?rev=0425eb09570496c439462a334f116666cb9f39c9#0425eb09570496c439462a334f116666cb9f39c9"
 dependencies = [
  "num-traits",
  "pxfm",
@@ -5372,7 +5382,7 @@ dependencies = [
  "linear-srgb",
  "lz4_flex 0.14.0",
  "magetypes",
- "moxcms",
+ "moxcms 0.8.1",
  "once_cell",
  "paste",
  "rgb",

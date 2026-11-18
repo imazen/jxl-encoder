@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+- Require matching CMYK ICC and Black-channel metadata. Convert integer CMY/K
+  source samples through the profile for lossy encoding; preserve independent
+  Black precision and animation identity deltas. Lossless raw profile storage
+  stays permissive. The private converter pins the repaired moxcms revision
+  0425eb09; encoder validation is recorded in docs/CMYK_SOURCE_CONTRACT.md.
+
 - Convert explicit source color/gamma to the target ICC profile before optional
   RGB8 subsampling. Preserve raw ICC storage and reject unavailable or
   non-finite conversions before changing a caller's destination.

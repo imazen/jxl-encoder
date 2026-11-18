@@ -21,8 +21,12 @@ p.add_argument('--display-extents', action='store_true')
 p.add_argument('--animation-state', action='store_true')
 p.add_argument('--animation-deltas', action='store_true')
 p.add_argument('--frame-levels', action='store_true')
+p.add_argument('--still-frame-levels', action='store_true')
 p.add_argument('--modular-width-levels', action='store_true')
 p.add_argument('--optional-icc', action='store_true')
+p.add_argument('--cmyk-source', action='store_true')
+p.add_argument('--cmyk-handoffs', action='store_true')
+p.add_argument('--jpeg-sampling', action='store_true')
 p.add_argument('--reference-root', type=Path)
 a = p.parse_args()
 a.output.mkdir(exist_ok=False)
@@ -95,6 +99,47 @@ def observe(relative, name, occurrence=0, window=False):
                      missing_relative_regions=[k for k, v in sorted(counts.items()) if not v]))
     print(json.dumps(rows[-1]))
 
+if a.cmyk_handoffs:
+    observe('jxl-encoder/src/api/animate.rs', 'zero_cmyk_delta')
+    observe('jxl-encoder/src/api.rs', 'lossy_source_color_encoding')
+    observe('jxl-encoder/src/api.rs', 'resolved_intensity_target')
+    observe('jxl-encoder/src/api.rs', 'prepare_lossy_pixels',
+            window=('let source_cmyk =', 27))
+    observe('jxl-encoder/src/api.rs', 'encode_lossless_single',
+            window=('|| ec.ec_type != crate::headers::extra_channels::ExtraChannelType::Black', 6, -1))
+    observe('jxl-encoder/src/api.rs', 'encode_lossy',
+            window=('black.info.bit_depth.bits_per_sample = self.bits_per_sample.unwrap_or(8);', 1))
+    observe('jxl-encoder/src/api.rs', 'encode_lossy',
+            window=('black.info.bit_depth.bits_per_sample = self.bits_per_sample.unwrap_or(16);', 1))
+    observe('jxl-encoder/src/headers/file_header.rs', 'write_with_icc',
+            window=('let has_black =', 11))
+    observe('jxl-encoder/src/api/animate.rs', 'encode_animation_lossy',
+            window=('} = if delta_from_identical && layout.is_cmyk()', 20))
+    observe('jxl-encoder/src/api/animate.rs', 'encode_animation_lossy',
+            window=('ec_blend_mode_override: if delta_from_identical && !extras_info.is_empty()', 7))
+    (a.output / 'regions.json').write_text(json.dumps(dict(inputs=identities, functions=rows,
+        note='Only named CMYK windows and the complete zero-delta helper; not whole caller coverage.'), indent=2))
+    sys.exit(0)
+
+if a.cmyk_source:
+    for archive in a.archives:
+        identity = json.loads((archive / 'identity.json').read_text())
+        assert not identity.get('coverage_scope', {}).get('driver_only', False)
+    observe('jxl-encoder/src/api/cmyk.rs', 'to_linear_srgb')
+    observe('jxl-encoder/src/api/cmyk.rs', 'prepare_cmyk_pixels')
+    observe('jxl-encoder/src/api/validate.rs', 'validate_icc_model')
+    (a.output / 'regions.json').write_text(json.dumps(dict(inputs=identities, functions=rows,
+        note='Mapped regions, not complete boolean/input combinations.'), indent=2))
+    sys.exit(0)
+
+if a.jpeg_sampling:
+    observe('jxl-encoder/src/jpeg/encode.rs', 'compute_jpeg_upsampling')
+    observe('jxl-encoder/src/jpeg/encode.rs', 'encode_jpeg_to_jxl_inner',
+            window=('let jpeg_upsampling = compute_jpeg_upsampling', 1))
+    (a.output / 'regions.json').write_text(json.dumps(dict(inputs=identities, functions=rows,
+        note='Mapped regions, not complete boolean/input combinations.'), indent=2))
+    sys.exit(0)
+
 if a.optional_icc:
     for archive in a.archives:
         identity = json.loads((archive / 'identity.json').read_text())
@@ -110,7 +155,6 @@ if a.optional_icc:
         source_comparison='Exact function bodies; code-region keys relative to each declaration'), indent=2))
     raise SystemExit(0)
 
-
 if a.modular_width_levels:
     for archive in a.archives:
         identity = json.loads((archive / 'identity.json').read_text())
@@ -124,6 +168,35 @@ if a.modular_width_levels:
     observe('jxl-encoder/src/api.rs', 'encode_prepared',
             window=('!stats.needs_modular_32bit', 1))
     observe('jxl-encoder/src/headers/file_header.rs', 'modular_16bit_buffer_sufficient')
+    (a.output / 'regions.json').write_text(json.dumps(dict(inputs=identities, functions=rows,
+        source_comparison='Exact function bodies; code-region keys relative to each declaration'), indent=2))
+    raise SystemExit(0)
+
+if a.still_frame_levels:
+    for archive in a.archives:
+        identity = json.loads((archive / 'identity.json').read_text())
+        assert not identity.get('coverage_scope', {}).get('driver_only', False), 'driver-only profiles cannot establish production coverage'
+    observe('jxl-encoder/src/api.rs', 'encode_prepared',
+            window=('.max(if stats.needs_frame_level10', 1))
+    observe('jxl-encoder/src/api.rs', 'encode_lossless_single',
+            window=('needs_frame_level10: writer', 5))
+    observe('jxl-encoder/src/api.rs', 'encode_lossy',
+            window=('needs_frame_level10: tracked.frame_level', 1))
+    observe('jxl-encoder/src/api.rs', 'finish_inner', occurrence=1,
+            window=('needs_frame_level10: writer', 5))
+    observe('jxl-encoder/src/api.rs', 'finish_inner', occurrence=1,
+            window=('.max(if stats.needs_frame_level10', 1))
+    observe('jxl-encoder/src/vardct/encoder.rs', 'output_frame_level')
+    observe('jxl-encoder/src/vardct/encoder.rs', 'encode_inner',
+            window=('return Ok(TrackedVarDctOutput', 13))
+    observe('jxl-encoder/src/vardct/encoder.rs', 'encode_inner',
+            window=('let frame_level = self.output_frame_level', 13))
+    observe('jxl-encoder/src/vardct/bitstream.rs', 'encode_two_pass',
+            window=('let frame_level = self.output_frame_level', 5))
+    observe('jxl-encoder/src/vardct/encoder.rs', 'encode_from_precomputed_inner',
+            window=('res.map(|tracked| tracked.data)', 1))
+    observe('jxl-encoder/src/vardct/encoder.rs', 'encode_from_pre_quantized_ac_with_extras',
+            window=('.map(|tracked| tracked.data)', 1))
     (a.output / 'regions.json').write_text(json.dumps(dict(inputs=identities, functions=rows,
         source_comparison='Exact function bodies; code-region keys relative to each declaration'), indent=2))
     raise SystemExit(0)

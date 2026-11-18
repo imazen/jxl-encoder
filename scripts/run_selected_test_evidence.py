@@ -15,7 +15,9 @@ p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('manifest', type=Path)
 p.add_argument('output', type=Path)
 p.add_argument('filter')
+p.add_argument('--also-filter', action='append', default=[], help='additional explicit libtest substring selections')
 p.add_argument('--test-target')
+p.add_argument('--coverage-exclusions', type=Path, help='checksum-bound selective instrumentation manifest')
 p.add_argument('--include-ignored', action='store_true',
                help='explicitly select the retained large-resource probes')
 p.add_argument('--build-only', action='store_true',
@@ -67,6 +69,19 @@ executables = [row['executable'] for row in artifacts if row.get('reason') == 'c
 assert len(executables) == 1, executables
 executable = Path(executables[0])
 root = a.manifest.resolve().parent
+exclusions = []
+if a.coverage_exclusions:
+    assert not a.driver_only_coverage
+    exclusion = json.loads(a.coverage_exclusions.read_text())
+    assert Path(exclusion['export_root']).resolve() == root
+    for row in exclusion['files']:
+        path = root / row['path']
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == row['after_sha256'], path
+        a.source.append(Path(row['path']))
+    exclusions = exclusion['excluded_functions']
+    assert exclusions == ['jxl_encoder::vardct::patches::find_text_like_patches_with_min_peak']
+    assert not a.output.resolve().is_relative_to(a.coverage_exclusions.parent.resolve())
+    shutil.copytree(a.coverage_exclusions.parent, a.output / 'coverage-exclusions')
 sources = root / 'jxl-encoder/src/modular'
 source_rows = []
 source_paths = list(sources.glob('*.rs'))
@@ -104,35 +119,35 @@ assert hashlib.sha256(executable.read_bytes()).hexdigest() == digest
 # Verify the profiling runtime before spending time on the actual cells.
 probe = (a.output / 'probe.profraw').resolve()
 with (a.output / 'probe.log').open('x') as log:
-    subprocess.run([str(executable), a.filter, '--list'] + (['--include-ignored'] if a.include_ignored else []),
+    subprocess.run([str(executable), a.filter, *a.also_filter, '--list'] + (['--include-ignored'] if a.include_ignored else []),
                    env=dict(os.environ, LLVM_PROFILE_FILE=str(probe)),
                    stdout=log, stderr=subprocess.STDOUT, check=True)
 assert probe.is_file(), 'test target has no profiling runtime; refresh the coverage crate list'
 listed = [line.removesuffix(': test') for line in (a.output / 'probe.log').read_text().splitlines()
           if line.endswith(': test')]
-assert any(a.filter in name for name in listed), 'explicit filter must select a test'
+assert all(any(selection in name for name in listed) for selection in [a.filter, *a.also_filter]), 'every explicit filter must select a test'
 if a.build_only:
     assert re.search(r': test\n', (a.output / 'probe.log').read_text()), 'filter must name a test'
     identity = dict(command=command, executable=str(executable), binary_sha256=digest,
-                    filter=a.filter, include_ignored=a.include_ignored, pid=None, sources=source_rows, exit_code=None,
+                    filter=a.filter, filters=[a.filter, *a.also_filter], include_ignored=a.include_ignored, pid=None, sources=source_rows, exit_code=None,
                     stage='built-unexecuted', profile_sha256=None,
                     coverage_scope=dict(instrumented_crates=os.environ.get(
                         '__CARGO_LLVM_COV_RUSTC_WRAPPER_CRATE_NAMES','').split(','),
-                        driver_only=a.driver_only_coverage))
+                        driver_only=a.driver_only_coverage, excluded_functions=exclusions))
     (a.output / 'identity.json').write_text(json.dumps(identity, indent=2))
     print('Built and retained unexecuted test: ' + a.filter, flush=True)
     sys.exit(0)
 profile = (a.output / 'test.profraw').resolve()
 env = dict(os.environ, LLVM_PROFILE_FILE=str(profile))
 with (a.output / 'test.log').open('x') as log:
-    child = subprocess.Popen([str(executable), a.filter, '--nocapture', '--test-threads=1'] +
+    child = subprocess.Popen([str(executable), a.filter, *a.also_filter, '--nocapture', '--test-threads=1'] +
                              (['--include-ignored'] if a.include_ignored else []),
                              env=env, stdout=log, stderr=subprocess.STDOUT)
     identity = dict(command=command, executable=str(executable), binary_sha256=digest,
-                    filter=a.filter, include_ignored=a.include_ignored, pid=child.pid, sources=source_rows,
+                    filter=a.filter, filters=[a.filter, *a.also_filter], include_ignored=a.include_ignored, pid=child.pid, sources=source_rows,
                     coverage_scope=dict(instrumented_crates=os.environ.get(
                         '__CARGO_LLVM_COV_RUSTC_WRAPPER_CRATE_NAMES','').split(','),
-                        driver_only=a.driver_only_coverage))
+                        driver_only=a.driver_only_coverage, excluded_functions=exclusions))
     (a.output / 'identity.json').write_text(json.dumps(identity, indent=2))
     code = child.wait()
 assert hashlib.sha256(executable.read_bytes()).hexdigest() == digest

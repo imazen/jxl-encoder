@@ -6612,3 +6612,18 @@ controls now run through the same pinned v0.12 tools as the tested streams.
 The 0.005 floor and 2e-6 allowance remain unchanged; production bytes do not
 change. Local LCMS and static reference controls pass. See
 [the source-color contract](docs/SOURCE_COLOR_CONVERSION.md#november-18-runtime-matched-optional-icc-quantization-controls).
+
+### Issue 144 CMYK core corrections, November 18
+
+Required Black/CMYK pairing, profile-based integer source conversion, independent
+Black precision and profile-independent identity deltas pass the retained source,
+native, restored-fault and locked broad/lint checks. The seven approved legacy
+fixture migrations preserve their numerical bars. The final region report names
+uncovered internal geometry, allocator and CMS-failure guards explicitly.
+
+Lossless CMYK animation and CMYK streaming retain measured unsupported stages;
+floating CMY lossless storage and lossy conversion refusal have separate controls.
+ReferenceOnly, explicit nonzero Add and further edge animation callers, plus
+encoder platform CI, remain open. The isolated CMS pin has a green complete CI
+run; registry publication of this encoder repair is not qualified. See
+[the CMYK contract](docs/CMYK_SOURCE_CONTRACT.md).

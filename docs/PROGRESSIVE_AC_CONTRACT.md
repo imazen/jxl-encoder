@@ -245,11 +245,14 @@ This verifies final progressive intent relative to each decoder's Single
 control; it does not prove source-alpha precision. Independently reading the
 first RGBA-f16 native alpha PFM finds 22,679 of 34,447 samples different from
 the supplied half values, first 0.9372549653053284 versus 0.9375. The measured
-maximum difference is 0.0019608139991760254. The animation currently codes its
-u8 alpha copy. That separate source-precision bug remains open, together with
-the existing rounded-u16 visibility item. CMYK animation still needs its own
-caller-selected-profile investigation under H10. No complete encoder or
-all-layout source-fidelity claim follows from the V1 comparisons.
+maximum difference is 0.0019608139991760254. At that baseline the animation
+coded its u8 alpha copy. The separate alpha-precision and exact-visibility
+repairs have since landed; their source-sample controls and remaining limits
+are recorded in [the animation alpha contract](ANIMATION_ALPHA.md). CMYK
+source interpretation and animation Black forwarding now have separate
+[H10 evidence](CMYK_SOURCE_CONTRACT.md), including its remaining caller gaps. No
+complete encoder or all-layout source-fidelity claim follows from the V1
+comparisons.
 
 The minimal `std,convenience,__expert` build repeats both typed still and
 animation controls successfully (retained object

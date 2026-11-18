@@ -8855,12 +8855,26 @@ fn test_extra_channel_size_mismatch_rejected() {
     );
 }
 
+fn cmyk_contract_profile() -> Vec<u8> {
+    include_str!("../tests/fixtures/ps_cmyk.hex")
+        .split_whitespace()
+        .flat_map(|line| {
+            (0..line.len())
+                .step_by(2)
+                .map(move |i| u8::from_str_radix(&line[i..i + 2], 16).unwrap())
+        })
+        .collect()
+}
+
 /// CMYK lossless (#58): 4-byte interleaved input rountrips
 /// pixel-exact through the encoder + jxl-rs decoder. The K plane
 /// is auto-synthesised as an `ExtraChannelType::Black` channel and
 /// must survive intact.
 #[test]
 fn test_lossless_cmyk8_roundtrip_pixel_exact() {
+    let profile = cmyk_contract_profile();
+    let metadata = ImageMetadata::new().with_icc_profile(&profile);
+
     use crate::test_helpers::decode_with_jxl_rs;
     let w = 32u32;
     let h = 32u32;
@@ -8880,6 +8894,7 @@ fn test_lossless_cmyk8_roundtrip_pixel_exact() {
 
     let bytes = LosslessConfig::new()
         .encode_request(w, h, PixelLayout::Cmyk8)
+        .with_metadata(&metadata)
         .encode(&pixels)
         .expect("encode CMYK lossless");
 
@@ -8942,6 +8957,9 @@ fn test_lossless_cmyk8_roundtrip_pixel_exact() {
 /// header signalling for 16-bit CMYK.
 #[test]
 fn test_lossless_cmyk16_header_signals_16bit_black() {
+    let profile = cmyk_contract_profile();
+    let metadata = ImageMetadata::new().with_icc_profile(&profile);
+
     let w = 16u32;
     let h = 16u32;
     let n = (w * h) as usize;
@@ -8957,6 +8975,7 @@ fn test_lossless_cmyk16_header_signals_16bit_black() {
 
     let bytes = LosslessConfig::new()
         .encode_request(w, h, PixelLayout::Cmyk16)
+        .with_metadata(&metadata)
         .encode(&pixels)
         .expect("encode 16-bit CMYK lossless");
 
@@ -8985,6 +9004,9 @@ fn test_lossless_cmyk16_header_signals_16bit_black() {
 /// codestream with two Black entries.
 #[test]
 fn test_lossless_cmyk_rejects_duplicate_black_extra() {
+    let profile = cmyk_contract_profile();
+    let metadata = ImageMetadata::new().with_icc_profile(&profile);
+
     use crate::api::ExtraChannel;
     let w = 16u32;
     let h = 16u32;
@@ -8994,6 +9016,7 @@ fn test_lossless_cmyk_rejects_duplicate_black_extra() {
     let extras = [ExtraChannel::black(&extra_k)];
     let result = LosslessConfig::new()
         .encode_request(w, h, PixelLayout::Cmyk8)
+        .with_metadata(&metadata)
         .with_extra_channels(&extras)
         .encode(&pixels);
     assert!(
@@ -9007,260 +9030,254 @@ fn test_lossless_cmyk_rejects_duplicate_black_extra() {
     );
 }
 
-/// CMYK lossy (chunk 2 follow-on to f2deff72): 4-byte interleaved
-/// CMYK input must produce a valid codestream where the K plane
-/// survives bit-exact through the modular extras channel and the
-/// CMY channels survive within VarDCT quality bounds. Verified
-/// against jxl-rs.
-///
-/// The CMY input is a low-frequency gradient (block-banded) so the
-/// VarDCT path can hold it within a tight tolerance at d=1.0 e5
-/// without specialising the CMY → XYB mapping (chunk 3's job).
-/// The K plane uses a coprime stride so it's *not* constant — a
-/// "K survives" assertion against a constant plane would pass
-/// trivially.
+/// CMYK lossy converts the tagged inks to linear RGB through the profile.
+/// The original gradient and Black samples remain unchanged; physical color
+/// is compared with independent LCMS output and the established numeric bars.
 #[test]
 fn test_lossy_cmyk8_roundtrip() {
-    use crate::test_helpers::decode_with_jxl_rs;
-    let w = 32u32;
-    let h = 32u32;
-    let n = (w * h) as usize;
-    let mut pixels: Vec<u8> = Vec::with_capacity(n * 4);
-    for i in 0..n {
-        let x = (i % w as usize) as u32;
-        let y = (i / w as usize) as u32;
-        // Low-frequency CMY gradient (8x8 blocks). Each channel
-        // varies slowly across the image so VarDCT at d=1.0 keeps
-        // per-pixel error small. Step size is 32 so each block
-        // touches a different 8-bit value.
-        let cval = ((x / 8) * 32).min(248) as u8;
-        let mval = ((y / 8) * 32).min(248) as u8;
-        let yval = (((x + y) / 8) * 16).min(248) as u8;
-        pixels.push(cval); // C
-        pixels.push(mval); // M
-        pixels.push(yval); // Y
-        // K uses a coprime stride so it's NOT constant — verifies
-        // the K plane actually carries data, not just bias.
-        pixels.push(((i * 17) % 251) as u8);
-    }
+    #[cfg(feature = "std")]
+    {
+        let profile = cmyk_contract_profile();
+        let metadata = ImageMetadata::new().with_icc_profile(&profile);
 
-    let bytes = LossyConfig::new(1.0)
-        .with_effort(5)
-        .encode_request(w, h, PixelLayout::Cmyk8)
-        .encode(&pixels)
-        .expect("encode lossy CMYK");
-
-    // Header must declare exactly one extra channel of type Black.
-    let image = jxl_oxide::JxlImage::builder()
-        .read(std::io::Cursor::new(&bytes))
-        .expect("jxl-oxide parse lossy CMYK");
-    assert_eq!(image.width(), w);
-    assert_eq!(image.height(), h);
-    let header = image.image_header();
-    assert_eq!(
-        header.metadata.ec_info.len(),
-        1,
-        "lossy CMYK should produce exactly 1 extra channel (Black)",
-    );
-    assert_eq!(
-        format!("{:?}", header.metadata.ec_info[0].ty),
-        "Black",
-        "extra channel must be of type Black, got {:?}",
-        header.metadata.ec_info[0].ty,
-    );
-    assert!(
-        header.metadata.xyb_encoded,
-        "VarDCT path should signal xyb_encoded=true",
-    );
-
-    // Decode via jxl-rs and verify channel layout: 3 color (CMY in
-    // XYB-roundtripped form) + 1 extra (K, modular-lossless).
-    let decoded = decode_with_jxl_rs(&bytes).expect("jxl-rs decode lossy CMYK");
-    assert_eq!(decoded.width as u32, w);
-    assert_eq!(decoded.height as u32, h);
-    assert_eq!(
-        decoded.channels, 4,
-        "jxl-rs should expose CMY + K as 4 channels",
-    );
-
-    // K plane must survive bit-exact (within ±1 byte for f32→u8
-    // rounding). The modular extras path is lossless-integer; the
-    // only drift is decoder-side f32 quantisation.
-    let mut k_mismatches = 0usize;
-    let mut k_max_diff = 0i32;
-    for i in 0..n {
-        let got = (decoded.pixels[i * 4 + 3] * 255.0).round() as i32;
-        let want = pixels[i * 4 + 3] as i32;
-        let diff = (got - want).abs();
-        if diff > 1 {
-            k_mismatches += 1;
-            if k_mismatches < 5 {
-                eprintln!("K mismatch at pixel {i}: want {want} got {got}",);
-            }
+        use crate::test_helpers::decode_with_jxl_rs;
+        let w = 32u32;
+        let h = 32u32;
+        let n = (w * h) as usize;
+        let mut pixels: Vec<u8> = Vec::with_capacity(n * 4);
+        for i in 0..n {
+            let x = (i % w as usize) as u32;
+            let y = (i / w as usize) as u32;
+            // Low-frequency CMY gradient (8x8 blocks). Each channel
+            // varies slowly across the image so VarDCT at d=1.0 keeps
+            // per-pixel error small. Step size is 32 so each block
+            // touches a different 8-bit value.
+            let cval = ((x / 8) * 32).min(248) as u8;
+            let mval = ((y / 8) * 32).min(248) as u8;
+            let yval = (((x + y) / 8) * 16).min(248) as u8;
+            pixels.push(cval); // C
+            pixels.push(mval); // M
+            pixels.push(yval); // Y
+            // K uses a coprime stride so it's NOT constant — verifies
+            // the K plane actually carries data, not just bias.
+            pixels.push(((i * 17) % 251) as u8);
         }
-        if diff > k_max_diff {
-            k_max_diff = diff;
-        }
-    }
-    assert_eq!(
-        k_mismatches, 0,
-        "K plane must survive within ±1 byte (modular lossless); \
-         {k_mismatches} bytes diverged, max diff {k_max_diff}",
-    );
 
-    // Recovered CMY (chunk 3). The encoder now applies the naive
-    // subtractive transform `R = (1 - C/255) * (1 - K/255)` (and
-    // analogues for G/B), so the decoder's colour samples carry
-    // `1-C·(1-K)` etc. To check round-trip we invert the transform:
-    // `C_recovered = 1 - R_decoded / (1 - K/255)` (clamped when K is
-    // near full ink). Bounds are intentionally generous — VarDCT at
-    // d=1.0 introduces perceptual blur, the inversion amplifies
-    // error when K is large, and the 8x8 block boundaries in the
-    // synthetic gradient hit DCT ringing. The point is to catch
-    // catastrophic pipeline regressions (wrong-channel deinterleave,
-    // missing transform, decoder/encoder disagree on K masking),
-    // not to validate colour accuracy.
-    let mut cmy_max_diff = [0i32; 3];
-    let mut cmy_total_err = [0u64; 3];
-    let mut cmy_count = 0u64;
-    for i in 0..n {
-        let kv = pixels[i * 4 + 3] as f32 / 255.0;
-        let one_minus_k = 1.0 - kv;
-        // Skip pixels where K is so dense the inverse is ill-
-        // conditioned (any residual decoder error in R/G/B blows up
-        // when divided by ~0). libjxl makes the same accommodation
-        // implicitly: K dominates the visual output there, so the
-        // CMY error is invisible. Threshold matches what a printer
-        // would call "K-heavy" ink coverage.
-        if one_minus_k < 0.15 {
-            continue;
-        }
-        cmy_count += 1;
-        for c in 0..3 {
-            let r = decoded.pixels[i * 4 + c].clamp(0.0, 1.0);
-            let recovered = (1.0 - r / one_minus_k).clamp(0.0, 1.0);
-            let got = (recovered * 255.0).round() as i32;
-            let want = pixels[i * 4 + c] as i32;
+        let bytes = LossyConfig::new(1.0)
+            .with_effort(5)
+            .encode_request(w, h, PixelLayout::Cmyk8)
+            .with_metadata(&metadata)
+            .encode(&pixels)
+            .expect("encode lossy CMYK");
+
+        // Header must declare exactly one extra channel of type Black.
+        let image = jxl_oxide::JxlImage::builder()
+            .read(std::io::Cursor::new(&bytes))
+            .expect("jxl-oxide parse lossy CMYK");
+        assert_eq!(image.width(), w);
+        assert_eq!(image.height(), h);
+        let header = image.image_header();
+        assert_eq!(
+            header.metadata.ec_info.len(),
+            1,
+            "lossy CMYK should produce exactly 1 extra channel (Black)",
+        );
+        assert_eq!(
+            format!("{:?}", header.metadata.ec_info[0].ty),
+            "Black",
+            "extra channel must be of type Black, got {:?}",
+            header.metadata.ec_info[0].ty,
+        );
+        assert!(
+            header.metadata.xyb_encoded,
+            "VarDCT path should signal xyb_encoded=true",
+        );
+
+        // Decode via jxl-rs: profile-converted linear RGB plus the
+        // original K samples in their modular extra channel.
+        let decoded = decode_with_jxl_rs(&bytes).expect("jxl-rs decode lossy CMYK");
+        assert_eq!(decoded.width as u32, w);
+        assert_eq!(decoded.height as u32, h);
+        assert_eq!(
+            decoded.channels, 4,
+            "jxl-rs should expose RGB + K as 4 channels",
+        );
+
+        // K plane must survive bit-exact (within ±1 byte for f32→u8
+        // rounding). The modular extras path is lossless-integer; the
+        // only drift is decoder-side f32 quantisation.
+        let mut k_mismatches = 0usize;
+        let mut k_max_diff = 0i32;
+        for i in 0..n {
+            let got = (decoded.pixels[i * 4 + 3] * 255.0).round() as i32;
+            let want = pixels[i * 4 + 3] as i32;
             let diff = (got - want).abs();
-            if diff > cmy_max_diff[c] {
-                cmy_max_diff[c] = diff;
+            if diff > 1 {
+                k_mismatches += 1;
+                if k_mismatches < 5 {
+                    eprintln!("K mismatch at pixel {i}: want {want} got {got}",);
+                }
             }
-            cmy_total_err[c] += diff as u64;
+            if diff > k_max_diff {
+                k_max_diff = diff;
+            }
+        }
+        assert_eq!(
+            k_mismatches, 0,
+            "K plane must survive within ±1 byte (modular lossless); \
+         {k_mismatches} bytes diverged, max diff {k_max_diff}",
+        );
+
+        // Independent LCMS 2.17 relative-colorimetric output for this exact
+        // CMYK pattern and profile, expressed in linear sRGB. The approved
+        // migration removes the inverted naive-ink inverse while retaining the
+        // existing maximum/mean numeric bars in 8-bit-level units.
+        let physical: Vec<[f32; 3]> = include_str!("../tests/fixtures/cmyk_lcms_legacy.hex")
+            .lines()
+            .map(|line| {
+                core::array::from_fn(|c| {
+                    f32::from_bits(u32::from_str_radix(&line[c * 8..c * 8 + 8], 16).unwrap())
+                })
+            })
+            .collect();
+        assert_eq!(physical.len(), n);
+        let mut cmy_max_diff = [0i32; 3];
+        let mut cmy_total_err = [0u64; 3];
+        let cmy_count = n as u64;
+        for (i, expected) in physical.iter().enumerate() {
+            for c in 0..3 {
+                let actual = decoded.pixels[i * 4 + c];
+                assert!(actual.is_finite());
+                let diff = ((actual - expected[c]).abs() * 255.0).round() as i32;
+                cmy_max_diff[c] = cmy_max_diff[c].max(diff);
+                cmy_total_err[c] += diff as u64;
+            }
+        }
+        assert!(cmy_count > 0, "physical fixture is empty");
+        for c in 0..3 {
+            let avg_diff = cmy_total_err[c] as f64 / cmy_count as f64;
+            // Preserve the established 128-level maximum and 64-level mean
+            // bounds, now against an independent physical-color oracle.
+            assert!(
+                cmy_max_diff[c] <= 128,
+                "CMY channel {c} max diff {} exceeds bound (128); avg diff {avg_diff:.1}",
+                cmy_max_diff[c],
+            );
+            assert!(
+                avg_diff <= 64.0,
+                "CMY channel {c} avg diff {avg_diff:.1} exceeds bound (64); max diff {}",
+                cmy_max_diff[c],
+            );
         }
     }
-    assert!(
-        cmy_count > 0,
-        "every pixel was K-saturated; test gradient is broken",
-    );
-    for c in 0..3 {
-        let avg_diff = cmy_total_err[c] as f64 / cmy_count as f64;
-        // Per-pixel max diff <= 128 (~50% of range) and average
-        // diff <= 64 (~25%) under VarDCT at d=1.0 e5 with the
-        // naive subtractive transform on a high-contrast block-
-        // edge gradient. The inversion `C = 1 - R/(1-K)` amplifies
-        // VarDCT error inversely with (1-K) AND with proximity to
-        // saturation (the encoder's sRGB-out transfer function +
-        // f32→u8 decoder rounding both lose precision near 0/1),
-        // so the bound is wide. Tighter bounds belong on a more
-        // forgiving test image; this roundtrip is a regression
-        // gate against catastrophic pipeline breaks (wrong-channel
-        // deinterleave, missing transform, K not masked) — not a
-        // colour-accuracy oracle. The chunk-3 visual-gamut test
-        // (`test_lossy_cmyk8_chunk3_gamut_direction`) is the real
-        // perceptual check.
-        assert!(
-            cmy_max_diff[c] <= 128,
-            "CMY channel {c} max diff {} exceeds bound (128); avg diff {avg_diff:.1}",
-            cmy_max_diff[c],
-        );
-        assert!(
-            avg_diff <= 64.0,
-            "CMY channel {c} avg diff {avg_diff:.1} exceeds bound (64); max diff {}",
-            cmy_max_diff[c],
-        );
+
+    #[cfg(not(feature = "std"))]
+    {
+        let profile = cmyk_contract_profile();
+        let metadata = ImageMetadata::new().with_icc_profile(&profile);
+        let error = LossyConfig::new(1.0)
+            .encode_request(16, 16, PixelLayout::Cmyk8)
+            .with_metadata(&metadata)
+            .encode(&vec![128; 16 * 16 * 4])
+            .unwrap_err();
+        assert!(error.to_string().contains("requires std"), "{error}");
     }
 }
 
-/// Visual-reasonableness check for the chunk-3 1-CMY × (1-K)
-/// transform. Encodes four pure-ink swatches (C/M/Y/K) and asserts
-/// the decoded colour is in the correct gamut sector — i.e. that
-/// a pure cyan ink decodes as cyan-ish (low R, high G, high B),
-/// not as some other primary. This is what would have caught the
-/// chunk-2 placeholder shipping accidentally: under that mapping
-/// pure cyan input encoded as bright red.
+/// Profile-based pure-ink swatches keep the established gamut-sector bounds.
+/// JXL's sample convention is zero for full ink and the maximum for no ink.
 #[test]
 fn test_lossy_cmyk8_chunk3_gamut_direction() {
-    use crate::test_helpers::decode_with_jxl_rs;
-    // Four 16x16 swatches stacked vertically. Each swatch is pure
-    // ink at 100% coverage with no K. The swatches are large
-    // enough to avoid block-edge artefacts dominating the centre
-    // pixel sample.
-    let sw = 16u32;
-    let h = sw * 4;
-    let w = sw;
-    let n = (w * h) as usize;
-    let mut pixels: Vec<u8> = Vec::with_capacity(n * 4);
-    // Row 0..16: pure cyan (C=255, M=Y=K=0)
-    // Row 16..32: pure magenta (M=255, C=Y=K=0)
-    // Row 32..48: pure yellow (Y=255, C=M=K=0)
-    // Row 48..64: pure black (K=255, C=M=Y=0)
-    for y in 0..h {
-        for _x in 0..w {
-            let band = y / sw;
-            let cmyk: [u8; 4] = match band {
-                0 => [255, 0, 0, 0],
-                1 => [0, 255, 0, 0],
-                2 => [0, 0, 255, 0],
-                _ => [0, 0, 0, 255],
-            };
-            pixels.extend_from_slice(&cmyk);
+    #[cfg(feature = "std")]
+    {
+        let profile = cmyk_contract_profile();
+        let metadata = ImageMetadata::new().with_icc_profile(&profile);
+
+        use crate::test_helpers::decode_with_jxl_rs;
+        // Four 16x16 swatches stacked vertically. Each swatch is pure
+        // ink at 100% coverage with no K. The swatches are large
+        // enough to avoid block-edge artefacts dominating the centre
+        // pixel sample.
+        let sw = 16u32;
+        let h = sw * 4;
+        let w = sw;
+        let n = (w * h) as usize;
+        let mut pixels: Vec<u8> = Vec::with_capacity(n * 4);
+        // Row 0..16: pure cyan (C=0, M=Y=K=255)
+        // Row 16..32: pure magenta (M=0, C=Y=K=255)
+        // Row 32..48: pure yellow (Y=0, C=M=K=255)
+        // Row 48..64: pure black (K=0, C=M=Y=255)
+        for y in 0..h {
+            for _x in 0..w {
+                let band = y / sw;
+                let cmyk: [u8; 4] = match band {
+                    0 => [0, 255, 255, 255],
+                    1 => [255, 0, 255, 255],
+                    2 => [255, 255, 0, 255],
+                    _ => [255, 255, 255, 0],
+                };
+                pixels.extend_from_slice(&cmyk);
+            }
         }
+
+        let bytes = LossyConfig::new(1.0)
+            .with_effort(5)
+            .encode_request(w, h, PixelLayout::Cmyk8)
+            .with_metadata(&metadata)
+            .encode(&pixels)
+            .expect("encode chunk-3 gamut swatches");
+        let decoded = decode_with_jxl_rs(&bytes).expect("jxl-rs decode chunk-3 swatches");
+
+        // Sample the centre pixel of each band. Centre avoids block
+        // boundaries from the AC strategy search.
+        let sample = |band: u32| -> (f32, f32, f32) {
+            let cy = band * sw + sw / 2;
+            let cx = w / 2;
+            let idx = ((cy * w + cx) as usize) * 4;
+            (
+                decoded.pixels[idx],
+                decoded.pixels[idx + 1],
+                decoded.pixels[idx + 2],
+            )
+        };
+
+        let (cr, cg, cb) = sample(0); // cyan profile response: low R, high G/B
+        let (mr, mg, mb) = sample(1); // magenta profile response: low G, high R/B
+        let (yr, yg, yb) = sample(2); // yellow profile response: low B, high R/G
+        let (kr, kg, kb) = sample(3); // black: R=G=B=0
+
+        // Cyan ink: red channel should be small, green/blue large.
+        // Tolerances ~0.2 in normalised f32 absorb VarDCT shift at
+        // d=1.0 + the encoder/decoder transfer-function roundtrip.
+        assert!(
+            cr < 0.30 && cg > 0.55 && cb > 0.55,
+            "cyan swatch decoded as ({cr:.3}, {cg:.3}, {cb:.3}); expected low R / high G,B",
+        );
+        assert!(
+            mg < 0.30 && mr > 0.55 && mb > 0.55,
+            "magenta swatch decoded as ({mr:.3}, {mg:.3}, {mb:.3}); expected low G / high R,B",
+        );
+        assert!(
+            yb < 0.30 && yr > 0.55 && yg > 0.55,
+            "yellow swatch decoded as ({yr:.3}, {yg:.3}, {yb:.3}); expected low B / high R,G",
+        );
+        assert!(
+            kr < 0.20 && kg < 0.20 && kb < 0.20,
+            "pure-K swatch decoded as ({kr:.3}, {kg:.3}, {kb:.3}); expected near-black",
+        );
     }
 
-    let bytes = LossyConfig::new(1.0)
-        .with_effort(5)
-        .encode_request(w, h, PixelLayout::Cmyk8)
-        .encode(&pixels)
-        .expect("encode chunk-3 gamut swatches");
-    let decoded = decode_with_jxl_rs(&bytes).expect("jxl-rs decode chunk-3 swatches");
-
-    // Sample the centre pixel of each band. Centre avoids block
-    // boundaries from the AC strategy search.
-    let sample = |band: u32| -> (f32, f32, f32) {
-        let cy = band * sw + sw / 2;
-        let cx = w / 2;
-        let idx = ((cy * w + cx) as usize) * 4;
-        (
-            decoded.pixels[idx],
-            decoded.pixels[idx + 1],
-            decoded.pixels[idx + 2],
-        )
-    };
-
-    let (cr, cg, cb) = sample(0); // cyan: 1-C=0, 1-M=1, 1-Y=1 → R=0, G=1, B=1
-    let (mr, mg, mb) = sample(1); // magenta: R=1, G=0, B=1
-    let (yr, yg, yb) = sample(2); // yellow: R=1, G=1, B=0
-    let (kr, kg, kb) = sample(3); // black: R=G=B=0
-
-    // Cyan ink: red channel should be small, green/blue large.
-    // Tolerances ~0.2 in normalised f32 absorb VarDCT shift at
-    // d=1.0 + the encoder/decoder transfer-function roundtrip.
-    assert!(
-        cr < 0.30 && cg > 0.55 && cb > 0.55,
-        "cyan swatch decoded as ({cr:.3}, {cg:.3}, {cb:.3}); expected low R / high G,B",
-    );
-    assert!(
-        mg < 0.30 && mr > 0.55 && mb > 0.55,
-        "magenta swatch decoded as ({mr:.3}, {mg:.3}, {mb:.3}); expected low G / high R,B",
-    );
-    assert!(
-        yb < 0.30 && yr > 0.55 && yg > 0.55,
-        "yellow swatch decoded as ({yr:.3}, {yg:.3}, {yb:.3}); expected low B / high R,G",
-    );
-    assert!(
-        kr < 0.20 && kg < 0.20 && kb < 0.20,
-        "pure-K swatch decoded as ({kr:.3}, {kg:.3}, {kb:.3}); expected near-black",
-    );
+    #[cfg(not(feature = "std"))]
+    {
+        let profile = cmyk_contract_profile();
+        let metadata = ImageMetadata::new().with_icc_profile(&profile);
+        let error = LossyConfig::new(1.0)
+            .encode_request(16, 16, PixelLayout::Cmyk8)
+            .with_metadata(&metadata)
+            .encode(&vec![128; 16 * 16 * 4])
+            .unwrap_err();
+        assert!(error.to_string().contains("requires std"), "{error}");
+    }
 }
 
 /// CMYK 16-bit lossy: same shape as the 8-bit roundtrip but with
@@ -9269,48 +9286,67 @@ fn test_lossy_cmyk8_chunk3_gamut_direction() {
 /// pipeline at 16-bit precision.
 #[test]
 fn test_lossy_cmyk16_header_signals_16bit_black() {
-    let w = 16u32;
-    let h = 16u32;
-    let n = (w * h) as usize;
-    // Big-magnitude values: top byte non-zero everywhere so an
-    // accidental 8-bit truncation would corrupt the data visibly.
-    let mut pixels: Vec<u8> = Vec::with_capacity(n * 8);
-    for i in 0..n {
-        for c in 0..4u16 {
-            let v = (i as u16).wrapping_mul(257).wrapping_add(c * 13);
-            pixels.extend_from_slice(&v.to_ne_bytes());
+    #[cfg(feature = "std")]
+    {
+        let profile = cmyk_contract_profile();
+        let metadata = ImageMetadata::new().with_icc_profile(&profile);
+
+        let w = 16u32;
+        let h = 16u32;
+        let n = (w * h) as usize;
+        // Big-magnitude values: top byte non-zero everywhere so an
+        // accidental 8-bit truncation would corrupt the data visibly.
+        let mut pixels: Vec<u8> = Vec::with_capacity(n * 8);
+        for i in 0..n {
+            for c in 0..4u16 {
+                let v = (i as u16).wrapping_mul(257).wrapping_add(c * 13);
+                pixels.extend_from_slice(&v.to_ne_bytes());
+            }
         }
+
+        let bytes = LossyConfig::new(1.0)
+            .with_effort(5)
+            .encode_request(w, h, PixelLayout::Cmyk16)
+            .with_metadata(&metadata)
+            .encode(&pixels)
+            .expect("encode 16-bit lossy CMYK");
+
+        let image = jxl_oxide::JxlImage::builder()
+            .read(std::io::Cursor::new(&bytes))
+            .expect("jxl-oxide parse 16-bit lossy CMYK");
+        let header = image.image_header();
+        assert_eq!(header.metadata.bit_depth.bits_per_sample(), 16);
+        assert_eq!(
+            header.metadata.ec_info.len(),
+            1,
+            "16-bit lossy CMYK should expose 1 extra channel (Black)",
+        );
+        assert_eq!(format!("{:?}", header.metadata.ec_info[0].ty), "Black");
+        assert_eq!(
+            header.metadata.ec_info[0].bit_depth.bits_per_sample(),
+            16,
+            "Black extra channel must be marked 16-bit",
+        );
+        assert!(
+            header.metadata.xyb_encoded,
+            "VarDCT path should signal xyb_encoded=true",
+        );
+        // Render must succeed (catches frame-header / extras-section
+        // mismatches that would survive parse-only validation).
+        let _render = image.render_frame(0).expect("render 16-bit lossy CMYK");
     }
 
-    let bytes = LossyConfig::new(1.0)
-        .with_effort(5)
-        .encode_request(w, h, PixelLayout::Cmyk16)
-        .encode(&pixels)
-        .expect("encode 16-bit lossy CMYK");
-
-    let image = jxl_oxide::JxlImage::builder()
-        .read(std::io::Cursor::new(&bytes))
-        .expect("jxl-oxide parse 16-bit lossy CMYK");
-    let header = image.image_header();
-    assert_eq!(header.metadata.bit_depth.bits_per_sample(), 16);
-    assert_eq!(
-        header.metadata.ec_info.len(),
-        1,
-        "16-bit lossy CMYK should expose 1 extra channel (Black)",
-    );
-    assert_eq!(format!("{:?}", header.metadata.ec_info[0].ty), "Black");
-    assert_eq!(
-        header.metadata.ec_info[0].bit_depth.bits_per_sample(),
-        16,
-        "Black extra channel must be marked 16-bit",
-    );
-    assert!(
-        header.metadata.xyb_encoded,
-        "VarDCT path should signal xyb_encoded=true",
-    );
-    // Render must succeed (catches frame-header / extras-section
-    // mismatches that would survive parse-only validation).
-    let _render = image.render_frame(0).expect("render 16-bit lossy CMYK");
+    #[cfg(not(feature = "std"))]
+    {
+        let profile = cmyk_contract_profile();
+        let metadata = ImageMetadata::new().with_icc_profile(&profile);
+        let error = LossyConfig::new(1.0)
+            .encode_request(16, 16, PixelLayout::Cmyk16)
+            .with_metadata(&metadata)
+            .encode(&vec![128; 16 * 16 * 8])
+            .unwrap_err();
+        assert!(error.to_string().contains("requires std"), "{error}");
+    }
 }
 
 /// Lossy CMYK + caller-supplied Black extra must be rejected with
@@ -9319,6 +9355,9 @@ fn test_lossy_cmyk16_header_signals_16bit_black() {
 /// somewhere the decoder doesn't look.
 #[test]
 fn test_lossy_cmyk_rejects_duplicate_black_extra() {
+    let profile = cmyk_contract_profile();
+    let metadata = ImageMetadata::new().with_icc_profile(&profile);
+
     use crate::api::ExtraChannel;
     let w = 16u32;
     let h = 16u32;
@@ -9329,6 +9368,7 @@ fn test_lossy_cmyk_rejects_duplicate_black_extra() {
     let result = LossyConfig::new(1.0)
         .with_effort(5)
         .encode_request(w, h, PixelLayout::Cmyk8)
+        .with_metadata(&metadata)
         .with_extra_channels(&extras)
         .encode(&pixels);
     assert!(

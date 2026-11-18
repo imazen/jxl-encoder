@@ -181,12 +181,24 @@ pub(crate) fn validate_icc_presence(
 
 /// The caller's pixel channel model must agree with its attached profile.
 /// Output builders independently validate their final pair after rewrites.
-pub(crate) fn validate_icc_model(layout: PixelLayout, icc: Option<&[u8]>) -> Result<()> {
+pub(crate) fn validate_icc_model(
+    layout: PixelLayout,
+    icc: Option<&[u8]>,
+    has_black: bool,
+) -> Result<()> {
     if let Some(icc) = icc
         && layout.is_grayscale() != (icc.get(16..20) == Some(b"GRAY"))
     {
         return Err(at!(EncodeError::InvalidInput {
             message: "ICC profile grayscale model must match the input pixel layout".into(),
+        }));
+    }
+    let profile_is_cmyk = icc.is_some_and(|profile| profile.get(16..20) == Some(b"CMYK"));
+    if has_black != profile_is_cmyk {
+        return Err(at!(EncodeError::InvalidInput {
+            message:
+                "a Black channel requires a CMYK ICC profile, and a CMYK ICC profile requires Black"
+                    .into(),
         }));
     }
     Ok(())

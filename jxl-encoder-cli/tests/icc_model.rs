@@ -199,3 +199,106 @@ fn icc_models_match_library_output_and_refuse_mismatches_before_replacing_output
     }
     assert!(failures.is_empty(), "{}: {failures:?}", directory.display());
 }
+
+#[test]
+fn cmyk_icc_without_a_black_input_refuses_before_replacing_output() {
+    let root = jxl_encoder::test_helpers::output_dir("cmyk-cli-contract");
+    let directory = (0..)
+        .find_map(|i| {
+            let p = root.join(format!("run-{i}"));
+            match std::fs::create_dir(&p) {
+                Ok(()) => Some(p),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => None,
+                Err(e) => panic!("{e}"),
+            }
+        })
+        .unwrap();
+    let profile: Vec<u8> = include_str!("../../jxl-encoder/tests/fixtures/ps_cmyk.hex")
+        .split_whitespace()
+        .flat_map(|line| {
+            (0..line.len())
+                .step_by(2)
+                .map(move |i| u8::from_str_radix(&line[i..i + 2], 16).unwrap())
+        })
+        .collect();
+    let icc = directory.join("cmyk.icc");
+    std::fs::write(&icc, profile).unwrap();
+    for gray in [false, true] {
+        let input = directory.join(format!("source-{gray}.png"));
+        if gray {
+            image::GrayImage::from_raw(8, 8, vec![64; 8 * 8])
+                .unwrap()
+                .save(&input)
+                .unwrap();
+        } else {
+            image::RgbImage::from_raw(8, 8, vec![64; 8 * 8 * 3])
+                .unwrap()
+                .save(&input)
+                .unwrap();
+        }
+        for spelling in [
+            "libjxl",
+            "libjxl-exact",
+            "libjxl-strict",
+            "lean-faster",
+            "zenjxl",
+            "aggressive",
+        ] {
+            for experimental in [false, true] {
+                for lossless in [false, true] {
+                    for route in ["bulk", "streaming-input", "streaming-output"] {
+                        let label = format!("{gray}-{spelling}-{experimental}-{lossless}-{route}");
+                        let output = directory.join(format!("{label}.jxl"));
+                        std::fs::write(&output, b"existing output").unwrap();
+                        let mut command = Command::new(env!("CARGO_BIN_EXE_cjxl-rs"));
+                        command
+                            .arg(&input)
+                            .arg(&output)
+                            .args([
+                                "--effort",
+                                "1",
+                                "--threads",
+                                "1",
+                                "--strategy",
+                                spelling,
+                                "--icc",
+                            ])
+                            .arg(&icc);
+                        if lossless {
+                            command.arg("--lossless");
+                        } else {
+                            command.args(["--distance", "1"]);
+                        }
+                        if experimental {
+                            command.arg("--experimental");
+                        }
+                        if route != "bulk" {
+                            command.arg("--streaming-input");
+                        }
+                        if route == "streaming-output" {
+                            command.arg("--streaming-output");
+                        }
+                        let result = command.output().unwrap();
+                        std::fs::write(directory.join(format!("{label}.log")), &result.stderr)
+                            .unwrap();
+                        assert!(!result.status.success(), "{label}");
+                        assert_eq!(
+                            std::fs::read(&output).unwrap(),
+                            b"existing output",
+                            "{label}"
+                        );
+                        let error = String::from_utf8_lossy(&result.stderr);
+                        assert!(
+                            error.contains(if gray {
+                                "ICC profile grayscale"
+                            } else {
+                                "CMYK ICC"
+                            }),
+                            "{label}: {error}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}

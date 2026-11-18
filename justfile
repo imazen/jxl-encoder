@@ -2614,3 +2614,118 @@ cmyk-native-source-helper source build:
     cmake -S {{quote(source)}} -B {{quote(build)}} -DCMAKE_PROJECT_INCLUDE={{quote(justfile_directory() + "/scripts/libjxl_original_profile.cmake")}}
     cmake --build {{quote(build)}} --target jxl-cmyk-frames --parallel 4
     {{quote(build + "/tools/jxl-cmyk-frames")}} --version
+
+cmyk-source-regions llvm archive reference output:
+    python3 scripts/color_admission_coverage.py {{quote(llvm)}} {{quote(output)}} {{quote(archive)}} --cmyk-source --reference-root {{quote(reference)}}
+
+cmyk-final-selected manifest:
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --lib cmyk -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --test cmyk_source_contract cmyk_precision_and_admission -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --test cmyk_animation_layers_contract cmyk_lossless_animation -- --test-threads=1
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --lib --test cmyk_source_contract --test cmyk_animation_layers_contract --test black_profile_contract -- -D warnings
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features __expert,convenience --lib cmyk -- --test-threads=1
+
+cmyk-prepared-check manifest:
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel,rate-control --test cmyk_prepared_contract -- --test-threads=1
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel,rate-control --test cmyk_prepared_contract -- -D warnings
+
+cmyk-independent-precision-check manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --test cmyk_source_contract independent_black_precision -- --test-threads=1
+
+cmyk-relative-native oracle profile output original:
+    {{quote(oracle)}} {{quote(profile)}} {{quote(output)}}
+    cmp {{quote(output + "/lcms-linear.tsv")}} {{quote(original + "/lcms-linear.tsv")}}
+
+cmyk-source-boundary-check manifest:
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --test cmyk_source_contract -- cmyk_relative_and_fallback floating_cmy --test-threads=1
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --test cmyk_source_contract -- -D warnings
+
+cmyk-float-source-check manifest:
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --test cmyk_source_contract -- floating_cmy tagged_hdr_float --test-threads=1
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --test cmyk_source_contract -- -D warnings
+
+cmyk-runtime-faults manifest output coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/test_cmyk_mutations.py "$2" "$3"' -- {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+cmyk-delta-profile-fault manifest output coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/test_cmyk_mutations.py "$2" "$3" --case missing-delta-profile-bypass' -- {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+cmyk-cli-optional-check manifest:
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder -p jxl-encoder-cli
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,jpeg-reencoding,chroma-subsampling --test black_profile_contract -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder-cli --test icc_model cmyk_icc -- --test-threads=1
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder-cli --test icc_model -- -D warnings
+
+cmyk-shift-minimal-check manifest:
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --test cmyk_source_contract shifted_black_storage -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features __expert,convenience --test cmyk_default_disabled_contract -- --test-threads=1
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --test cmyk_source_contract -- -D warnings
+
+cmyk-final-production-evidence manifest output coverage_env:
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder
+    bash -c 'set -e; source "$1"; python3 scripts/run_cmyk_final_evidence.py "$2" "$3"' -- {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+cmyk-final-region-union llvm output reference archives:
+    mkdir {{quote(output)}}
+    python3 scripts/color_admission_coverage.py {{quote(llvm)}} {{quote(output + "/source")}} {{archives}} --cmyk-source --reference-root {{quote(reference)}}
+    python3 scripts/color_admission_coverage.py {{quote(llvm)}} {{quote(output + "/handoffs")}} {{archives}} --cmyk-handoffs --reference-root {{quote(reference)}}
+
+cmyk-broad-locked-check manifest:
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder -p jxl-encoder-cli -- --check
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel,rate-control,jpeg-reencoding,chroma-subsampling --lib -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --doc
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --test it -- hash_lock strategy_libjxl divergence_table_drift --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test cmyk_default_disabled_contract -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features __expert,convenience --test cmyk_default_disabled_contract --lib -- cmyk --test-threads=1
+    cargo clippy --locked --manifest-path {{quote(manifest)}} --workspace --all-targets -- -D warnings
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel,rate-control,jpeg-reencoding,chroma-subsampling --lib --test black_profile_contract --test cmyk_source_contract --test cmyk_prepared_contract --test cmyk_animation_layers_contract --test cmyk_default_disabled_contract -- -D warnings
+    cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience
+    cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,ssim2-loop,zensim-loop --lib
+
+cmyk-reduced-precision-evidence manifest output coverage_env:
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" reduced_cmyk_precision --test-target cmyk_source_contract --features __expert,__internals,__pre_quantized,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/cmyk.rs --source jxl-encoder/src/api/animate.rs' -- {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+cmyk-opaque-selector-evidence manifest output coverage_env:
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" cmyk_opaque_icc_selector --test-target cmyk_source_contract --features __expert,__internals,__pre_quantized,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/cmyk.rs --source jxl-encoder/src/api/animate.rs' -- {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+cmyk-new-boundary-check manifest:
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --lib cmyk_rows -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --test cmyk_source_contract -- reduced_cmyk cmyk_opaque_icc --test-threads=1
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --lib --test cmyk_source_contract --test cmyk_default_disabled_contract -- -D warnings
+
+cmyk-final-defensive-units manifest output coverage_env:
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" api::cmyk::tests:: --features __expert,__internals,__pre_quantized,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/cmyk.rs --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/api/validate.rs --source jxl-encoder/src/headers/file_header.rs' -- {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+cmyk-native-source-oracle source build binary profile output:
+    python3 scripts/frame_header_oracle.py --component cmyk_source {{quote(source)}} {{quote(build)}} {{quote(binary)}}
+    {{quote(binary)}} {{quote(profile)}} {{quote(output)}}
+
+cmyk-gap-controls manifest output coverage_env:
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder
+    mkdir {{quote(output)}}
+    just cmyk-final-defensive-units {{quote(manifest)}} {{quote(output + "/units")}} {{quote(coverage_env)}}
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3/animation" cmyk_animation_limits --test-target cmyk_animation_layers_contract --features __expert,__internals,__pre_quantized,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/cmyk.rs --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/api/validate.rs --source jxl-encoder/src/headers/file_header.rs' -- {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3/model" black_requires --test-target black_profile_contract --features __expert,__internals,__pre_quantized,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/cmyk.rs --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/api/validate.rs --source jxl-encoder/src/headers/file_header.rs' -- {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --lib --test black_profile_contract --test cmyk_animation_layers_contract -- -D warnings
+
+cmyk-broad-lint-and-features manifest:
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder -p jxl-encoder-cli -- --check
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --lib cmyk -- --test-threads=1
+    cargo clippy --locked --manifest-path {{quote(manifest)}} --workspace --all-targets -- -D warnings
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel,rate-control,jpeg-reencoding,chroma-subsampling --lib --test black_profile_contract --test cmyk_source_contract --test cmyk_prepared_contract --test cmyk_animation_layers_contract --test cmyk_default_disabled_contract -- -D warnings
+    cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience
+    cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,ssim2-loop,zensim-loop --lib
+
+cmyk-jpeg-model-check manifest:
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,jpeg-reencoding,chroma-subsampling --test black_profile_contract rgb_jpeg_with_a_cmyk -- --test-threads=1
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,jpeg-reencoding,chroma-subsampling --test black_profile_contract -- -D warnings

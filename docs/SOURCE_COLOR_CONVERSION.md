@@ -342,6 +342,23 @@ the word singular; the actual error names the determinant bound. Its corrected
 assertion retains a typed failure and the precise determinant diagnostic.
 All established byte expectations, thresholds and ignores remain unchanged.
 
+## H10 CMYK core corrections and remaining callers
+
+The candidate requires a CMYK ICC whenever Black is present, converts
+integer CMY/K through the private pinned four-ink CMS route, and forwards
+Black in lossy animation. Selected exact source, physical LCMS, precision,
+given-sample association, prepared/rate and refusal checks pass. The seven
+legacy fixture migrations preserve their established numerical bounds.
+
+The native v0.12 encoder can bypass profile/Black interpretation for this
+CMYK profile; it is unsuitable as the physical source oracle. Direct LCMS
+and explicitly linear native decoding supply the independent controls.
+Lossless CMYK animation and CMYK streaming remain unsupported, with measured
+refusal stages. The scoped final region union, twelve restored faults and broad locked/lint
+checks pass. Encoder CI and additional ReferenceOnly/explicit-Add/edge animation
+callers remain separate gates.
+
+[Contract, evidence and precise remaining gates](CMYK_SOURCE_CONTRACT.md).
 
 ### November 18: optional ICC Linux x64 oracle provisioning
 

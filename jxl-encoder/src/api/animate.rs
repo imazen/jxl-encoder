@@ -892,8 +892,8 @@ pub(crate) fn encode_animation_lossy(
     #[cfg(feature = "butteraugli-loop")]
     {
         enc.butteraugli_iters =
-            cfg.butteraugli_iters_for_input(layout, request.color_encoding.as_ref());
-        enc.hdr_loss = cfg.resolve_hdr_loss(layout, request.color_encoding.as_ref());
+            cfg.butteraugli_iters_for_input(layout, request.lossy_source_color_encoding());
+        enc.hdr_loss = cfg.resolve_hdr_loss(layout, request.lossy_source_color_encoding());
         // Multi-metric Phase 0 (RFC #3, 2026-05-25): propagate the
         // resolved perceptual-metric selection (animation frame
         // encoder path). Same semantics as the still-image site above.
@@ -943,6 +943,9 @@ pub(crate) fn encode_animation_lossy(
             _ => None,
         }
     });
+    if layout.is_cmyk() {
+        enc.color_encoding = None;
+    }
     if let Some(ce) = &enc.color_encoding {
         use crate::headers::color_encoding::TransferFunction;
         match ce.transfer_function {
@@ -1013,6 +1016,17 @@ pub(crate) fn encode_animation_lossy(
             info.alpha_associated = enc.alpha_associated;
             info
         };
+        alpha_info_buf = [info];
+        &alpha_info_buf
+    } else if layout.is_cmyk() {
+        let mut info = crate::headers::extra_channels::ExtraChannelInfo {
+            ec_type: crate::headers::extra_channels::ExtraChannelType::Black,
+            ..Default::default()
+        };
+        info.bit_depth.bits_per_sample =
+            request
+                .bits_per_sample
+                .unwrap_or(if bit_depth_16 { 16 } else { 8 });
         alpha_info_buf = [info];
         &alpha_info_buf
     } else {
@@ -1136,10 +1150,27 @@ pub(crate) fn encode_animation_lossy(
         };
 
         let LossyPixels {
-            linear_rgb, alpha, ..
-        } = request
-            .prepare_lossy_pixels(cfg, src_pixels, frame_w, frame_h)
-            .map_err(at_from)?;
+            linear_rgb,
+            alpha,
+            cmyk_guard: _cmyk_guard,
+            synthesised_black_u8,
+            synthesised_black_u16,
+            ..
+        } = if delta_from_identical && layout.is_cmyk() {
+            zero_cmyk_delta(
+                frame_w,
+                frame_h,
+                layout.is_16bit(),
+                &budget,
+                request
+                    .limits
+                    .as_ref()
+                    .is_some_and(|limits| limits.fallible_alloc()),
+            )
+        } else {
+            request.prepare_lossy_pixels(cfg, src_pixels, frame_w, frame_h, &budget)
+        }
+        .map_err(at_from)?;
 
         // Premultiplied alpha is coded as given (libjxl never
         // unpremultiplies; see the still-image path). SimplifyInvisible
@@ -1206,7 +1237,7 @@ pub(crate) fn encode_animation_lossy(
             // canvas-preserving no-op. On non-alpha layouts the
             // override is `None` and the override block in
             // `vardct/bitstream.rs` is skipped.
-            ec_blend_mode_override: if delta_from_identical && layout.has_alpha() {
+            ec_blend_mode_override: if delta_from_identical && !extras_info.is_empty() {
                 Some(BlendMode::Add)
             } else {
                 None
@@ -1218,8 +1249,8 @@ pub(crate) fn encode_animation_lossy(
             timecode: frame.timecode,
         };
 
-        // Animation frames currently only support alpha as an extra
-        // channel. Build the extras list (zero or one entries) and
+        // Animation frames carry layout alpha or interleaved CMYK Black.
+        // Build the extras list (zero or one entries) and
         // hand it to the encoder.
         // The color pre-pass uses an 8-bit coverage mask. Encode integer
         // alpha from the original samples so 10/12/16-bit coverage survives.
@@ -1231,26 +1262,39 @@ pub(crate) fn encode_animation_lossy(
                 coding,
             )
         });
+        let frame_data = alpha
+            .as_deref()
+            .map(|buf| match (&alpha_float, alpha_u16.as_deref()) {
+                (Some(AlphaPlane::U16(samples) | AlphaPlane::F16(samples)), _) => {
+                    crate::vardct::extras::VardctExtraBuf::U16(samples)
+                }
+                (Some(AlphaPlane::F32(samples)), _) => {
+                    crate::vardct::extras::VardctExtraBuf::F32(samples)
+                }
+                (_, Some(samples)) => crate::vardct::extras::VardctExtraBuf::U16(samples),
+                _ => crate::vardct::extras::VardctExtraBuf::U8(buf),
+            })
+            .or_else(|| {
+                synthesised_black_u8
+                    .as_deref()
+                    .map(crate::vardct::extras::VardctExtraBuf::U8)
+            })
+            .or_else(|| {
+                synthesised_black_u16
+                    .as_deref()
+                    .map(crate::vardct::extras::VardctExtraBuf::U16)
+            });
         let alpha_info_buf;
         let alpha_view_buf;
-        let frame_extras: &[crate::vardct::extras::VardctExtra<'_>] = match alpha.as_deref() {
+        let frame_extras: &[crate::vardct::extras::VardctExtra<'_>] = match frame_data {
             None => &[],
-            Some(buf) => {
+            Some(data) => {
                 alpha_info_buf = extras_info[0].clone();
                 alpha_view_buf = [crate::vardct::extras::VardctExtra {
                     info: &alpha_info_buf,
-                    data: match (&alpha_float, alpha_u16.as_deref()) {
-                        (Some(AlphaPlane::U16(samples) | AlphaPlane::F16(samples)), _) => {
-                            crate::vardct::extras::VardctExtraBuf::U16(samples)
-                        }
-                        (Some(AlphaPlane::F32(samples)), _) => {
-                            crate::vardct::extras::VardctExtraBuf::F32(samples)
-                        }
-                        (_, Some(samples)) => crate::vardct::extras::VardctExtraBuf::U16(samples),
-                        _ => crate::vardct::extras::VardctExtraBuf::U8(buf),
-                    },
+                    data,
                 }];
-                &alpha_view_buf[..]
+                &alpha_view_buf
             }
         };
 
@@ -1635,5 +1679,88 @@ mod clock_order_tests {
                 );
             }
         }
+    }
+}
+
+// An identical-frame delta represents zero light and zero ink-code change.
+// Its samples have no source-profile interpretation.
+fn zero_cmyk_delta(
+    width: usize,
+    rows: usize,
+    wide: bool,
+    budget: &alloc::sync::Arc<crate::budget::MemoryBudget>,
+    fallible: bool,
+) -> core::result::Result<LossyPixels, EncodeError> {
+    use crate::budget::{BudgetGuard, MemoryBudget};
+    let invalid = || EncodeError::InvalidInput {
+        message: "CMYK delta dimensions overflow".into(),
+    };
+    let count = width.checked_mul(rows).ok_or_else(invalid)?;
+    let length = count.checked_mul(3).ok_or_else(invalid)?;
+    let bytes = count
+        .checked_mul(if wide { 14 } else { 13 })
+        .ok_or_else(invalid)?;
+    let guard = MemoryBudget::reserve_opt(Some(budget), bytes as u64).map_err(EncodeError::from)?;
+    let linear_rgb =
+        crate::budget::vec_f32_zeroed_fallible(fallible, length).map_err(EncodeError::from)?;
+    let (k8, k16) = if wide {
+        let mut values = crate::budget::vec_with_capacity_fallible(fallible, count)
+            .map_err(EncodeError::from)?;
+        values.resize(count, 0_u16);
+        (None, Some(values))
+    } else {
+        let mut values = crate::budget::vec_with_capacity_fallible(fallible, count)
+            .map_err(EncodeError::from)?;
+        values.resize(count, 0_u8);
+        (Some(values), None)
+    };
+    Ok(LossyPixels {
+        linear_rgb,
+        alpha: None,
+        bit_depth_16: wide,
+        synthesised_black_u8: k8,
+        synthesised_black_u16: k16,
+        cmyk_guard: [guard, BudgetGuard::inert()],
+    })
+}
+
+#[cfg(test)]
+mod cmyk_delta_allocation_contract {
+    use super::*;
+    #[test]
+    fn cmyk_identity_delta_is_profile_independent_and_releases_its_reservation() {
+        for wide in [false, true] {
+            for fallible in [false, true] {
+                let budget = crate::budget::MemoryBudget::new(4096);
+                let pixels = zero_cmyk_delta(8, 8, wide, &budget, fallible).unwrap();
+                assert_eq!(pixels.linear_rgb.len(), 8 * 8 * 3);
+                assert!(pixels.linear_rgb.iter().all(|v| v.to_bits() == 0));
+                assert!(pixels.alpha.is_none());
+                if wide {
+                    assert_eq!(
+                        pixels.synthesised_black_u16.as_deref(),
+                        Some(&[0_u16; 64][..])
+                    );
+                } else {
+                    assert_eq!(
+                        pixels.synthesised_black_u8.as_deref(),
+                        Some(&[0_u8; 64][..])
+                    );
+                }
+                let bytes = budget.used();
+                assert!(bytes > 0);
+                drop(pixels);
+                assert_eq!(budget.used(), 0);
+                let tight = crate::budget::MemoryBudget::new(bytes - 1);
+                let error = zero_cmyk_delta(8, 8, wide, &tight, fallible)
+                    .err()
+                    .expect("budget refusal");
+                assert!(error.to_string().contains("memory budget"), "{error}");
+                assert_eq!(tight.used(), 0);
+            }
+        }
+        let budget = crate::budget::MemoryBudget::unbounded();
+        assert!(zero_cmyk_delta(usize::MAX, 2, false, &budget, true).is_err());
+        assert_eq!(budget.used(), 0);
     }
 }

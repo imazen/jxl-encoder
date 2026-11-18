@@ -64,6 +64,20 @@ jobs:
       - name: Run tests
         run: cargo test --locked --workspace --release
 
+      - name: CMYK source, Black precision and animation contracts
+        run: >-
+          cargo test --locked --release -p jxl-encoder
+          --features __expert,__internals,__pre_quantized,parallel,rate-control,jpeg-reencoding,chroma-subsampling
+          --test black_profile_contract --test cmyk_source_contract
+          --test cmyk_prepared_contract --test cmyk_animation_layers_contract
+          -- --test-threads=1
+
+      - name: CMYK storage with the std Cargo feature disabled
+        run: >-
+          cargo test --locked --release -p jxl-encoder --no-default-features
+          --features __expert,convenience --test cmyk_default_disabled_contract
+          -- --test-threads=1
+
       - name: Check minimal JPEG transcode feature combination
         if: matrix.os == 'ubuntu-latest'
         run: cargo check --locked -p jxl-encoder --no-default-features --features std,jpeg-reencoding
@@ -190,6 +204,20 @@ jobs:
       - name: Run tests
         if: matrix.run_tests
         run: cargo test --locked --workspace --release
+
+      - name: CMYK source, Black precision and animation contracts
+        run: >-
+          cargo test --locked --release -p jxl-encoder
+          --features __expert,__internals,__pre_quantized,parallel,rate-control,jpeg-reencoding,chroma-subsampling
+          --test black_profile_contract --test cmyk_source_contract
+          --test cmyk_prepared_contract --test cmyk_animation_layers_contract
+          -- --test-threads=1
+
+      - name: CMYK storage with the std Cargo feature disabled
+        run: >-
+          cargo test --locked --release -p jxl-encoder --no-default-features
+          --features __expert,convenience --test cmyk_default_disabled_contract
+          -- --test-threads=1
 
       - name: Optional ICC row conversion and default-disabled feature graph
         run: |

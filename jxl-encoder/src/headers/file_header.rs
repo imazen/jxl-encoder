@@ -488,6 +488,17 @@ impl FileHeader {
                 ));
             }
         }
+        let has_black = self
+            .metadata
+            .extra_channels
+            .iter()
+            .any(|extra| extra.ec_type == super::extra_channels::ExtraChannelType::Black);
+        let profile_is_cmyk = icc.is_some_and(|profile| profile.get(16..20) == Some(b"CMYK"));
+        if has_black != profile_is_cmyk {
+            return Err(crate::error::Error::InvalidInput(
+                "a Black channel requires a CMYK ICC profile, and a CMYK ICC profile requires Black".into(),
+            ));
+        }
         self.write(writer)?;
         if let Some(icc) = icc {
             crate::icc::write_icc(icc, writer)?;
@@ -1069,6 +1080,54 @@ mod tests {
             assert!(m.modular_16bit_buffer_sufficient());
             m.force_modular_32bit = true;
             assert!(!m.modular_16bit_buffer_sufficient());
+        }
+    }
+
+    #[test]
+    fn cmyk_black_pair_validation_precedes_header_writes() {
+        let mut cmyk = [0_u8; 20];
+        cmyk[16..20].copy_from_slice(b"CMYK");
+        let mut gray = [0_u8; 20];
+        gray[16..20].copy_from_slice(b"GRAY");
+        let rgb = [0_u8; 20];
+        for compact in [false, true] {
+            for grayscale in [false, true] {
+                for black in [false, true] {
+                    for profile in [None, Some(&cmyk[..]), Some(&gray[..]), Some(&rgb[..])] {
+                        let mut header = if grayscale {
+                            FileHeader::new_gray(8, 8)
+                        } else {
+                            FileHeader::new_rgb(8, 8)
+                        };
+                        header.header_all_default_fast_paths = compact;
+                        header.metadata.color_encoding.want_icc = profile.is_some();
+                        if black {
+                            header.metadata.extra_channels.push(
+                                super::super::extra_channels::ExtraChannelInfo {
+                                    ec_type: super::super::extra_channels::ExtraChannelType::Black,
+                                    ..Default::default()
+                                },
+                            );
+                        }
+                        let valid = profile
+                            .is_none_or(|p| grayscale == (p.get(16..20) == Some(b"GRAY")))
+                            && black == profile.is_some_and(|p| p.get(16..20) == Some(b"CMYK"));
+                        let mut writer = BitWriter::new();
+                        writer.write(3, 5).unwrap();
+                        let result = header.write_with_icc(profile, &mut writer);
+                        assert_eq!(
+                            result.is_ok(),
+                            valid,
+                            "{compact} {grayscale} {black} {profile:?}"
+                        );
+                        if !valid {
+                            assert!(matches!(result, Err(crate::error::Error::InvalidInput(_))));
+                            assert_eq!(writer.bits_written(), 3);
+                            assert_eq!(writer.finish_with_padding(), [5]);
+                        }
+                    }
+                }
+            }
         }
     }
 

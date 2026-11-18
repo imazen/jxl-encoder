@@ -76,17 +76,16 @@ pub enum PixelLayout {
     /// for all four planes (libjxl `enc_image_bundle.cc:65`); callers
     /// must pre-invert any "0 = no ink" CMYK input before encoding.
     ///
-    /// For a colour-managed CMYK workflow attach a CMYK ICC profile
+    /// Attach a matching CMYK ICC profile
     /// via [`crate::EncodeRequest::with_metadata`] →
-    /// [`crate::ImageMetadata::icc_profile`]; without an ICC the decoder will
-    /// fall back to interpreting the CMY planes as sRGB and the K
-    /// plane as an opaque extra channel. Both lossless and one-shot
-    /// lossy encoding are wired: lossy routes C/M/Y through VarDCT
-    /// (XYB) via a naive `1-CMY × (1-K)` subtractive transform
-    /// (gamut-direction correct, not colorimetric — no ICC/SWOP
-    /// calibration yet) while K rides the Black extra channel
-    /// losslessly, so CMYK semantics survive the round-trip.
-    /// Streaming CMYK is not yet wired (one-shot only). Closes #58.
+    /// [`crate::ImageMetadata::icc_profile`]. Missing or mismatched profile
+    /// metadata is rejected. Lossless encoding preserves the raw CMY/K
+    /// sample codes and ICC bytes. One-shot lossy encoding converts CMY/K
+    /// through the profile to linear sRGB before XYB; it requires the `std`
+    /// feature and a usable profile transform. Black retains its original
+    /// sample codes unless a separate lossy-extra setting requests otherwise.
+    /// Streaming CMYK is unsupported. Lossy integer animation is supported;
+    /// lossless CMYK animation is unsupported.
     ///
     /// Bumps codestream level to 10 (level 5 forbids the Black
     /// extra channel; see `compute_codestream_level`).
@@ -94,7 +93,8 @@ pub enum PixelLayout {
     /// 16-bit CMYK, 8 bytes per pixel — native-endian u16 per channel
     /// (C, M, Y, K). Same `0 = full ink, 65535 = no ink` convention
     /// as [`Self::Cmyk8`]; same one-shot lossless-and-lossy support. The
-    /// Black channel is signaled as 16-bit in the extra-channel header.
+    /// Black defaults to 16-bit; [`crate::EncodeRequest::with_bits_per_sample`]
+    /// applies the requested integer precision to all four input components.
     Cmyk16,
 }
 
@@ -242,10 +242,9 @@ impl PixelLayout {
     }
 
     /// Whether this layout is CMYK (3 colour channels + Black extra
-    /// channel). One-shot lossless and lossy are both supported
-    /// (lossy passes C/M/Y through XYB via `1-CMY × (1-K)`, K stays
-    /// lossless on the Black extra channel); streaming CMYK is not
-    /// yet wired.
+    /// channel). One-shot lossless and lossy require a matching CMYK ICC.
+    /// Lossy converts CMY/K through the profile before XYB; Black keeps its
+    /// own extra-channel precision. Streaming CMYK is unsupported.
     pub const fn is_cmyk(self) -> bool {
         matches!(self, Self::Cmyk8 | Self::Cmyk16)
     }

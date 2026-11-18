@@ -15,7 +15,7 @@ categories = ["multimedia::images", "multimedia::encoding"]
 # `readme` (../README.crates.md, the generated crates.io README) is always
 # packaged by cargo even though it lives at the workspace root, outside this
 # include whitelist. The GitHub README.md stays at the repo root only.
-include = ["/src/**", "/examples/*.rs", "/examples/distance_targeting_probe/decode.rs", "/examples/zensim_diffmap_rd/*.rs", "/tests/*.rs", "/tests/support/**", "/tests/*.txt", "/LICENSE*"]
+include = ["/src/**", "/examples/*.rs", "/examples/distance_targeting_probe/decode.rs", "/examples/zensim_diffmap_rd/*.rs", "/tests/*.rs", "/tests/support/**", "/tests/*.txt", "/tests/fixtures/*.hex", "/tests/fixtures/CMYK_PROFILE.md", "/LICENSE*"]
 # Disable example auto-discovery so internal-only tools (e.g. picker oracle
 # calibration harnesses with sibling-repo path deps) don't break out-of-tree
 # CI builds. Examples must be listed explicitly via [[example]] below.
@@ -28,6 +28,9 @@ autoexamples = false
 # [patch.crates-io] routes to ../zenanalyze until 0.2.0 publishes.
 zenanalyze = { version = "0.2.0", optional = true }
 enough = "0.4.3"
+# CMYK conversion uses the verified private original-LUT repairs; the
+# zenpixels-convert dependency retains its existing CMS version.
+moxcms = { version = "=0.9.0", git = "https://github.com/imazen/moxcms", rev = "0425eb09570496c439462a334f116666cb9f39c9", optional = true, default-features = false, features = ["options", "extended_range", "any_to_any"] }
 zenpixels-convert = { version = ">=0.2.16, <0.4.0", default-features = false }
 once_cell = { version = "1.21.4", default-features = false, features = ["race", "alloc"] }
 hashbrown = { version = "0.17.1", default-features = false, features = ["default-hasher"] }
@@ -137,7 +140,7 @@ cvvdp-cpu = { package = "cvvdp", version = "0.1.0", path = "../../zenmetrics/cra
 [features]
 # W44-231 learned qf-seed sub-band admission (see vardct/learned_admission.rs)
 learned-admission = ["dep:zenanalyze", "std"]
-std = ["thiserror/std", "archmage/std", "jxl_simd/std"]
+std = ["thiserror/std", "archmage/std", "jxl_simd/std", "dep:moxcms"]
 # Dev-only: archmage/testable_dispatch lets benches/tier_isolation.rs disable
 # the baseline SIMD token (NEON on aarch64) so the scalar arm is real rather
 # than a second measurement of the SIMD path.

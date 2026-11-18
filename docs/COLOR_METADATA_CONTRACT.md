@@ -533,11 +533,13 @@ Strict lint/format on the latest test extensions passes separately
 
 ## H4 final selected regions and limits
 
-Missing coverage is explicit. CMYK animation still omits Black (H10), and the
-optional subsampled explicit-source-plus-ICC caller has the separate H5 failure
-in [the source-color record](SOURCE_COLOR_CONVERSION.md#optional-icc-caller-reopened).
-Neither is credited by a region counter. The remaining H12-H14 dimension,
-clock and cumulative-area checks are separate from this animation precision fix.
+Coverage of this H4 record remains scoped to its own paths. The separate
+optional source-to-ICC repair is recorded in the
+[source-color contract](SOURCE_COLOR_CONVERSION.md); CMYK admission,
+conversion and animation forwarding have their own
+[H10 qualification](CMYK_SOURCE_CONTRACT.md). H12-H14 level/clock checks
+retain their separate evidence. Those paths are not credited by this H4
+region counter.
 
 The retained `color-complete-region-record/regions.json` checks exact source,
 executable and profile hashes and excludes archives with differing function
