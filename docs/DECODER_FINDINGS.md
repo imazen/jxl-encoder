@@ -202,3 +202,29 @@ hidden-reference stream. The native coalescing limitation is separate.
 Decoder repair and upstream reporting remain open; no outside-org report is
 authorized. [Encoder control and limitations](CMYK_SOURCE_CONTRACT.md).
 
+
+
+## November 19: isolated decoder repairs adopted by the encoder
+
+The repaired 0.8 primary lineage is pinned at
+[`3d48825c`](https://github.com/imazen/jxl-rs-v08/commit/3d48825cd10d0a5c325a683136723198fb69859a).
+It preserves the released 0.8 APIs and fixes both the global inverse-squeeze
+grid promotion and the HLG near-unity predicate. The native decoder pin is
+[`74eba39b`](https://github.com/imazen/zenjxl-decoder/commit/74eba39b05e8fae933807f035f56c1a6ece2f8ce),
+including the post-header no-CMS profile guard. Existing live checkouts remain
+untouched. These are source pins, not published decoder releases.
+
+The native HLG component observer uses unmodified v0.12 HlgOOTF_Base.
+Selected primary inverse/forward mapped regions are 19/19; native scalar and
+precise kernels are 17/17 and 27/27, and profile admission is 16/16. The
+primary global-grid propagation expressions are 5/5. These fractions refer
+to exact retained test executables and profiles in the decoder contracts,
+not all inputs, SIMD tiers or a whole-decoder coverage claim. Required-platform
+primary CI44543429842 and native decoder CI44542842011 pass.
+Extended zen run44542842029 ended after a
+runner shutdown, without an aggregate test verdict; it remains incomplete.
+
+The original E4 wide-reference arithmetic finding is independent and remains
+unrepaired in the released-0.8-derived primary. That decoder is not the E4
+acceptance oracle. Encoder integration qualification has its own verdict in
+[the controller contract](RATE_CONTROL_CONTRACT.md).
