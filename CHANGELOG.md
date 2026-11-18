@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+- Preserve prefix-only JPEG EXIF/XMP as opaque records; check parsed APP
+  classifications before color access and reject duplicate external metadata
+  references instead of emitting unreconstructible JPEG data (`39977bf1`).
+
 - Preserve grayscale JPEG SOF sampling factors during transcoding, including
   bare codestreams, recompression and embedded gain maps; restore exact JPEG
   reconstruction through API and CLI entry points (`9efaa904`).
