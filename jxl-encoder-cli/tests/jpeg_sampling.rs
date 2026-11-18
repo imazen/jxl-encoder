@@ -102,3 +102,6 @@ fn grayscale_sampling_survives_both_cli_jpeg_routes() {
         }
     }
 }
+
+#[path = "jpeg_sampling/metadata.rs"]
+mod metadata;

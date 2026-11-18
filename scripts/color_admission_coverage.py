@@ -17,6 +17,7 @@ p.add_argument('llvm', type=Path)
 p.add_argument('output', type=Path)
 p.add_argument('archives', nargs='+', type=Path)
 p.add_argument('--extra-metadata', action='store_true')
+p.add_argument('--jpeg-metadata', action='store_true')
 p.add_argument('--display-extents', action='store_true')
 p.add_argument('--animation-state', action='store_true')
 p.add_argument('--animation-deltas', action='store_true')
@@ -98,6 +99,22 @@ def observe(relative, name, occurrence=0, window=False):
                      inputs=inputs, excluded_different_body=excluded, covered=sum(v > 0 for v in counts.values()), total=len(counts),
                      missing_relative_regions=[k for k, v in sorted(counts.items()) if not v]))
     print(json.dumps(rows[-1]))
+
+if a.jpeg_metadata:
+    observe('jxl-encoder/src/jpeg/parse.rs', 'classify_app_marker')
+    observe('jxl-encoder/src/jpeg/parse.rs', 'scan_markers',
+            window=('let mut marker_type = classify_app_marker', 9))
+    observe('jxl-encoder/src/jpeg/jbrd.rs', 'validate_app_metadata')
+    observe('jxl-encoder/src/jpeg/jbrd.rs', 'encode_jbrd',
+            window=('validate_app_metadata(jpeg)?;', 1))
+    observe('jxl-encoder/src/jpeg/encode.rs', 'encode_jpeg_to_jxl_inner',
+            window=('super::jbrd::validate_app_metadata(jpeg)?;', 1))
+    observe('jxl-encoder/src/jpeg/encode.rs', 'compute_jpeg_upsampling')
+    observe('jxl-encoder/src/jpeg/encode.rs', 'encode_jpeg_to_jxl_inner',
+            window=('let jpeg_upsampling = compute_jpeg_upsampling', 1))
+    (a.output / 'regions.json').write_text(json.dumps(dict(inputs=identities, functions=rows,
+        note='Exact source bodies and named windows; no whole-JPEG coverage claim.'), indent=2))
+    sys.exit(0)
 
 if a.cmyk_handoffs:
     observe('jxl-encoder/src/api/animate.rs', 'zero_cmyk_delta')

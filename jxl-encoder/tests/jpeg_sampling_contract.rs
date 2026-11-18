@@ -348,3 +348,6 @@ fn unsupported_grayscale_sampling_is_refused_cleanly() {
         }
     }
 }
+
+#[path = "jpeg_sampling_contract/metadata.rs"]
+mod metadata;

@@ -2848,6 +2848,12 @@ Remaining layout inventory is tracked separately in the progressive contract.
 | Reduced CMYK source precision | Normalize CMY/K by (1 << declared_bits) - 1 for both u8/u16 buffers; synthesized Black inherits that precision. | Part 1 independent integer BitDepth normalization; equal rational ink fractions represent equal source color. | H10 candidate; one-bit before error 0.9999111, followed by a distinct synthesized-u8 Black failure. Both decoder controls pass after correction. |
 | CMYK opaque-selector fields | Resolve CMYK input color/loop/tone from the required profile; omitted simple-selector fields do not select PQ/HLG source dispatch. RGB source selection retains its existing path. | Part 1 E.2 omits those simple fields under want_icc; CMYK profile interpretation is required. | H10 candidate; default-loop before trace changes three records to zero. Expanded exact-byte/trace and full-decoder controls pass; no strategy gate changes. |
 
+### Issue 144 C2: JPEG APP1 classification and external references
+
+| Site | Current behavior | Reference contract | Status |
+|---|---|---|---|
+| `jpeg::parse::classify_app_marker` and shared/direct JPEG admission | EXIF/XMP prefixes require a following payload before classification. Validate parallel APP arrays, classified marker/prefix/payload, and at most one external EXIF/XMP reference before color access and direct JBRD output. | Pinned v0.12 classifies only nonempty payloads; Part 2 clause 9.12 limits external references. Prefix-only and subsequent raw records remain opaque. | Selected raw/parsed/cancellable/bare/CLI/gain-map and minimal/optional caller controls pass, with exact reconstruction and full primary/native rendering. Classifier/tracking/validator and both entry regions are measured explicitly; no registry gate or constant changes. Content validation beyond these structural checks is not claimed. See JPEG_RECONSTRUCTION_CONTRACT.md. |
+
 ### Issue 144 C6: grayscale JPEG sampling preservation
 
 | Site | Current behavior | Reference contract | Status |

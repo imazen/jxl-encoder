@@ -1027,9 +1027,11 @@ fn extract_coefficients_zenjpeg(
 fn classify_app_marker(marker_byte: u8, payload: &[u8]) -> AppMarkerType {
     match marker_byte {
         0xE1 => {
-            if payload.starts_with(b"Exif\0\0") {
+            if payload.len() > b"Exif\0\0".len() && payload.starts_with(b"Exif\0\0") {
                 AppMarkerType::Exif
-            } else if payload.starts_with(b"http://ns.adobe.com/xap/1.0/\0") {
+            } else if payload.len() > b"http://ns.adobe.com/xap/1.0/\0".len()
+                && payload.starts_with(b"http://ns.adobe.com/xap/1.0/\0")
+            {
                 AppMarkerType::Xmp
             } else {
                 AppMarkerType::Unknown

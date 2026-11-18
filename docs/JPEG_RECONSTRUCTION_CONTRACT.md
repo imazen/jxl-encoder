@@ -1,8 +1,8 @@
 # JPEG reconstruction edge contracts
 
-Issue 144 C6 is reproduced through the public raw, cancellable and parsed
-entries. C2, C3 and C4 still need completed runtime attribution; their newly
-prepared tests are not evidence of execution.
+Issue 144 C6 is repaired on main. C2's current source, restored controls and passing broad gates
+are described below; remote CI remains a separate verdict. C3 and C4 retain
+independent before evidence and unlanded candidates.
 
 ## Grayscale sampling
 
@@ -97,3 +97,59 @@ logs, tool executable hashes and sample hashes remain under that evidence
 label. The Python tool version-checks both explicitly supplied executables for
 v0.12.0 a7a9c78 and uses Pillow only to read the explicitly selected PNG8 output.
 These observations do not replace the pending current-encoder before probes.
+
+## Prefix-only metadata and parsed classifications (C2)
+
+Current-main replays reproduce prefix-only EXIF/XMP reconstruction failures,
+including a prefix preceding genuine metadata. Forged parsed input with fewer
+classifications than APP records panics during color access, before JBRD
+serialization. Those are separate regression triggers. The shared classifier
+now leaves the prefix-only record opaque, matching unmodified v0.12's strict
+nonempty-payload classification. It cannot consume the first-record slot.
+
+A private validator checks parallel array counts, the marker/prefix/nonempty
+payload for classified APP1, and the single EXIF/XMP-reference limit from
+Part 2 clause 9.12. It runs before color access in the shared JPEG entry and
+at direct JBRD serialization. This adds no public type, signature or gate.
+Raw repeated metadata stays opaque after the first record and reconstructs
+exactly. Manually classifying two records as external metadata is rejected,
+even when their contents match: that representation violates the reference
+limit. Complete TIFF/XML-content validation is not claimed; nonempty raw
+content acceptance remains compatible with v0.12.
+
+The duplicate-EXIF before control loses byte reconstruction in native v0.12:
+its 22,980-byte source becomes a 28,266-byte pixel fallback, differing first
+at byte 3. The original/reconstructed SHA256s and artifacts are retained with
+`jpeg-prefix-distinct-content-before`. The first newly authored identical-alias
+positive was incorrect; a native failure and the normative reference limit
+corrected that fixture. Ordinary repeated APP1 records remain a positive.
+
+Selected execution covers all offered policies, raw/cancellable/parsed and
+bare entries, direct JBRD negatives, valid one-byte payload boundaries,
+no-APP input, gain-map secondary input, and automatic/forced CLI routes with
+all spellings, experimental and implicit defaults. Complete primary/native
+rendering and exact JPEG reconstruction accompany the storage controls.
+
+`jpeg-metadata-production` retains exact source, object and profile identities.
+Mapped regions are classifier 19/19, first-record tracking 16/16, validator
+38/38, direct-JBRD entry 3/3 and shared pre-color entry 3/3. The fresh profile
+also renews C6's sampling-helper 25/25 and corrected-call 4/4 evidence against
+the enlarged current function body. The older C6 whole-body binding correctly
+refuses this changed body; its mixed caller wrapper therefore ends rc1 despite
+passing its runtime/lint stages. No source-identity guard was weakened.
+These fractions describe the named functions/windows, not all JPEG or metadata
+validation. Restored faults, feature checks, broad checks and remote CI retain
+their own verdicts.
+
+The complete restored-source sequence passes in
+`jpeg-metadata-final-validation.log` (rc0, 329 seconds; build/test peak RSS
+1.95 GiB, minimum available 18,552 MiB): fresh production profile, CLI and
+strict focused lint, JPEG-enabled library, unchanged locks and reconstruction
+conformance/validity checks, default-disabled runtime matrix, optional
+subsampling callers, doctests and strict workspace all-target lint. Existing
+ignores, expected bytes and thresholds remain unchanged. The six restored
+fault checks pass in `jpeg-metadata-regions-and-faults.log` (136 seconds; peak
+RSS 1.11 GiB, minimum available 19,232 MiB). A fresh original-writer replay of
+428f04ab retains the duplicate-metadata source/object/profile and runtime
+artifacts, then verifies restoration of the candidate sources; its wrapper
+passes while requiring the regression's nonzero test verdict.
