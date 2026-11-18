@@ -293,6 +293,13 @@ jobs:
           cargo test --locked --release -p jxl-encoder --features __expert,parallel --test alpha_large_multiplier_contract alpha_large_multiplier_still_writer -- --test-threads=1
           cargo test --locked --release -p jxl-encoder --no-default-features --features std,convenience,__expert --test alpha_large_multiplier_contract alpha_large_multiplier_still_writer -- --test-threads=1
 
+      - name: Test animation alpha settings and layer callers in both feature builds
+        env:
+          JXL_ENCODER_OUTPUT_DIR: ${{ runner.temp }}/issue144-contracts
+        run: |
+          cargo test --locked --release -p jxl-encoder --features __expert,parallel --test animation_alpha_contract --test animation_alpha_layers_contract -- --test-threads=1
+          cargo test --locked --release -p jxl-encoder --no-default-features --features std,convenience,__expert --test animation_alpha_contract --test animation_alpha_layers_contract -- --test-threads=1
+
       - name: Test configured pixel container policies
         env:
           JXL_ENCODER_OUTPUT_DIR: ${{ runner.temp }}/issue144-contracts

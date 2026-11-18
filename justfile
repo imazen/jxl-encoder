@@ -3317,3 +3317,12 @@ alpha-large-multiplier-check manifest:
 
 alpha-tree-regions output llvm +archives:
     python3 scripts/color_admission_coverage.py {{quote(llvm)}} {{quote(output)}} {{archives}} --alpha-tree
+
+# Requires the caller-selected guarded v0.12 original-profile observer.
+animation-alpha-options-check manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --test animation_alpha_contract --test animation_alpha_layers_contract -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert --test animation_alpha_contract --test animation_alpha_layers_contract -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,parallel --test animation_contract --test it -- animation hash_lock strategy_libjxl_byte_lock divergence_table_drift --test-threads=1
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --lib --test animation_alpha_contract --test animation_alpha_layers_contract -- -D warnings
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert --lib --test animation_alpha_contract --test animation_alpha_layers_contract -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check

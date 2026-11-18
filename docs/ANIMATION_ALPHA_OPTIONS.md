@@ -80,3 +80,7 @@ Completed runtime identities (ELF / profile SHA256):
 
 Restored-fault and exact-body region checks remain separate evidence; the
 native-platform CI selections do not themselves establish remote success.
+
+Run `just animation-alpha-options-check <pinned-manifest>` with explicit
+`CJXL_PATH`, `DJXL_PATH` and `LIBJXL_ORIGINAL_PROFILE_ORACLE` from the same
+verified v0.12 build. Each source export needs its own Cargo target directory.
