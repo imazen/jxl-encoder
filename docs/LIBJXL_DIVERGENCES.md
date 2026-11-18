@@ -2811,3 +2811,9 @@ Remaining layout inventory is tracked separately in the progressive contract.
 | Site | Current choice | Reference / format | Status |
 |---|---|---|---|
 | Both animation writers, `advance_crop_reference` | Retain source bytes iff normal frame saves in slot one and blend is unset/Replace. ReferenceOnly slot-one writes clear the cache; other ReferenceOnly writes preserve it. Crop only if mode is unset and source is unset/one. | Part 1 F.2/F.7: cropped composition reads its signaled saved canvas. Actual before streams read a different canvas and return wrong pixels in primary Rust and native v0.12. | Shared correctness repair without new registry values or gate metadata. Selected default/minimal matrices, actual partial-crop positive controls and independent source/history faults pass; limits in [ANIMATION_STATE_CONTRACT.md](ANIMATION_STATE_CONTRACT.md). |
+
+### Issue 144: selected full-frame delta reference
+
+| Site | Current behavior | Reference contract | Status |
+|---|---|---|---|
+| Lossless animation full-frame delta candidate | Pin the main and alpha Add source to slot one, matching the cached replacement canvas used for subtraction | Part 1 F.2/F.7 Add reads the signaled source. The existing pinned v0.12 explicit-Add controls produce the expected sums. | Actual winning regional changes expose wrong default-source pixels before repair. Isolated default/minimal, exact source-code/profile, source-field fault and unchanged baseline checks pass; no registry gate or metadata changes. [Evidence](ANIMATION_DELTA_CONTRACT.md). |

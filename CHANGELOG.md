@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- Keep selected full-frame animation deltas tied to the slot-one canvas used
+  for subtraction, including their alpha Add source.
+
 - Keep automatic animation crops tied to a known replacement canvas in slot
   one; invalidate that cache after overwrites, composed or unsaved frames,
   and emit full replacements when an explicit source selects another slot.

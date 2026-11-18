@@ -70,8 +70,10 @@ pub struct AnimationFrame<'a> {
     /// other than the previous frame's canvas.
     pub blend_mode: Option<BlendMode>,
     /// Source reference slot (0–3) for blending. `None` keeps the encoder
-    /// default (1 when this frame uses a crop, 0 otherwise). Only meaningful
-    /// when `blend_mode` is set to a non-`Replace` mode.
+    /// default (1 for an automatic crop or selected full-frame delta, 0 for
+    /// other full-frame blends). Automatic deltas read the known previous
+    /// canvas in slot 1. An explicit source also constrains automatic cropping;
+    /// use a non-`Replace` blend mode to select a full-canvas composition.
     pub blend_source: Option<u32>,
     /// Save this frame to a reference slot (0–3) so later frames can
     /// composite against it. `None` keeps the encoder default — non-last

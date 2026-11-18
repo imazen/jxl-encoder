@@ -582,22 +582,23 @@ pub(crate) fn encode_animation_lossless(
                         delta_image.bit_depth = bits;
                     }
                     let mut wb = crate::bit_writer::BitWriter::new();
-                    FrameEncoder::new(
-                        w,
-                        h,
-                        make_opts(
-                            None, // full-frame, no crop
-                            Some(BlendMode::Add),
-                            if layout.has_alpha() {
-                                Some(BlendMode::Add)
-                            } else {
-                                None
-                            },
-                        ),
-                    )
-                    .with_budget(alloc::sync::Arc::clone(&budget))
-                    .encode_modular(&delta_image, &color_encoding, &mut wb, stop)
-                    .map_err(at_from)?;
+                    let mut delta_options = make_opts(
+                        None, // full-frame, no crop
+                        Some(BlendMode::Add),
+                        if layout.has_alpha() {
+                            Some(BlendMode::Add)
+                        } else {
+                            None
+                        },
+                    );
+                    // advance_crop_reference retains only a known slot-one
+                    // replacement canvas. This delta subtracts that canvas,
+                    // so its full-frame Add must read the same slot.
+                    delta_options.blend_source = Some(1);
+                    FrameEncoder::new(w, h, delta_options)
+                        .with_budget(alloc::sync::Arc::clone(&budget))
+                        .encode_modular(&delta_image, &color_encoding, &mut wb, stop)
+                        .map_err(at_from)?;
                     Some(wb)
                 }
                 // Unsupported layout for delta (e.g. one we haven't

@@ -1779,6 +1779,16 @@ misclassify that CLI limitation as an invalid stream or strip the ICC to hide it
 
 ## Known Bugs (ACTIVE)
 
+### RESOLVED 2026-11-18: selected full-frame deltas read the wrong saved source
+
+A real regional +1 RGB8 change makes the full-frame delta win, but its default
+Add source was zero after subtracting the known slot-one canvas. Both primary
+Rust and pinned native v0.12 return wrong source codes. Explicit source-one
+controls are exact. The shared repair pins that candidate to slot one. Isolated default/minimal
+policy/layout/profile checks, source-field fault, unchanged library/locks and
+strict focused lint pass. [Evidence and remaining gates](docs/ANIMATION_DELTA_CONTRACT.md).
+
+
 ### RESOLVED 2026-11-17: descending and equal animation clocks
 
 Both animation writers now share Part 1 F.2 clock-order admission. Nonzero
