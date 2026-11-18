@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- Align SDR/HDR gain-map inputs in the tagged alternate gamut and actual base-white
+  light units; normalize absolute PQ/HLG and require exact matching alpha.
+
 - Admit rate-control comparator scratch before allocation and release diffmap/tile
   reservations with their buffers; preserve the existing metric arithmetic.
 

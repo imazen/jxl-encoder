@@ -349,7 +349,7 @@ pub struct LosslessConfig {
     /// Caller-supplied resource limits. See [`Self::with_limits`].
     ///
     /// Previously unreachable on this type: lossless limits arrived only via
-    /// [`EncodeRequest::with_limits`], so entry points that bypass
+    /// [`crate::EncodeRequest::with_limits`], so entry points that bypass
     /// `EncodeRequest` — notably [`Self::encode_planar_int`] — could only ever
     /// run on defaults.
     ///
@@ -554,7 +554,7 @@ impl LosslessConfig {
     /// Attach resource limits to this lossless encode.
     ///
     /// Lossless limits previously arrived only through
-    /// [`EncodeRequest::with_limits`], so any entry point that does not build
+    /// [`crate::EncodeRequest::with_limits`], so any entry point that does not build
     /// an `EncodeRequest` ran on defaults with no way for the caller to tighten
     /// them. [`Self::encode_planar_int`] is exactly such an entry point, which
     /// meant the wide-integer path — the one that accepts up to 31-bit samples
@@ -1737,7 +1737,7 @@ impl LosslessConfig {
     ///
     /// Use this when you need to attach metadata, limits, or cancellation.
     /// Limits attached to this config are inherited; an explicit
-    /// [`EncodeRequest::with_limits`] replaces them for that request.
+    /// [`crate::EncodeRequest::with_limits`] replaces them for that request.
     pub fn encode_request(
         &self,
         width: u32,
@@ -11490,6 +11490,10 @@ use animate::{encode_animation_lossless, encode_animation_lossy};
 /// Eliminates per-pixel `powf(2.4)` calls for the common 8-bit path.
 mod ingest;
 use ingest::*;
+#[cfg(feature = "hdr-gainmap")]
+pub(crate) use ingest::{
+    apply_hlg_forward_ootf, hlg_ootf_gamma, hlg_ootf_luminances, hlg_to_linear_f,
+};
 
 // ── Tests ───────────────────────────────────────────────────────────────────
 

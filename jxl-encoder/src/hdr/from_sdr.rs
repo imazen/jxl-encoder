@@ -16,11 +16,14 @@ use crate::headers::color_encoding::ColorEncoding;
 
 use super::bundle::{GainMapBundle, append_gain_map_bundle};
 
+#[path = "from_sdr_color.rs"]
+mod color;
+
 pub use ultrahdr_core::GainMapEncodingFormat as GainMapEncoding;
 
 /// Pixel layouts accepted by [`HdrFromSdrRequest`].
 ///
-/// Constrained to the four shapes the gain-map compute kernels support
+/// Constrained to the three shapes the gain-map compute kernels support
 /// (`Rgba8`, `Rgb8`, `RgbaF32`) on both the SDR and HDR sides. Other
 /// shapes (alpha-less HDR f32, BGRA, grayscale, etc.) are not yet wired —
 /// upcast on the caller side, or open a feature request.
@@ -30,8 +33,8 @@ pub enum HdrPixelLayout {
     Rgba8,
     /// 8-bit interleaved RGB, 3 bytes per pixel.
     Rgb8,
-    /// IEEE 754 single-precision linear RGBA, 16 bytes per pixel.
-    /// Channel order R, G, B, A.
+    /// Native-endian IEEE 754 RGBA, 16 bytes per pixel.
+    /// Channel order R, G, B, A; the transfer is declared by [`HdrImage::color`].
     RgbaF32,
 }
 
@@ -46,20 +49,16 @@ impl HdrPixelLayout {
         }
     }
 
-    fn to_uhdr(self) -> PixelFormat {
-        match self {
-            Self::Rgba8 => PixelFormat::Rgba8,
-            Self::Rgb8 => PixelFormat::Rgb8,
-            Self::RgbaF32 => PixelFormat::RgbaF32,
-        }
-    }
-
-    fn to_jxl_lossless_layout(self) -> PixelLayout {
+    fn to_jxl_base_layout(self, color: HdrColorEncoding) -> PixelLayout {
         match self {
             Self::Rgba8 => PixelLayout::Rgba8,
             Self::Rgb8 => PixelLayout::Rgb8,
-            // f32 RGBA goes through the linear-RGBA lossless path.
-            Self::RgbaF32 => PixelLayout::RgbaLinearF32,
+            Self::RgbaF32 => match color.transfer {
+                UhdrTransfer::Pq => PixelLayout::RgbaPqF32,
+                UhdrTransfer::Hlg => PixelLayout::RgbaHlgF32,
+                // sRGB float is linearized privately before this layout is used.
+                _ => PixelLayout::RgbaLinearF32,
+            },
         }
     }
 }
@@ -158,6 +157,18 @@ impl<'a> HdrImage<'a> {
 /// 2. Reconstructs the HDR image on capable decoders via
 ///    `sdr + gainmap → hdr`.
 ///
+/// Gain computation uses the HDR alternate gamut after linearizing both
+/// sources. The bundle explicitly declares that alternate color encoding.
+/// Both images must have identical alpha; gain maps do not encode alpha changes.
+/// Linear and sRGB input light is relative to the base white. PQ and HLG
+/// are converted from absolute 10000-nit and 1000-nit display units into that
+/// same base white before gain computation. The base header is explicitly bound
+/// to its existing 255/1000/10000-nit SDR/HLG/PQ default. A positive alternate
+/// intensity target can increase automatic headroom; configured bounds remain.
+/// Source conversion must remain finite and nonnegative in the alternate gamut.
+/// The supported input descriptions use BT.709, Display P3 or BT.2020 primaries
+/// with Linear, sRGB, PQ or HLG transfer; other descriptions return an error.
+///
 /// The SDR base is encoded via [`LossyConfig`] at the caller's chosen
 /// distance. The gain map is encoded via [`LosslessConfig`] (preserves
 /// the exact gain values the [`GainMapConfig`] kernel produced).
@@ -187,7 +198,12 @@ impl<'a> HdrFromSdrRequest<'a> {
     ///
     /// `sdr_pixels` and `hdr_pixels` must contain exactly
     /// `width * height * <bytes_per_pixel>` bytes each (no stride
-    /// support yet — the underlying compute kernels are tightly-packed).
+    /// field).
+    ///
+    /// `hdr_intensity_target` is the alternate display peak for automatic
+    /// headroom in nits. It must be finite and nonnegative; zero retains the
+    /// configured/observed headroom. It does not rescale relative linear input
+    /// or change the source HLG interpretation from its 1000-nit display basis.
     ///
     /// Defaults applied:
     /// - SDR JXL distance: `1.0` (use [`Self::with_lossy_config`] to override).
@@ -250,7 +266,8 @@ impl<'a> HdrFromSdrRequest<'a> {
     ///
     /// Defaults to [`ColorEncoding::srgb`] when not set. Pass
     /// [`ColorEncoding::display_p3`] etc. if your SDR base is in a
-    /// wide-gamut sRGB-curve space.
+    /// wide-gamut sRGB-curve space. This must match [`HdrImage::color`];
+    /// incompatible overrides return an error rather than reinterpreting samples.
     #[must_use]
     pub fn with_sdr_color_encoding(mut self, ce: ColorEncoding) -> Self {
         self.sdr_color_encoding = Some(ce);
@@ -284,27 +301,65 @@ impl<'a> HdrFromSdrRequest<'a> {
             "hdr",
         )?;
 
-        // 2. Build PixelBuffers for the ultrahdr-core compute call.
-        // `pixel_buffer_from_vec` borrows neither — it copies into a
-        // freshly-allocated Vec. This is the per-encode cost of using
-        // the typed ultrahdr-core API; the kernel itself reads
-        // contiguously so we don't pay any cache penalty after the copy.
-        let sdr_buf = pixel_buffer_from_vec(
-            self.sdr_pixels.to_vec(),
+        // Compute in the declared alternate gamut after each source EOTF.
+        // Normalizing every layout also avoids the producer's 8-bit fallback
+        // to sRGB for explicitly declared PQ/HLG sources.
+        let sdr_ce = color::source_override(
+            self.sdr_color_encoding.clone(),
+            color::encoding(self.sdr_color)?,
+        )?;
+        let hdr_ce = color::encoding(self.hdr_color)?;
+        if !self.hdr_intensity_target.is_finite() || self.hdr_intensity_target < 0.0 {
+            return Err(invalid(
+                "hdr-gainmap: alternate intensity target must be finite and nonnegative".into(),
+            ));
+        }
+        let base_white = color::base_white_nits(self.sdr_color);
+        let gain_space = color::GainSpace {
+            primaries: self.hdr_color.primaries,
+            white_nits: base_white,
+        };
+        let sdr_linear = color::linear_rgba(
+            self.sdr_pixels,
             self.width,
             self.height,
-            self.sdr_layout.to_uhdr(),
-            self.sdr_color.primaries,
-            self.sdr_color.transfer,
+            self.width as usize * self.sdr_layout.bytes_per_pixel(),
+            self.sdr_layout,
+            self.sdr_color,
+            gain_space,
+        )?;
+        let hdr_linear = color::linear_rgba(
+            self.hdr_pixels,
+            self.width,
+            self.height,
+            self.width as usize * self.hdr_layout.bytes_per_pixel(),
+            self.hdr_layout,
+            self.hdr_color,
+            gain_space,
+        )?;
+        let normalized_stride = self.width as usize * 16;
+        for (sdr, hdr) in sdr_linear
+            .chunks_exact(normalized_stride)
+            .zip(hdr_linear.chunks_exact(normalized_stride))
+        {
+            color::matching_alpha_row(sdr, hdr)?;
+        }
+        let sdr_buf = pixel_buffer_from_vec(
+            sdr_linear,
+            self.width,
+            self.height,
+            PixelFormat::RgbaF32,
+            self.hdr_color.primaries,
+            UhdrTransfer::Linear,
         )
         .map_err(uhdr_error)?;
         let hdr_buf = pixel_buffer_from_vec(
-            self.hdr_pixels.to_vec(),
+            hdr_linear,
             self.width,
             self.height,
-            self.hdr_layout.to_uhdr(),
+            PixelFormat::RgbaF32,
             self.hdr_color.primaries,
-            self.hdr_color.transfer,
+            UhdrTransfer::Linear,
         )
         .map_err(uhdr_error)?;
 
@@ -316,42 +371,63 @@ impl<'a> HdrFromSdrRequest<'a> {
             Unstoppable,
         )
         .map_err(uhdr_error)?;
+        // Gain computation no longer borrows its normalized input planes.
+        drop(sdr_buf);
+        drop(hdr_buf);
+        metadata.use_base_color_space = false;
 
-        // 4. Backfill the alternate-image intensity target on the
-        //    metadata if the caller specified one. Headroom math from
-        //    ultrahdr-core uses scene-relative ratios; the absolute peak
-        //    nits go on the JXL `ImageMetadata` for the base image AND
-        //    in the ISO 21496-1 metadata for the alternate.
+        // 4. Headroom uses the same base-white units as the gain ratios.
+        // Configured quantization bounds and stricter headroom remain intact.
+        // Zero retains the compute kernel's configured/observed headroom.
         if self.hdr_intensity_target > 0.0 {
-            // 203 nits is the SDR diffuse-white reference per
-            // BT.2408-7 § 1.1. Headroom is stored as log2 of the
-            // peak-to-SDR ratio.
-            let target_log2 = ((self.hdr_intensity_target as f64) / 203.0).log2().max(0.0);
-            // Only nudge upward — don't clamp down a stricter headroom
-            // the compute kernel already picked. `GainMapParams` is a
-            // re-export of `zencodec::GainMapParams` with public fields,
-            // so direct assignment is the documented update path.
-            if target_log2 > metadata.alternate_hdr_headroom {
-                metadata.alternate_hdr_headroom = target_log2;
-            }
+            let target_log2 = (f64::from(self.hdr_intensity_target) / f64::from(base_white))
+                .log2()
+                .max(0.0);
+            metadata.alternate_hdr_headroom = metadata.alternate_hdr_headroom.max(target_log2);
         }
 
         // 5. Encode the SDR base as a JXL codestream. We thread the
         //    caller-chosen color encoding via the public request layer
         //    so the bytes the SDR decoder gets are correctly tagged.
-        let sdr_ce = self
-            .sdr_color_encoding
-            .clone()
-            .unwrap_or_else(ColorEncoding::srgb);
+        // The public float layout declares its input transfer. PQ/HLG have
+        // typed base layouts; nonlinear sRGB float needs linear preparation.
+        let mut prepared_sdr = if self.sdr_layout == HdrPixelLayout::RgbaF32
+            && self.sdr_color.transfer == UhdrTransfer::Srgb
+        {
+            Some(color::linear_rgba(
+                self.sdr_pixels,
+                self.width,
+                self.height,
+                self.width as usize * 16,
+                self.sdr_layout,
+                self.sdr_color,
+                color::GainSpace {
+                    primaries: self.sdr_color.primaries,
+                    white_nits: base_white,
+                },
+            )?)
+        } else {
+            None
+        };
+        if let Some(pixels) = &mut prepared_sdr {
+            // The gain producer reads little-endian floats; the pixel API
+            // accepts native-endian floats. This conversion is a no-op on LE.
+            for sample in pixels.as_chunks_mut::<4>().0 {
+                *sample = f32::from_le_bytes(*sample).to_ne_bytes();
+            }
+        }
         let sdr_request = self
             .lossy_config
             .encode_request(
                 self.width,
                 self.height,
-                self.sdr_layout.to_jxl_lossless_layout(),
+                self.sdr_layout.to_jxl_base_layout(self.sdr_color),
             )
-            .with_color_encoding(sdr_ce);
-        let sdr_jxl = sdr_request.encode(self.sdr_pixels).map_err(at_to_inner)?;
+            .with_color_encoding(sdr_ce)
+            .with_intensity_target(base_white);
+        let sdr_jxl = sdr_request
+            .encode(prepared_sdr.as_deref().unwrap_or(self.sdr_pixels))
+            .map_err(at_to_inner)?;
 
         // 6. Encode the gain-map plane as a lossless JXL codestream.
         // Single-channel grayscale for luminance gain maps; 3-channel
@@ -373,13 +449,9 @@ impl<'a> HdrFromSdrRequest<'a> {
             ultrahdr_core::Iso21496Format::JxlJhgm,
         );
 
-        // 8. Build the typed bundle and append the `jhgm` box. Its optional
-        // color fields describe the reconstructed alternate image (Part 2
-        // 9.11). Leaving them unset selects the baseline image's encoding.
-        // The inner gain-map codestream carries its own encoding separately.
-        // Qualification of differing baseline/alternate gamuts remains open;
-        // see docs/GAIN_MAP_COLOR_CONTRACT.md.
-        let bundle = GainMapBundle::new(iso21496, gm_jxl);
+        // Part 2 9.11: alternate color describes reconstructed HDR samples;
+        // gain values themselves retain their separate lossless coding.
+        let bundle = GainMapBundle::new(iso21496, gm_jxl).with_color_encoding(hdr_ce);
         let container = append_gain_map_bundle(&sdr_jxl, &bundle)?;
         Ok(container)
     }
@@ -454,7 +526,10 @@ mod tests {
         let w = 8u32;
         let h = 8u32;
         // SDR: mid-gray everywhere (128).
-        let sdr = vec![128u8; (w * h * 4) as usize];
+        let mut sdr = vec![128u8; (w * h * 4) as usize];
+        for pixel in sdr.as_chunks_mut::<4>().0 {
+            pixel[3] = 255;
+        }
         // HDR: same RGB but with each pixel slightly above SDR so the
         // gain map has something to encode. Without any signal the
         // gainmap kernel still produces a valid bundle, but this is

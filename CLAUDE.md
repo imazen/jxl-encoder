@@ -1802,6 +1802,20 @@ whole-controller memory gap remain explicit in
 new public API or strategy gate is claimed.
 
 
+### RESOLVED 2026-11-19: SDR/HDR gain-map gamut, alpha and light units
+
+The pair producer converts both inputs to the HDR alternate gamut and the
+actual base-white light unit, tags that alternate encoding, and requires exact
+matching alpha. PQ/HLG absolute light is normalized; plain linear HDR remains
+relative. The approved opaque-alpha smoke migration preserves RGB and container
+assertions. Component/native numerical controls, complete primary/native base
+and gain rendering, restored faults, selected policy/layout/transfer matrices,
+full HDR library/doctests and strict default/minimal lint pass. Exact region
+fractions and allocator/compound-renderer gaps remain explicit in
+[GAIN_MAP_COLOR_CONTRACT.md](docs/GAIN_MAP_COLOR_CONTRACT.md). Modeled HDR
+reconstruction is not compound-player output; no public signature changes.
+
+
 ### RESOLVED 2026-11-19: inherited lossless limits and animation admission
 
 Lossless request construction dropped configured limits; its legacy animation

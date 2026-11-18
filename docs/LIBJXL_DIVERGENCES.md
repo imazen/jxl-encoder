@@ -2926,6 +2926,13 @@ Remaining layout inventory is tracked separately in the progressive contract.
 | `ColorEncoding::from_cicp` TC17 mapping | Preserve the relative DCI descriptor. Caller supplies absolute intensity separately or normalizes source samples. The helper does not change pixels or carry a peak. | Pinned v0.12 ApplyCICP selects the same transfer enum. Part 1 E.2 distinguishes relative JXL DCI from absolute CICP17 normalization. | API/documentation clarification; no algorithm, gate, constant, signature or registry metadata change. Native-rendered source/white/intensity controls and exact scope are recorded in TC17_NORMALIZATION.md. |
 
 
+### Issue 144 C5: SDR/HDR pair color and light interpretation
+
+| Site | Encoder contract | Reference / normative distinction | Qualification |
+|---|---|---|---|
+| `hdr/from_sdr.rs`, `hdr/from_sdr_color.rs` | Tag the HDR alternate encoding; convert both gain inputs to HDR primaries and the actual base-white light unit. PQ uses10000/base-white, HLG uses the shared1000-nit luminance OOTF then1000/base-white, plain linear remains relative. Require exact matching alpha; preserve configured gain/headroom bounds. | Part2 clause9.11 describes the reconstructed alternate. Unmodified v0.12 matrix/EOTF/OOTF components provide numerical controls; no equivalent high-level libjxl pair producer is claimed. | Owner-selected contract, shared across offered policies with no registry gate/value change. Component/public, full HDR library/doctest, restored-fault and strict default/minimal lint/format gates pass. Exact region fractions, uncovered errors, numerical controls and compound-renderer gap: GAIN_MAP_COLOR_CONTRACT.md. |
+
+
 ### Issue 144: inherited resource limits and shared animation admission
 
 | Site | Encoder contract | Reference distinction | Qualification |
