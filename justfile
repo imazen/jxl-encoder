@@ -3282,3 +3282,9 @@ stage-archived-runtime archive template output:
 # Archives every file before reclaiming an explicitly selected inactive Cargo target.
 archive-inactive-cargo source output:
     python3 scripts/archive_inactive_cargo.py {{quote(source)}} {{quote(output)}} --reclaim
+
+container-policy-boxes-supplement-check manifest artifacts coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" configured_optional_boxes_and_animation_profile_branches --also-filter configured_policy_reaches_every_pixel_output_wrapper --test-target container_policy_contract --features __expert,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/ingest.rs --source jxl-encoder/src/api/container.rs --source jxl-encoder/src/container.rs --source jxl-encoder/tests/fixtures/ps_cmyk.hex' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --test container_policy_contract -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+

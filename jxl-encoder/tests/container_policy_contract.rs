@@ -19,9 +19,16 @@ fn directory() -> std::path::PathBuf {
 }
 
 fn check(bytes: &[u8], wrapped: bool, width: usize, label: &str) {
-    check_with_domain(bytes, wrapped, width, label, false)
+    check_with_domain(bytes, wrapped, width, label, false, None)
 }
-fn check_with_domain(bytes: &[u8], wrapped: bool, width: usize, label: &str, linear: bool) {
+fn check_with_domain(
+    bytes: &[u8],
+    wrapped: bool,
+    width: usize,
+    label: &str,
+    linear: bool,
+    alpha: Option<u8>,
+) {
     assert_eq!(!bytes.starts_with(&[255, 10]), wrapped, "{label}");
     let out = directory();
     std::fs::write(out.join("input.jxl"), bytes).unwrap();
@@ -46,7 +53,15 @@ fn check_with_domain(bytes: &[u8], wrapped: bool, width: usize, label: &str, lin
         }
     }
     assert_eq!(frames[0].0.len(), width * 3);
-    assert!(frames[0].1.is_empty());
+    assert_eq!(frames[0].1.len(), usize::from(alpha.is_some()));
+    if let Some(alpha) = alpha {
+        assert_eq!(frames[0].1[0].len(), width);
+        assert!(
+            frames[0].1[0]
+                .iter()
+                .all(|v| v.is_finite() && (*v * 65535.0).round() as u16 == u16::from(alpha) * 257)
+        );
+    }
     assert!(
         frames[0]
             .0
@@ -69,6 +84,10 @@ fn check_with_domain(bytes: &[u8], wrapped: bool, width: usize, label: &str, lin
     assert!(result.status.success(), "{label}");
     let native = image::open(out.join("native.png")).unwrap().to_rgb16();
     assert_eq!(native.dimensions(), (width as u32, 1));
+    if let Some(alpha) = alpha {
+        let rgba = image::open(out.join("native.png")).unwrap().to_rgba16();
+        assert!(rgba.pixels().all(|p| p.0[3] == u16::from(alpha) * 257));
+    }
     assert!(
         native
             .as_raw()
@@ -389,6 +408,7 @@ fn configured_never_keeps_icc_and_drops_only_container_metadata() {
                     32,
                     &format!("{name} lossless{lossless} {mode:?} ICC"),
                     !lossless,
+                    None,
                 );
                 let parsed = jxl_oxide::JxlImage::builder()
                     .read(std::io::Cursor::new(&bytes))
@@ -414,10 +434,10 @@ fn configured_policy_reaches_every_pixel_output_wrapper() {
     let mut journal =
         std::io::BufWriter::new(std::fs::File::create(out.join("wrappers.tsv")).unwrap());
     macro_rules! exercise {
-        ($config:expr, $pixels:expr, $width:expr, $name:expr, $lossless:expr, $mode:expr) => {{
+        ($config:expr, $pixels:expr, $width:expr, $name:expr, $lossless:expr, $mode:expr, $layout:expr) => {{
             let matrix_config = &$config;
             let pixels = &$pixels;
-            let expected = matrix_config.encode(pixels, $width, 1, PixelLayout::Rgb8);
+            let expected = matrix_config.encode(pixels, $width, 1, $layout);
             if let Err(error) = &expected {
                 assert!(error.to_string().contains("container mode Never"));
             }
@@ -426,22 +446,21 @@ fn configured_policy_reaches_every_pixel_output_wrapper() {
                 let mut sink = prefix.to_vec();
                 let result = match route {
                     0 => matrix_config
-                        .encode_request($width, 1, PixelLayout::Rgb8)
+                        .encode_request($width, 1, $layout)
                         .encode_with_stats(pixels)
                         .map(|mut r| {
                             sink.extend(r.take_data().unwrap());
                         }),
                     1 => matrix_config
-                        .encode_request($width, 1, PixelLayout::Rgb8)
+                        .encode_request($width, 1, $layout)
                         .encode_into(pixels, &mut sink)
                         .map(|_| ()),
                     2 => matrix_config
-                        .encode_request($width, 1, PixelLayout::Rgb8)
+                        .encode_request($width, 1, $layout)
                         .encode_to(pixels, &mut sink)
                         .map(|_| ()),
                     _ => {
-                        let mut encoder =
-                            matrix_config.encoder($width, 1, PixelLayout::Rgb8).unwrap();
+                        let mut encoder = matrix_config.encoder($width, 1, $layout).unwrap();
                         encoder.push_rows(pixels, 1).unwrap();
                         match route {
                             3 => encoder.finish_with_stats().map(|mut r| {
@@ -478,8 +497,7 @@ fn configured_policy_reaches_every_pixel_output_wrapper() {
                 }
             }
             let mut legacy = b"existing destination".to_vec();
-            let result =
-                matrix_config.encode_into(pixels, $width, 1, PixelLayout::Rgb8, &mut legacy);
+            let result = matrix_config.encode_into(pixels, $width, 1, $layout, &mut legacy);
             match &expected {
                 Ok(bytes) => {
                     result.unwrap();
@@ -498,17 +516,29 @@ fn configured_policy_reaches_every_pixel_output_wrapper() {
             }
             writeln!(
                 journal,
-                "{}\t{}\t{}\t{:?}\tcomplete",
-                $name, $lossless, $width, $mode
+                "{}\t{}\t{}\t{:?}\t{:?}\tcomplete",
+                $name, $lossless, $width, $mode, $layout
             )
             .unwrap();
             journal.flush().unwrap();
         }};
     }
     for (name, strategy, encoder_mode) in policies::policies() {
-        for width in [32_u32, 262145] {
-            let pixels = [64_u8; 3].repeat(width as usize);
-            let modes = if width == 32 {
+        for level_ten in [false, true] {
+            let width = 32_u32;
+            let layout = if level_ten {
+                PixelLayout::RgbLinearF32
+            } else {
+                PixelLayout::Rgb8
+            };
+            let pixels: Vec<u8> = if level_ten {
+                (0..width * 3)
+                    .flat_map(|_| 0.25_f32.to_ne_bytes())
+                    .collect()
+            } else {
+                [64_u8; 3].repeat(width as usize)
+            };
+            let modes = if !level_ten {
                 &[
                     ContainerMode::Auto,
                     ContainerMode::Always,
@@ -523,13 +553,173 @@ fn configured_policy_reaches_every_pixel_output_wrapper() {
                     .with_strategy(strategy.clone())
                     .with_mode(encoder_mode)
                     .with_container_mode(mode);
-                exercise!(lossless, pixels, width, name, true, mode);
+                exercise!(lossless, pixels, width, name, true, mode, layout);
                 let lossy = LossyConfig::new(1.0)
                     .with_effort(1)
                     .with_strategy(strategy.clone())
                     .with_mode(encoder_mode)
                     .with_container_mode(mode);
-                exercise!(lossy, pixels, width, name, false, mode);
+                exercise!(lossy, pixels, width, name, false, mode, layout);
+            }
+        }
+    }
+}
+
+#[test]
+fn configured_optional_boxes_and_animation_profile_branches() {
+    let pixels = [64_u8, 64, 64, 137].repeat(32);
+    let profile = include_str!("../src/headers/color_profiles_v012.tsv")
+        .lines()
+        .find(|l| l.starts_with("0\t"))
+        .unwrap()
+        .split_once('\t')
+        .unwrap()
+        .1;
+    let profile: Vec<u8> = profile
+        .as_bytes()
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|b| u8::from_str_radix(core::str::from_utf8(b).unwrap(), 16).unwrap())
+        .collect();
+    let metadata = jxl_encoder::ImageMetadata::new()
+        .with_icc_profile(&profile)
+        .with_xmp(b"<x/>")
+        .with_colr_payload(b"nclx")
+        .with_hcdr_payload(b"hdr");
+    let animation = jxl_encoder::AnimationParams::default();
+    let frames = [jxl_encoder::AnimationFrame::new(&pixels, 10)];
+    let cmyk_profile: Vec<u8> = include_str!("fixtures/ps_cmyk.hex")
+        .split_whitespace()
+        .flat_map(|hex| {
+            (0..hex.len())
+                .step_by(2)
+                .map(move |i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+        })
+        .collect();
+    let cmyk_metadata = jxl_encoder::ImageMetadata::new().with_icc_profile(&cmyk_profile);
+    let cmyk_pixels = [255_u8; 4].repeat(32);
+    let cmyk_frames = [jxl_encoder::AnimationFrame::new(&cmyk_pixels, 10)];
+    for (name, strategy, encoder_mode) in policies::policies() {
+        for mode in [
+            ContainerMode::Auto,
+            ContainerMode::Always,
+            ContainerMode::Never,
+        ] {
+            for lossless in [false, true] {
+                let bytes = if lossless {
+                    LosslessConfig::new()
+                        .with_effort(1)
+                        .with_strategy(strategy.clone())
+                        .with_mode(encoder_mode)
+                        .with_container_mode(mode)
+                        .encode_animation_with_metadata(
+                            32,
+                            1,
+                            PixelLayout::Rgba8,
+                            &animation,
+                            &frames,
+                            &metadata,
+                        )
+                        .unwrap()
+                } else {
+                    LossyConfig::new(1.0)
+                        .with_effort(1)
+                        .with_strategy(strategy.clone())
+                        .with_mode(encoder_mode)
+                        .with_container_mode(mode)
+                        .encode_animation_with_metadata(
+                            32,
+                            1,
+                            PixelLayout::Rgba8,
+                            &animation,
+                            &frames,
+                            &metadata,
+                        )
+                        .unwrap()
+                };
+                check_with_domain(
+                    &bytes,
+                    mode != ContainerMode::Never,
+                    32,
+                    &format!("{name} {mode:?} lossless{lossless} alpha/profile/optional boxes"),
+                    !lossless,
+                    Some(137),
+                );
+                let parsed = jxl_oxide::JxlImage::builder()
+                    .read(std::io::Cursor::new(&bytes))
+                    .unwrap();
+                assert_eq!(parsed.original_icc(), Some(profile.as_slice()));
+                if mode != ContainerMode::Never {
+                    let mut offset = 0;
+                    let mut seen = [false; 2];
+                    while offset < bytes.len() {
+                        let size = u32::from_be_bytes(bytes[offset..offset + 4].try_into().unwrap())
+                            as usize;
+                        assert!(size >= 8 && offset + size <= bytes.len());
+                        match &bytes[offset + 4..offset + 8] {
+                            b"colr" => {
+                                assert_eq!(&bytes[offset + 8..offset + size], b"nclx");
+                                seen[0] = true;
+                            }
+                            b"hCdR" => {
+                                assert_eq!(&bytes[offset + 8..offset + size], b"hdr");
+                                seen[1] = true;
+                            }
+                            _ => {}
+                        }
+                        offset += size;
+                    }
+                    assert_eq!(seen, [true; 2]);
+                }
+            }
+        }
+        for lossless in [false, true] {
+            let result = if lossless {
+                LosslessConfig::new()
+                    .with_effort(1)
+                    .with_strategy(strategy.clone())
+                    .with_mode(encoder_mode)
+                    .with_container_mode(ContainerMode::Never)
+                    .encode_animation_with_metadata(
+                        32,
+                        1,
+                        PixelLayout::Cmyk8,
+                        &animation,
+                        &cmyk_frames,
+                        &cmyk_metadata,
+                    )
+            } else {
+                LossyConfig::new(1.0)
+                    .with_effort(1)
+                    .with_strategy(strategy.clone())
+                    .with_mode(encoder_mode)
+                    .with_container_mode(ContainerMode::Never)
+                    .encode_animation_with_metadata(
+                        32,
+                        1,
+                        PixelLayout::Cmyk8,
+                        &animation,
+                        &cmyk_frames,
+                        &cmyk_metadata,
+                    )
+            };
+            let error = result.unwrap_err();
+            if lossless {
+                // The lossless animation writer supports integer RGB/gray,
+                // including alpha; it has no interleaved CMYK frame route.
+                assert!(
+                    matches!(
+                        error.error(),
+                        jxl_encoder::EncodeError::UnsupportedPixelLayout(PixelLayout::Cmyk8)
+                    ),
+                    "{name} lossless CMYK: {error}"
+                );
+            } else {
+                assert!(
+                    error.to_string().contains("container mode Never"),
+                    "{name} lossy CMYK: {error}"
+                );
             }
         }
     }

@@ -21,6 +21,7 @@ p.add_argument('--jpeg-metadata', action='store_true')
 p.add_argument('--jpeg-dht', action='store_true')
 p.add_argument('--gain-map', action='store_true')
 p.add_argument('--request-limits', action='store_true')
+p.add_argument('--container-policy', action='store_true')
 p.add_argument('--rate-control-metric', action='store_true')
 p.add_argument('--jpeg-scan-grid', action='store_true')
 p.add_argument('--jpeg-color', action='store_true')
@@ -110,6 +111,16 @@ def observe(relative, name, occurrence=0, window=False):
                      inputs=inputs, excluded_different_body=excluded, covered=sum(v > 0 for v in counts.values()), total=len(counts),
                      missing_relative_regions=[k for k, v in sorted(counts.items()) if not v]))
     print(json.dumps(rows[-1]))
+
+if a.container_policy:
+    observe('jxl-encoder/src/api/ingest.rs', 'wrap_output')
+    observe('jxl-encoder/src/api/ingest.rs', 'wrap_metadata_container')
+    observe('jxl-encoder/src/api/ingest.rs', 'finish_animation_output')
+    observe('jxl-encoder/src/container.rs', 'wrap_encoded')
+    observe('jxl-encoder/src/api.rs', 'container_mode', 2)
+    (a.output / 'regions.json').write_text(json.dumps(dict(inputs=identities, functions=rows,
+        note='Configured pixel-output container policy and animation level finalization; mapped regions, not input-space coverage.'), indent=2))
+    sys.exit(0)
 
 if a.request_limits:
     observe('jxl-encoder/src/api.rs', 'encode_request', 0, window=('limits: self.limits.as_ref(),', 1))

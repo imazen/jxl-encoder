@@ -463,9 +463,10 @@ under qualification and is not part of this shared policy change.
 
 ### Current-main destination wrappers and remaining region gaps
 
-Five animation-finalizer regions and eight colr/hCdR emission regions remain
-unobserved in this selected profile; further controls/source attribution remain
-in progress. No allocation-failure injection or whole-code coverage is claimed.
+The original v5 profile leaves five animation-finalizer regions and eight
+colr/hCdR emission regions unobserved. The supplement below extends this union
+and records the remaining gap. No allocation-failure injection or whole-code
+coverage is claimed.
 
 The current-main wrapper gate passes every offered policy in both encoder
 modes, lossless/lossy,32x1 Auto/Always/Never and262145x1 Never. Request stats,
@@ -506,3 +507,38 @@ executable, verifies every archived file, then reclaims only the named Cargo
 output. Source exports, reference binaries and evidence archives are separate.
 These commands have been exercised by the issue-144 selected-source queues;
 source-body binding remains mandatory when combining profiles.
+
+
+### Optional boxes, alpha and supported CMYK animation routes
+
+One animation-finalizer error-propagation region remains unexecuted: the
+`compute_required_level` failure return. This supplement does not classify it
+as unreachable or inject allocation failure. The successful exact-body union
+observes output policy16/16, metadata wrapper18/18, configuration accessor7/7,
+box wrapper33/33 and animation finalizer34/35 mapped regions. Region fractions
+are execution evidence, not complete input-space coverage.
+
+The supplement renders RGBA8 animation through native v0.12 and the pinned
+primary under every inventoried policy, both encoder modes, lossless/lossy and
+all three container selections. Alpha137/255 is exact in both decoders; the
+frozen sRGB ICC bytes and optional colr/hCdR payloads remain exact. Lossy CMYK
+animation with its required profile reaches the Black classifier and refuses
+Level10 under Never. Lossless interleaved CMYK animation has no writer route:
+the test requires its exact UnsupportedPixelLayout(Cmyk8) error before the
+container finalizer. Earlier retained test failures confused these two routes;
+the subsequent fixture correction also needed the traced error's inner value.
+Neither changes production behavior or an established expectation.
+
+The maintained destination-wrapper probe uses small F32 input for its Level10
+refusal, retaining all routes, exact successful bytes and unchanged destinations
+on error. The separately named wide request/streaming/animation controls remain;
+the historical262145-wide wrapper evidence above is retained. The journal now
+records the layout as well as width and policy.
+
+Accepted test source: `container-policy-boxes-selected-v8`. Runtime and strict
+lint/format qualification: `container-boxes-q47-isolated-v1`; actual runtime
+archive: `container-boxes-q47-runtime-v8`. Combined exact-body regions:
+`container-current-regions-q47-v1`. ELF SHA256
+`4bbb532590439c7efb1e7e924fd2ca2916a780bfedf8552df2e1712ad602624d`;
+profile SHA256
+`5455ed60a70b348e0602cc825626d5c3e6d6cc911e7e1fb9f9287c6c9e352e0a`.
