@@ -55,7 +55,7 @@ fn decode_jxl_rs_rgb8(jxl: &[u8]) -> (u32, u32, Vec<u8>) {
     }
     // jxl-rs returns the image in the file's (sRGB) encoding as gamma-encoded
     // f32 in [0, 1]; map to sRGB8 the same way the JPEG decode produces it.
-    let mut out = Vec::with_capacity((w * h * 3) as usize);
+    let mut out = Vec::with_capacity(w * h * 3);
     for y in 0..h {
         for &p in img.row(y) {
             out.push((p.clamp(0.0, 1.0) * 255.0).round() as u8);

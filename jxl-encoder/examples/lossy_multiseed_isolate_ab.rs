@@ -123,8 +123,7 @@ fn measure_butteraugli(
 
 fn encode_one(
     rgb: &[u8],
-    w: u32,
-    h: u32,
+    (w, h): (u32, u32),
     distance: f32,
     effort: u8,
     threads: usize,
@@ -191,7 +190,7 @@ fn main() {
                 for &effort in &[10u8, 11u8] {
                     // A: seeds=1
                     if let Some((b, ms, bfly, sha)) =
-                        encode_one(&rgb, w, h, dist, effort, threads, Some(1), &orig_linear)
+                        encode_one(&rgb, (w, h), dist, effort, threads, Some(1), &orig_linear)
                     {
                         println!(
                             "{stem}\t{dist:.2}\t{effort}\t{sample}\tA\t{b}\t{ms:.2}\t{bfly:.4}\t{sha}\t{w}\t{h}"
@@ -199,7 +198,7 @@ fn main() {
                     }
                     // B: seeds=default (None lets profile decide)
                     if let Some((b, ms, bfly, sha)) =
-                        encode_one(&rgb, w, h, dist, effort, threads, None, &orig_linear)
+                        encode_one(&rgb, (w, h), dist, effort, threads, None, &orig_linear)
                     {
                         println!(
                             "{stem}\t{dist:.2}\t{effort}\t{sample}\tB\t{b}\t{ms:.2}\t{bfly:.4}\t{sha}\t{w}\t{h}"
