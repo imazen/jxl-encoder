@@ -2840,3 +2840,46 @@ jpeg-dht-restored-check manifest output coverage_env llvm:
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,__expert,jpeg-reencoding --test jpeg_sampling_contract dht:: -- --test-threads=1
     cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,jpeg-reencoding --test jpeg_sampling_contract -- -D warnings
     cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder -p jxl-encoder-cli --check
+
+jpeg-scan-grid-core-check manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,jpeg-reencoding --test jpeg_sampling_contract -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,jpeg-reencoding --lib -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,jpeg-reencoding --test it -- hash_lock strategy_libjxl_byte_lock divergence_table_drift jbrd_roundtrip_conformance jbrd_spec_validity compat_surface_76 --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,__expert,jpeg-reencoding --test jpeg_sampling_contract -- --test-threads=1
+    just subsampled-metadata-check {{quote(manifest)}}
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --doc
+    cargo clippy --locked --manifest-path {{quote(manifest)}} --workspace --all-targets -- -D warnings
+
+jpeg-scan-grid-callers-check manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,jpeg-reencoding --test jpeg_sampling_contract grid_callers:: -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder-cli --features jpeg-reencoding --test jpeg_sampling grid:: -- --test-threads=1
+
+jpeg-scan-grid-production-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/run_jpeg_scan_grid_evidence.py "$2" "$3"' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+jpeg-scan-grid-regions llvm archive reference output:
+    python3 scripts/color_admission_coverage.py {{quote(llvm)}} {{quote(output)}} {{quote(archive)}} --jpeg-scan-grid --reference-root {{quote(reference)}}
+
+jpeg-scan-grid-runtime-faults manifest output coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/test_jpeg_scan_grid_mutations.py "$2" "$3"' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+jpeg-scan-grid-normal-check manifest:
+    python3 -c 'import os; assert not os.environ.get("RUSTC_WRAPPER"); assert "instrument-coverage" not in os.environ.get("RUSTFLAGS", ""); assert not os.environ.get("CARGO_ENCODED_RUSTFLAGS")'
+    rustc -vV
+    just jpeg-scan-grid-core-check {{quote(manifest)}}
+    just jpeg-scan-grid-callers-check {{quote(manifest)}}
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,jpeg-reencoding --lib --test jpeg_sampling_contract -- -D warnings
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder-cli --features jpeg-reencoding --test jpeg_sampling -- -D warnings
+
+jpeg-scan-grid-focused-check manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,jpeg-reencoding --test jpeg_sampling_contract -- common_grid:: scans:: grid_callers:: --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder-cli --features jpeg-reencoding --test jpeg_sampling grid:: -- --test-threads=1
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,jpeg-reencoding --lib --test jpeg_sampling_contract -- -D warnings
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder-cli --features jpeg-reencoding --test jpeg_sampling -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder -p jxl-encoder-cli --check
+
+jpeg-scan-grid-cli-production manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export __CARGO_LLVM_COV_RUSTC_WRAPPER_CRATE_NAMES=jxl_encoder,cjxl_rs,jpeg_sampling; touch "$(dirname "$2")/jxl-encoder-cli/src/main.rs"; python3 scripts/run_jpeg_scan_grid_evidence.py "$2" "$3" --cli' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+jpeg-scan-grid-cli-regions llvm archive output:
+    python3 scripts/jpeg_cli_subprocess_coverage.py {{quote(llvm)}} {{quote(archive)}} {{quote(output)}}
