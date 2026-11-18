@@ -16,7 +16,9 @@
 //! the hand-written one is a liability.
 //!
 //! Run: `cargo bench -p jxl-encoder-simd --bench kernel_tiers`
+//! Other architectures compile this target and exit without starting measurements.
 
+#[cfg(target_arch = "aarch64")]
 use zenbench::prelude::*;
 
 // Used by the arch-gated bench bodies below; dead only in cfgs where every
@@ -488,8 +490,9 @@ fn bench_kernels(suite: &mut Suite) {
 }
 
 #[cfg(not(target_arch = "aarch64"))]
-fn bench_kernels(_suite: &mut Suite) {
+fn main() {
     eprintln!("[kernel_tiers] aarch64-only bench");
 }
 
+#[cfg(target_arch = "aarch64")]
 zenbench::main!(bench_kernels);
