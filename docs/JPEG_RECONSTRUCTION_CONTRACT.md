@@ -220,3 +220,80 @@ Default and default-disabled DHT execution, focused strict lint and scoped
 formatting pass (`jpeg-dht-complete.log`, rc0, 71 seconds; peak RSS 1.11 GiB,
 minimum available 19,199 MiB). These named regions do not qualify the complete
 JPEG pipeline or the still-open C3 sampling and rare scan metadata items.
+
+## Baseline scan metadata and absolute-factor frame grids
+
+The producer pin `5071e85c` retains baseline trailing ZRL records in scan-block
+order; ordinary coefficients remain unchanged. It is a narrow frozen-family
+backport retained as an ancestor of producer main `800ec6d1`, which keeps its
+newer dependency family and progress reporting. The decoder pin `f8e0f0de`
+includes baseline trailing-run ordering and visible-grid reconstruction, plus
+the independent native control generator. See the companion repositories'
+JPEG reconstruction contracts for their separate coverage and remaining
+allocation/error-path gaps. No package publication is required.
+
+Retaining absolute grayscale SOF factors exposed another encoder defect.
+At 16x8 with factors 2x2, the header matches native v0.12, but relative channel
+shifts are all zero. Computing frame padding from those shifts writes a 2x1
+block grid where the declared absolute factors require 2x2. The primary Rust
+decoder reports AnsChecksumMismatch and djxl refuses the stream; both render
+the unmodified native control. The same distinction applies to YCbCr JPEGs
+whose component factors share a non-unit horizontal or vertical factor.
+The shared calculation now uses the maximum raw shifts, matching v0.12
+FrameDimensions::Set/YCbCrChromaSubsampling::MaxHShift and Part 1 F.2.
+
+The retained before executable is `jpeg-scan-gray-origin-before`;
+`jpeg-common-grid-app0-before` expands grayscale/YCbCr, all four 1/2 factor
+pairs, one-pixel axes, 16x8/8x16, 17x9 and 257x9 through every offered policy.
+The selected repaired outputs match complete primary/native samples and
+original JPEG bytes. Baseline/progressive reset/ZRL/padding controls and
+thirteen nonzero/long-code/restart/edge source controls separately check
+nonempty reconstruction signals. These are controlled regressions, not
+complete JPEG syntax or option coverage.
+
+Caller inventory for this increment:
+
+| Entry | Executed control |
+|---|---|
+| Raw/config, cancellable and parsed-data container | Every offered policy; independent native pixels and exact JPEG bytes. |
+| Bare/default-effort and strict entropy efforts | Nonzero AC plus trailing ZRL, both 16x8/8x16 orientations and factors 1x1/2x1/1x2/2x2; exact pixels, and exact original bytes where JBRD exists. |
+| Explicit/automatic/planar recompression | Lossless floor and scale two; primary/native samples use the existing two-code U16 agreement bound. |
+| Nested JPEG gain map | Both orientations and non-unit factors; exact gain pixels and complete original primary/secondary JPEG tail. |
+| CLI automatic, forced and coarsening | Both orientations, efforts 3/11, every offered strategy spelling/alias and Experimental switch; exact API bytes, native pixels and contracted reconstruction. |
+| Optional RGB8 coefficient source | Existing optional shape/metadata tests; its unequal chroma factors retain the previous grid calculation. |
+| Pixel requests/streaming | These accept pixels rather than compressed JPEG bytes and do not call this JPEG writer. No streaming JPEG API is claimed. |
+
+JPEG transcode passes effort/resources to the shared writer and does not resolve
+LosslessConfig's strategy gates. The policy matrix checks accepted request
+bindings, not distinct strategy-specific JPEG algorithms. The new grid tests
+include one-pixel axes and the 256-pixel group boundary. Progressive reset
+signals are exercised separately; common-factor progressive JPEG input remains
+a follow-up control. Arbitrary caller-forged scan metadata is not fully
+validated by this increment.
+
+The instrumented broad library/unchanged locks/reconstruction/minimal/optional/
+doctest/workspace lint chain passes (`jpeg-scan-grid-core-check.log`,
+807 seconds; peak RSS 1.95 GiB, minimum available 18,428 MiB). The normal
+uninstrumented chain passes those functional stages plus the expanded CLI
+controls, then fails one new-test unnecessary-unwrap lint (`jpeg-scan-grid-normal-check.log`,
+630 seconds; peak RSS 1.98 GiB, minimum available 18,028 MiB). An equivalent
+match preserves every assertion; corrected focused normal tests, encoder/CLI
+strict lint and formatting pass (`jpeg-scan-grid-focused-check.log`, 56 seconds;
+peak RSS 0.68 GiB, minimum available 19,033 MiB). No existing threshold, byte
+expectation or ignore changes.
+
+Fresh bound API regions observe sampling 25/25, grid 8/8, scan import 16/17
+and scan-more emission 48/53. The import gap is the defensive parameter-mismatch
+return; emission gaps are propagated writer errors. No allocator failure was
+injected. Four independent runtime faults detect the old horizontal/vertical
+grids and omitted reset/extra-run imports, restoring source by checksum
+(`jpeg-scan-grid-faults.log`, 126 seconds; peak RSS 1.11 GiB, minimum available
+19,148 MiB). The initial region exporter used the wrong helper name; the
+corrected report reuses the same bound object/profile without relaxing hashes.
+
+CLI profiles are unique per child PID and are exported against the retained
+CLI executable separately from the parent driver. They observe grid 8/8,
+transcode selector 4/4, transcode call 3/3 and coarsen call 8/8. This is selected
+window coverage, not full CLI or JPEG coverage. The corrected report/CLI chain
+passes (`jpeg-scan-grid-restored-regions-v2.log`, 49 seconds; peak RSS 1.15 GiB,
+minimum available 19,119 MiB).

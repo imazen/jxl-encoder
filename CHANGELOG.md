@@ -298,6 +298,10 @@ published. See docs/RELEASE_0.4.0.md for the publish gates.)
 
 ### Fixed
 
+- Pad JPEG frame grids from absolute sampling factors, preserving grayscale
+  and equal-factor YCbCr inputs at partial MCU dimensions. Pin baseline scan
+  metadata and reconstruction fixes without upgrading the frozen pixel family.
+
 - Use Gradient-relative nonlinear DC quantization for faster decoding under the existing Libjxl/DC-parity opt-in; normal policies retain their bytes (`9a0f6931`).
 
 - Preserve absolute PQ brightness when request or metadata selects a non-default display intensity, across still, streaming and integer animation encoding (`403263d5`).
