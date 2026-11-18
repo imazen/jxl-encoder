@@ -241,16 +241,15 @@ impl MemoryBudget {
 /// and lets a tighter cap survive the encode.
 #[must_use = "BudgetGuard releases its reservation on drop; binding to `_` defeats the budget"]
 #[derive(Debug)]
-#[allow(dead_code)] // Currently the encoder uses reserve_permanent throughout;
-// the RAII guard infrastructure is exercised by unit tests and reserved
-// for future scratch-allocation tracking (e.g., per-tile butteraugli
-// reconstruction buffers).
+// Individual guard helpers have feature-gated consumers. Scoped reservations
+// track live scratch and returned buffers alongside their owning values.
+#[allow(dead_code)]
 pub(crate) struct BudgetGuard {
     bytes: u64,
     budget: Option<Arc<MemoryBudget>>,
 }
 
-#[allow(dead_code)] // see BudgetGuard above
+#[allow(dead_code)] // individual helpers have feature-gated consumers
 impl BudgetGuard {
     /// An inert guard that owns no reservation. Useful as a default
     /// when a function returns `Vec + Guard` and the caller hasn't

@@ -2931,3 +2931,10 @@ Remaining layout inventory is tracked separately in the progressive contract.
 | Site | Encoder contract | Reference distinction | Qualification |
 |---|---|---|---|
 | Lossless request/legacy animation adapters and shared request animation entry | Inherit configured limits, retain explicit overrides, run existing dimension/iteration checks before frame work when limits are supplied | Caller resource policy; no codestream arithmetic, gate or registry-value change | Pure-main before failures and isolated positive/fault controls are retained. Exact callers and coverage limits: [REQUEST_LIMITS_CONTRACT.md](REQUEST_LIMITS_CONTRACT.md). |
+
+
+### Issue 144: rate-control metric admission and buffer lifetimes
+
+| Site | Encoder contract | Reference distinction | Qualification |
+|---|---|---|---|
+| `vardct::tile_distmap` comparator and tile construction | Reserve structural comparator peak plus six inputs, returned padded map and visible output; release scoped map/tile reservations on drop. Retain reflect101/minimum-eight preparation and metric arithmetic | Resource accounting around the existing pinned Rust Butteraugli comparator; no new encoding gate/default or numeric tuning | Exact finite-map, rendering, refusal/lifetime and restored-fault controls pass. Whole-controller/RSS and defensive error gaps: RATE_CONTROL_CONTRACT.md. |

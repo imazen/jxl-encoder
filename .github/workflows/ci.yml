@@ -247,6 +247,12 @@ jobs:
           cargo test --locked -p jxl-encoder --release --no-default-features --features std,rate-control,__expert --test rate_control_feature_contract -- --test-threads=1
           cargo test --locked -p jxl-encoder --release --features __expert,parallel,rate-control --test rate_control_feature_contract -- --test-threads=1
 
+      - name: Test rate-control metric peak and reservation lifetimes
+        run: >-
+          cargo test --locked -p jxl-encoder --release
+          --features __expert,parallel,rate-control --lib
+          vardct::tile_distmap::tests:: -- --test-threads=1
+
       - name: Test inherited limits and animation admission
         env:
           JXL_ENCODER_OUTPUT_DIR: ${{ runner.temp }}/issue144-contracts

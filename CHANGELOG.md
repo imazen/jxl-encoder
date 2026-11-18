@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- Admit rate-control comparator scratch before allocation and release diffmap/tile
+  reservations with their buffers; preserve the existing metric arithmetic.
+
 - Preserve configured lossless request limits and explicit overrides; check
   animation dimensions and iteration caps before frame work.
 

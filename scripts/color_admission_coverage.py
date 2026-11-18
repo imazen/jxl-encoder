@@ -20,6 +20,8 @@ p.add_argument('--extra-metadata', action='store_true')
 p.add_argument('--jpeg-metadata', action='store_true')
 p.add_argument('--jpeg-dht', action='store_true')
 p.add_argument('--gain-map', action='store_true')
+p.add_argument('--request-limits', action='store_true')
+p.add_argument('--rate-control-metric', action='store_true')
 p.add_argument('--jpeg-scan-grid', action='store_true')
 p.add_argument('--jpeg-color', action='store_true')
 p.add_argument('--delta-palette', action='store_true')
@@ -108,6 +110,23 @@ def observe(relative, name, occurrence=0, window=False):
                      inputs=inputs, excluded_different_body=excluded, covered=sum(v > 0 for v in counts.values()), total=len(counts),
                      missing_relative_regions=[k for k, v in sorted(counts.items()) if not v]))
     print(json.dumps(rows[-1]))
+
+if a.request_limits:
+    observe('jxl-encoder/src/api.rs', 'encode_request', 0, window=('limits: self.limits.as_ref(),', 1))
+    observe('jxl-encoder/src/api.rs', 'encode_animation_inner', 0, window=('request.limits = limits.or(self.limits.as_ref());', 1))
+    observe('jxl-encoder/src/api.rs', 'encode_animation_with_request_stop', window=('if self.limits.is_some() {', 3))
+    observe('jxl-encoder/src/api.rs', 'check_limits')
+    (a.output / 'regions.json').write_text(json.dumps(dict(inputs=identities, functions=rows,
+        note='Inherited/configured request admission regions; not pixel-space or RSS coverage.'), indent=2))
+    sys.exit(0)
+
+if a.rate_control_metric:
+    observe('jxl-encoder/src/vardct/tile_distmap.rs', 'compute_butteraugli_diffmap')
+    observe('jxl-encoder/src/vardct/tile_distmap.rs', 'from_diffmap')
+    observe('jxl-encoder/src/vardct/tile_distmap.rs', 'deref')
+    (a.output / 'regions.json').write_text(json.dumps(dict(inputs=identities, functions=rows,
+        note='Metric admission and retained-map lifetime regions; not a process RSS ceiling.'), indent=2))
+    sys.exit(0)
 
 if a.spline_admission:
     for name in ['rounded_coordinate', 'validate_splines', 'quantized_coefficient', 'from_spline', 'from_splines']:

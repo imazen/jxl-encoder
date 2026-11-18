@@ -3244,3 +3244,29 @@ request-limits-display-extents-check manifest artifacts coverage_env:
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,__expert --test lossless_config_limits_contract animation_invalid_display_extents_ -- --test-threads=1
     cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --lib --test lossless_config_limits_contract -- -D warnings
     cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+
+
+# Pinned rate-control metric accounting and exact-map controls.
+rate-control-metric-before-evidence manifest artifacts coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" request_rate_control_metric_ --also-filter request_rate_control_planar_metric_ --features __expert,parallel,rate-control --source jxl-encoder/src/vardct/tile_distmap.rs --source jxl-encoder/src/vardct/rate_control.rs --source jxl-encoder/src/budget.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+
+rate-control-metric-fix-check manifest artifacts coverage_env:
+    just rate-control-metric-before-evidence {{quote(manifest)}} {{quote(artifacts)}} {{quote(coverage_env)}}
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,rate-control --lib tile_distmap -- --test-threads=1
+    bash -c 'set -e; source "$1"; python3 scripts/test_prepared_payload_mutations.py "$2" "$3/mutations" --metric' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,rate-control --lib -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+
+rate-control-tile-lifetime-before-check manifest artifacts coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" request_rate_control_tile_map_ --also-filter vardct::tile_distmap::tests:: --features __expert,parallel,rate-control --source jxl-encoder/src/vardct/tile_distmap.rs --source jxl-encoder/src/vardct/rate_control.rs --source jxl-encoder/src/budget.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+
+metric-map-final-check manifest artifacts coverage_env:
+    mkdir {{quote(artifacts)}}
+    just rate-control-metric-before-evidence {{quote(manifest)}} {{quote(artifacts + "/map")}} {{quote(coverage_env)}}
+    just rate-control-tile-lifetime-before-check {{quote(manifest)}} {{quote(artifacts + "/tiles")}} {{quote(coverage_env)}}
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,rate-control --lib tile_distmap -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,rate-control --test rate_control_feature_contract -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,__expert,rate-control --test rate_control_feature_contract -- --test-threads=1
+    bash -c 'set -e; source "$1"; python3 scripts/test_prepared_payload_mutations.py "$2" "$3/mutations" --metric' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,rate-control --lib --test rate_control_feature_contract -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check

@@ -1788,6 +1788,20 @@ separate queue items. Broad/coverage/remote verdicts must be read independently.
 
 ## Known Bugs (ACTIVE)
 
+### RESOLVED 2026-11-19: rate-control metric peak and retained reservations
+
+The planar metric helper reserves the pinned comparator peak plus external
+planes and output maps before allocation. Returned diffmap and tile-map guards
+release with their buffers. Independent before controls reproduce missing peak
+admission and reservations retained after drop. Exact finite-map parity,
+default/minimal rendering, lifetime/shape/budget controls and three restored
+faults pass; the combined library, unchanged locks, animation and strict lint
+baseline also passes. Unexecuted allocator/comparator fallback paths and the
+whole-controller memory gap remain explicit in
+[RATE_CONTROL_CONTRACT.md](docs/RATE_CONTROL_CONTRACT.md). No process RSS ceiling,
+new public API or strategy gate is claimed.
+
+
 ### RESOLVED 2026-11-19: inherited lossless limits and animation admission
 
 Lossless request construction dropped configured limits; its legacy animation
