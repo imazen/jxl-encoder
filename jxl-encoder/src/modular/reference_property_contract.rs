@@ -680,9 +680,9 @@ fn selected_reference_property_effort_and_custom_boundaries() {
     let mut journal = std::fs::File::create(root.join("callers.tsv")).unwrap();
     for (label, strategy) in policies {
         for mode in [EncoderMode::Reference, EncoderMode::Experimental] {
-            for effort in [6, 7, 8, 9, 10, 11] {
+            for effort in [6, 7, 8, 9, 10, 11, 12, 13] {
                 // Effort 8/9 is the actual property-set boundary. Six through
-                // eleven also cover raw/exact bucket and multi-seed dispatch.
+                // thirteen cover raw/exact buckets and both multi-seed budgets.
                 for (width, height) in [(64usize, 32usize), (259, 17)] {
                     let (_, words) = source(width, height, 144);
                     let input: Vec<u8> = words.iter().flat_map(|v| v.to_ne_bytes()).collect();

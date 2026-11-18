@@ -172,7 +172,7 @@ which local node corresponds to a whole-image coordinate.
 | --- | --- |
 | Single-group learned stream | Four frozen source seeds, explicit fixed-tree control, selected threshold and exact primary/native words. |
 | Multi-group global, local and Hybrid trees | 64×32 and 259×17, 17 named/Custom/mode bindings, request, strided request and seven-row input streaming; actual tree writes and complete exact words. |
-| Effort and relevant Custom controls | Efforts 6–11, Reference/Experimental, all four tree-self-repair/large-bucket permission pairs; no property 18 below effort 9. Large-image bucket adoption is not claimed at these sizes; explicit expert settings retain precedence. |
+| Effort and relevant Custom controls | Efforts 6–13, Reference/Experimental, all four tree-self-repair/large-bucket permission pairs; no property 18 below effort 9. Large-image bucket adoption is not claimed at these sizes; explicit expert settings retain precedence. |
 | Floating layout alpha and public extras | RGBA and gray-alpha binary32 plus RGB binary32 with public u16 depth; request, strided and writer buffers. Native public API requests original color fields and separate float extra buffers, avoiding PNG quantization. |
 | Requested squeeze | Wide samples fail the existing squeeze safety gate and remain exact with its permission both off and on. This does not claim wide squeeze execution. |
 | Huffman | The production dispatch requires ANS for learned reference trees. The explicit Huffman control checks exact complete samples and no emitted property 18. |
@@ -206,3 +206,14 @@ reference-property-isolated-final.log, rc0/275s, peak RSS1.96GiB,
 minimum available18114MiB. The final source inventory binds every tracked
 production file to main1e759639 plus this selected repair. Existing ignore
 annotations and established expected bytes are unchanged.
+
+
+The additional requested-effort12/13 controls pass alongside6–11, both modes,
+both shapes and all four relevant Custom permission pairs. Every source word
+is recovered through the pinned fork and native v0.12. This extends offered
+entry coverage; a count of emitted trees does not establish how many search
+seeds ran. The separate default profile's larger seed budget is not inferred
+from that observer. Evidence is the first selected test in
+reconstruction-model-final-check.log; the full wrapper passes rc0/198s,
+peak RSS1.94GiB/minimum available18110MiB, and also contains the independent
+model/baseline checks. There is no new production E4 arithmetic change.
