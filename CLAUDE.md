@@ -1788,6 +1788,23 @@ separate queue items. Broad/coverage/remote verdicts must be read independently.
 
 ## Known Bugs (ACTIVE)
 
+### 2026-11-19: C5 physical units and current auxiliary-source gate
+
+C5's owner-selected alternate-gamut candidate passes the retained matched gamut,
+colored HLG and typed float-base controls, but is not landed. Its selected-source
+library run retains the established unequal-alpha smoke failure. A new absolute
+PQ control still reconstructs a modeled 12.748323529958725 nits from fully decoded
+base/gain planes for native 94.0746255219-nit input and an actual 255-nit base white.
+The alpha-fixture and absolute/relative-unit contracts await owner decisions;
+no established expectation has changed. These modeled values are not output
+from a compound HDR player. [Evidence and remaining gates](docs/GAIN_MAP_COLOR_CONTRACT.md).
+
+The frozen H14 all-policy upsampled replay passes, but its enclosing sources
+predate later landed corrections. Exact shared classifier/two-pass bodies match;
+whole-current-source qualification requires a refreshed candidate and all large
+auxiliary families. [Source gate](docs/FRAME_LEVEL_CONTRACT.md).
+
+
 ### RESOLVED 2026-11-19: manual spline input and unsupported payload routes
 
 Manual spline admission checks finite rounded geometry and serialized ranges,

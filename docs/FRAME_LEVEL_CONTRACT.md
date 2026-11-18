@@ -266,3 +266,24 @@ export refuses failed or unexecuted identities. The small replay control
 passes through the staged loader with matching object/profile hashes. An
 initial replay on a non-executable artifact mount fails before launch and is
 retained; executable staging uses a caller-selected suitable filesystem.
+
+
+## November 19 auxiliary source-identity gate
+
+The all-offered upsampled replay passes with frozen binary
+69acdde7484b62131af0ed9925e5c43cd7162a08c4a46fb1c7aad229e7a94a5c.
+At a 16384×16384 display canvas the actual patch reference plus main requires
+Level 10, while the no-reference control stays Level 5. The 16-bit modular promise
+is observed independently so it cannot mask cumulative area. Complete frame/TOC
+parsing, primary/native reconstructed samples and streaming/legacy/writer/stride
+identity pass. Wrapper all-offered-upsampled-2026-11-19 exits 0 / 1259 seconds, run-heavy
+peak RSS 6.28 GiB / minimum available 39,369 MiB. This measures that retained run only.
+
+Source comparison establishes a remaining qualification gap. The frozen
+output_frame_level, encode_two_pass and request encode_prepared bodies match
+the current candidate, but enclosing lossless/lossy/streaming and encode_inner
+bodies predate the landed CMYK, modular-width and spline updates. This is not
+whole-current-source qualification. Rebuild current main plus only the private
+level repair and replay the large upsampled, lossless-patch and LF families
+before final acceptance. Frozen streams, binaries and incomplete predecessors
+remain retained separately; no earlier result is relabeled as a current pass.
