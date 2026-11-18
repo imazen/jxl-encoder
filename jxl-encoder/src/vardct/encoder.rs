@@ -3678,6 +3678,7 @@ impl VarDctEncoder {
     ) -> Result<TrackedVarDctOutput> {
         // Materialize the internal `VardctExtra` views, validating
         // dimensions + bit depth + dim_shift up-front before any work.
+        crate::headers::extra_channels::ExtraChannelInfo::validate_supported_count(extras.len())?;
         let mut views: Vec<super::extras::VardctExtra<'_>> = Vec::with_capacity(extras.len());
         for (idx, ec) in extras.iter().enumerate() {
             ec.info().validate()?;
@@ -7381,6 +7382,7 @@ impl VarDctEncoder {
         // call below, so build them here once and reuse.
         let width = precomputed.width;
         let height = precomputed.height;
+        crate::headers::extra_channels::ExtraChannelInfo::validate_supported_count(extras.len())?;
         let mut extras_views: Vec<super::extras::VardctExtra<'_>> =
             Vec::with_capacity(extras.len());
         for (idx, ec) in extras.iter().enumerate() {
@@ -7959,6 +7961,7 @@ impl VarDctEncoder {
         // Mirrors `encode_from_precomputed_with_extras` so error
         // messages and behavior stay consistent across the two
         // pre-quantized entry points.
+        crate::headers::extra_channels::ExtraChannelInfo::validate_supported_count(extras.len())?;
         let mut extras_views: Vec<super::extras::VardctExtra<'_>> =
             Vec::with_capacity(extras.len());
         for (idx, ec) in extras.iter().enumerate() {

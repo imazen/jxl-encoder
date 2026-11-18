@@ -3001,3 +3001,16 @@ a shared caller repair, with no new registry gate or preset selection.
 [Before observations and caller evidence](ANIMATION_ALPHA_OPTIONS.md) distinguish
 it from the separate high-precision tree-prefix correction. Full libjxl
 entropy-byte identity and arbitrary float/whole-encoder coverage are not claimed.
+
+
+### Issue 144: extra-channel count admission
+
+The count repair keeps the existing Level 10 maximum 256 as one private
+constant, shared with request and raw direct/precomputed/prequantized admission.
+Supplied extras are bounded before preflight; layout alpha/Black are included,
+with removable alpha resolved after canonicalization and a final prepared-layout
+check. `FileHeader::write` independently refuses counts above 4096 before bits,
+matching the pinned v0.12 metadata visitor's 12-bit offset range. Native public
+Level 10 admission separately refuses 257. Part 1 D.3/Annex M distinguish those
+limits. No count value, registry permission, named policy or quantizer changes.
+[Actual before/reference and qualification evidence](EXTRA_METADATA_CONTRACT.md).

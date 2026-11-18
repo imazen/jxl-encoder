@@ -512,6 +512,12 @@ impl FileHeader {
         // Validate the wire values too: internal header builders bypass API
         // admission, and a positive f32 peak can serialize as binary16 zero.
         let meta = &self.metadata;
+        if meta.extra_channels.len() > 4096 {
+            return Err(crate::error::Error::InvalidInput(alloc::format!(
+                "extra channel count {} exceeds the metadata wire maximum 4096",
+                meta.extra_channels.len()
+            )));
+        }
         meta.color_encoding.validate_parametric()?;
         for extra in &meta.extra_channels {
             extra.validate()?;
@@ -977,6 +983,26 @@ impl BitDepth {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn extra_channel_count_wire_bound_precedes_header_writes() {
+        for compact in [false, true] {
+            for count in [0, 1, 17, 18, 256, 257, 4096, 4097] {
+                let mut header = FileHeader::new_rgb(1, 1);
+                header.header_all_default_fast_paths = compact;
+                header.metadata.extra_channels = vec![ExtraChannelInfo::alpha(); count];
+                let mut writer = BitWriter::new();
+                writer.write(3, 5).unwrap();
+                let result = header.write(&mut writer);
+                assert_eq!(result.is_ok(), count <= 4096, "{compact} {count}");
+                if count > 4096 {
+                    assert!(matches!(result, Err(crate::error::Error::InvalidInput(_))));
+                    assert_eq!(writer.bits_written(), 3);
+                    assert_eq!(writer.finish_with_padding(), [5]);
+                }
+            }
+        }
+    }
 
     /// The `modular_16_bit_buffer_sufficient` rule, pinned directly against
     /// libjxl's (`encode.cc:1330` + `image_metadata.h:241/246/254` +

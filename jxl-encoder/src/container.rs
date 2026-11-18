@@ -28,6 +28,9 @@
 //! (libjxl 0.7) loops on one until it runs out of memory. Files in libjxl's
 //! layout decode there exactly (imazen-26 reader census, 2026-10-17).
 
+/// Maximum extra-channel count supported by codestream Level 10.
+pub(crate) const MAX_EXTRA_CHANNELS_LEVEL10: u32 = 256;
+
 /// JXL container signature box (12 bytes).
 const JXL_CONTAINER_SIGNATURE: [u8; 12] = [
     0x00, 0x00, 0x00, 0x0C, // box size = 12
@@ -96,7 +99,7 @@ pub fn compute_codestream_level(
     if icc_size > (1u64 << 28) {
         return None;
     }
-    if num_extra_channels > 256 {
+    if num_extra_channels > MAX_EXTRA_CHANNELS_LEVEL10 {
         return None;
     }
 

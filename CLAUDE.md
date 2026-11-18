@@ -1788,6 +1788,17 @@ separate queue items. Broad/coverage/remote verdicts must be read independently.
 
 ## Known Bugs (ACTIVE)
 
+### RESOLVED 2026-11-19: extra-channel count admission and header guard
+
+A 1x1 request with 4097 Depth channels panics in the header count assertion
+through both lossless/lossy byte-return and writer routes. Pinned v0.12
+metadata writing accepts 4096/refuses 4097; its Level 10 public API accepts 256/
+refuses 257. The shared 256-channel request/raw admission and independent 4096 grammar
+guard pass with implicit alpha/Black, canonicalized alpha reduction and exact
+native boundary planes in both feature builds.
+[Before identity and current scope](docs/EXTRA_METADATA_CONTRACT.md).
+
+
 ### RESOLVED 2026-11-19: lossy animation alpha settings omitted
 
 The animation builder now forwards alpha distance/squeeze and chooses the

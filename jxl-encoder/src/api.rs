@@ -6787,6 +6787,19 @@ impl<'a> EncodeRequest<'a> {
             stop.check().map_err(|_| at!(EncodeError::Cancelled))?;
         }
         self.validate_pixels(pixels)?;
+        validate::validate_extra_channel_count(self.extra_channels.len())?;
+        // Delay a potentially removable alpha until canonicalization resolves
+        // the prepared layout. Other implicit channels are known at admission.
+        let may_remove_alpha = self.layout.has_alpha()
+            && matches!(self.config, ConfigRef::Lossy(cfg) if cfg.canonicalize_input);
+        if !may_remove_alpha {
+            validate::validate_extra_channel_count(
+                self.extra_channels
+                    .len()
+                    .saturating_add(usize::from(self.layout.has_alpha()))
+                    .saturating_add(usize::from(self.layout.is_cmyk())),
+            )?;
+        }
         self.check_limits()?;
         #[cfg(feature = "rate-control")]
         self.validate_rate_control()?;
@@ -6946,6 +6959,14 @@ impl<'a> EncodeRequest<'a> {
     }
 
     fn encode_prepared(&self, pixels: &[u8], preflight: EncodePreflight) -> Result<EncodeResult> {
+        // Canonicalization can remove layout alpha. Count implicit channels
+        // on the prepared layout, while retaining every caller-supplied extra.
+        validate::validate_extra_channel_count(
+            self.extra_channels
+                .len()
+                .saturating_add(usize::from(self.layout.has_alpha()))
+                .saturating_add(usize::from(self.layout.is_cmyk())),
+        )?;
         let EncodePreflight {
             budget,
             threads,

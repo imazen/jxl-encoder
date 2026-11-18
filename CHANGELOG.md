@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Reject unsupported extra-channel counts before pixel work or header writes.
 - Forward lossy animation alpha distance/squeeze settings and select matching float-alpha header coding.
 - Bound specialized lossy alpha tree alphabets with HybridUint for large multipliers, preserving quantizers and alpha sample choices.
 
