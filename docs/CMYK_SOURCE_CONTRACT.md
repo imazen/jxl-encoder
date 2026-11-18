@@ -2,8 +2,9 @@
 
 The core corrections pass the retained native/source controls, restored faults,
 locked library/doctest/byte-lock checks and strict workspace/expert lint.
-Encoder platform CI remains pending. ReferenceOnly, explicit nonzero Add and
-additional one-axis/vertical animation callers still need separate checks.
+Encoder platform CI remains pending. Additional ReferenceOnly, explicit Add,
+one-axis and vertical/corner controls are described below. The primary decoder's
+default float ICC blend output has a measured domain discrepancy.
 These results do not qualify arbitrary ICC profiles or every option combination.
 CMS-internal allocation peaks have not been measured.
 
@@ -110,6 +111,24 @@ and the saved reference slot, and composes Replace/Add independently.
 It compares displayed source color, complete primary output and exact Black.
 The native CLI's selected CMYK coalescing refusal supplies no pixel verdict.
 
+Auxiliary checks cover CMYK8/16, all offered policies, single/three-pass output,
+one-pixel axes, 17x259 and 257x257 boundaries. Hidden ReferenceOnly frames are
+followed by complete Replace or selected as the source of nonzero explicit Add.
+Explicit Add retains full-canvas input and independent Black Replace.
+
+Nonzero Add uses nonlinear-sRGB native layers, as required by Part 1 E.2/F.2/L.2,
+and primary U16 sRGB color output with float Black. The hidden native reference
+is modeled from a separately decoded regular source control; it is not exposed
+by the native public API. The primary decoder renders the actual reference.
+See [observer domains](CMYK_NATIVE_OBSERVER.md).
+
+The retained Libjxl/16x16/CMYK8 control gives nonlinear red 0.3745999634 after
+Add, equivalent to linear red 0.1157572791. Primary jxl 0.8.0 float output instead
+returns 0.0585693233, for both visible and hidden reference variants.
+Its U16 sRGB output agrees with independent composition. Float-output selection
+therefore does not provide a normative ICC Add oracle. The earlier auxiliary
+linear-add test is superseded; its pass supplies no conformance evidence.
+
 A second source profile changes only the all-ink CLUT vertex. Direct LCMS
 returns linear RGB [0.102634601295, 0.0970874279737, 0.124880000949] there,
 while the six source swatches remain identical. This distinguishes a
@@ -185,3 +204,11 @@ The direct row converter also checks real padded rows against packed output
 bit for bit. Selected output- and scratch-reservation refusals and cancellation
 before/between rows release all its budget guards. This measures the private
 owned buffers only; it does not measure CMS-internal peaks.
+
+The corrected auxiliary replay passes strict test lint, the complete CMYK
+animation target and the selected default-disabled feature controls in
+`cmyk-auxiliary-srgb-final.log` (135 seconds; build/test peak RSS 0.23 GiB,
+minimum available 20,309 MiB). Its retained native observer and test executables
+are checksum-bound in `cmyk-auxiliary-srgb-final/identity.json`. These are
+additional caller controls, not a replacement for the selected production
+region report above or a claim that the float-output decoder gap is repaired.

@@ -285,6 +285,12 @@ allows the existing 0.004 signal bound plus its integer-output rounding.
 minimum20578 MiB). The native helper SHA256 is
 `0cb4bca1ac620c9c53f705dc25ccecd47ae51381a088aa9510480adf0365b9b0`.
 
+That original-profile lossy control measures v0.12 compatibility, not normative
+ICC blending. Part 1 E.2/F.2/L.2 requires nonlinear sRGB for XYB/ICC blending,
+regardless of the attached ICC. The CMYK auxiliary control uses independently
+decoded nonlinear-sRGB layers and primary U16 sRGB output; see
+[the observer domain contract](CMYK_NATIVE_OBSERVER.md).
+
 The first raw-ICC run retains a secondary-decoder parsing refusal rather than a
 passing whole-run verdict (`explicit-blend-icc.log`, rc101/22 seconds,
 peak1.06 GiB, minimum20540 MiB). Exact profile extraction now uses the primary

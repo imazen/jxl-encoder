@@ -15,6 +15,7 @@ The helper takes an input JXL, output prefix and mode:
 | linear | Native linear-sRGB output, requiring full-canvas Replace |
 | raw-cmy | Stored normalized CMY, requiring full-canvas Replace |
 | linear-layers | Native linear-sRGB layers plus crop/reference fields |
+| srgb-layers | Native nonlinear-sRGB layers plus crop/reference fields |
 | raw-cmy-layers | Stored CMY layers plus crop/reference fields |
 | original | Requests the native original profile, for output-selection diagnostics |
 
@@ -34,6 +35,20 @@ The native CLI's inability to coalesce selected cropped CMYK/ICC files does
 not prove an invalid codestream. A completed layer decode and independent
 composition are required before claiming complete displayed pixels. The
 original-profile mode is diagnostic and is not assumed to succeed for CMYK.
+
+For XYB with ICC, Part 1 E.2/F.2/L.2 requires clamped nonlinear-sRGB samples
+before blending and reference storage. Nonzero Add checks therefore use
+srgb-layers. Adding the linear-layers output would test a different operation.
+The primary decoder's U16 color output selects sRGB; float extras retain
+their independent precision. Integer output clips the final composite to its
+representable range, so the comparison applies that final clipping explicitly.
+
+The native public API does not expose hidden ReferenceOnly pixels in these
+layer modes. The hidden-reference control seeds the independent compositor
+with a separately decoded regular source frame. This is modeled reference
+content, not an observation of the hidden frame. The primary decoder renders
+the actual hidden-reference stream; a different first displayed frame makes
+selection of the hidden reference observable.
 
 Local source-build controls pass with both LCMS and skcms v0.12 libraries.
 Native-platform CI remains a separate verdict.

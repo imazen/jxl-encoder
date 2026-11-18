@@ -6627,3 +6627,16 @@ ReferenceOnly, explicit nonzero Add and further edge animation callers, plus
 encoder platform CI, remain open. The isolated CMS pin has a green complete CI
 run; registry publication of this encoder repair is not qualified. See
 [the CMYK contract](docs/CMYK_SOURCE_CONTRACT.md).
+
+### Issue 144 CMYK auxiliary domains, November 18
+
+ReferenceOnly, nonzero Add and one-axis/vertical/corner CMYK controls pass with
+all offered policies, both integer precisions and single/three-pass output.
+Explicit Add uses nonlinear-sRGB native layers and primary U16 sRGB output;
+Black replacement is independently exact. Hidden native references are modeled
+from separately decoded regular frames, while the primary renders the actual
+hidden-reference stream. The primary default F32 output has a measured blend
+domain discrepancy (linear red 0.0585693233 versus normative 0.1157572791);
+see [the decoder finding](docs/DECODER_FINDINGS.md). This limits the decoder
+oracle, not the stored CMYK source/Black tests. Native CI remains a separate
+verdict. [Coverage and limits](docs/CMYK_SOURCE_CONTRACT.md).

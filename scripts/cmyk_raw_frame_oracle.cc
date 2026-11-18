@@ -55,10 +55,11 @@ int main(int argc,char**argv) {
   if (argc==2 && std::string(argv[1])=="--version") { std::cout<<"libjxl CMYK raw-frame oracle "<<JxlDecoderVersion()<<'\n'; return JxlDecoderVersion()==12000?0:2; }
   if (argc!=4 || JxlDecoderVersion()!=12000) return 2;
   const std::string mode=argv[3];
-  const bool layers=mode=="raw-cmy-layers" || mode=="linear-layers";
+  const bool layers=mode=="raw-cmy-layers" || mode=="linear-layers" || mode=="srgb-layers";
+  const bool srgb=mode=="srgb-layers";
   const bool original=mode=="original";
   const bool raw=mode=="raw-cmy" || mode=="raw-cmy-layers";
-  if(!original && !raw && mode!="linear" && mode!="linear-layers") return 2;
+  if(!original && !raw && mode!="linear" && mode!="linear-layers" && !srgb) return 2;
   std::ifstream file(argv[1],std::ios::binary);
   std::vector<unsigned char> input((std::istreambuf_iterator<char>(file)),{});
   JxlDecoder* decoder=JxlDecoderCreate(nullptr);if(!decoder)return 3;
@@ -90,6 +91,7 @@ int main(int argc,char**argv) {
         if(JxlDecoderSetOutputColorProfile(decoder,nullptr,icc.data(),size)!=JXL_DEC_SUCCESS)return 4;
       } else {
         JxlColorEncoding linear;JxlColorEncodingSetToLinearSRGB(&linear,JXL_FALSE);
+        if(srgb)JxlColorEncodingSetToSRGB(&linear,JXL_FALSE);
         if(JxlDecoderSetOutputColorProfile(decoder,&linear,nullptr,0)!=JXL_DEC_SUCCESS)return 4;
       }
     } else if(status==JXL_DEC_FRAME) {

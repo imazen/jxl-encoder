@@ -171,3 +171,20 @@ The current source/stream/PFM artifacts and failing layout verdict are retained;
 no tolerance is introduced. Numerical attribution within jxl-oxide remains
 open. The frozen native decoder separately reproduces the Gray8 row-bound
 panic described above. Existing sibling checkouts remain unchanged.
+# XYB/ICC Add depends on float output selection (November 18, 2026)
+
+Pinned jxl 0.8.0 renders the issue-144 CMYK Add stream differently when float
+color output selects linear sRGB. Part 1 E.2/F.2/L.2 requires nonlinear-sRGB
+blending before optional output conversion. Independently composed native
+v0.12 nonlinear layers give red 0.3745999634 (linear 0.1157572791); primary
+F32 output returns 0.0585693233. U16 sRGB output agrees with the independent
+composite. Visible and hidden source-reference controls reproduce the split.
+
+Reproduction: `just cmyk-explicit-add-check <pinned-manifest>` with the native
+`CMYK_RAW_FRAME_ORACLE`. Retained `float-output-diagnostic.tsv` files accompany
+the Libjxl/16x16/CMYK8/Single controls. Native hidden reference pixels are modeled
+from a separately decoded source, while the primary decoder uses the actual
+hidden-reference stream. The native coalescing limitation is separate.
+Decoder repair and upstream reporting remain open; no outside-org report is
+authorized. [Encoder control and limitations](CMYK_SOURCE_CONTRACT.md).
+
