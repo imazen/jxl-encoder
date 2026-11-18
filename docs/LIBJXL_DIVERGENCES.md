@@ -2967,3 +2967,10 @@ Remaining layout inventory is tracked separately in the progressive contract.
 | Site | Encoder policy | Pinned v0.12 / format control | Status |
 |---|---|---|---|
 | `api/ingest::{wrap_output,wrap_metadata_container,finish_animation_output}` and `container::wrap_encoded` | Consume the existing policy at pixel output owners. Always forces framing; Auto preserves existing output; Never drops box metadata, preserves codestream ICC and rejects Level10. No strategy gate. | v0.12 container1 forces framing; native container0 is automatic and can frame Level10. The existing Never API explicitly promises a stricter refusal. | Shared correctness repair, November19; no default byte movement or gate-registry value change. Implementation `75ae6c9b`; destination-wrapper byte/error controls pass. Region gaps remain explicitly recorded in FRAME_LEVEL_CONTRACT.md. |
+
+
+### Issue 144: optional request-controller integration
+
+| Site | Request contract | Reference distinction | Qualification |
+|---|---|---|---|
+| `EncodeRequest::with_rate_control` and private prepared adapter | Explicit default-off Butteraugli controller reuses normal source/stride/metadata/extras/limits/Stop and container finalization; only lossy Full444,255nits, factorone, single-frame input | Source conversion follows the existing pinned-v0.12 controls. This optional encode/decode controller is not the complete libjxl quantizer search. | Owner-approved additive signature. Default library, selected minimal request controls, unchanged byte locks, native/primary controls and restored faults pass. CLI and large-area continuation and remaining exception regions are recorded in RATE_CONTROL_CONTRACT.md. No registry gate or preset value changes. |

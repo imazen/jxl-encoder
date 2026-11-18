@@ -69,6 +69,26 @@ pub fn encode_with_rate_control(
     precomputed: &EncoderPrecomputed,
     config: &RateControlConfig,
 ) -> Result<(Vec<u8>, usize)> {
+    encode_with_rate_control_tracked(encoder, precomputed, config)
+        .map(|(encoded, iterations)| (encoded.data, iterations))
+}
+
+/// Keep the emitted frame requirement with the selected iteration's bytes.
+pub(crate) fn encode_with_rate_control_tracked(
+    encoder: &VarDctEncoder,
+    precomputed: &EncoderPrecomputed,
+    config: &RateControlConfig,
+) -> Result<(super::encoder::FrameBytes, usize)> {
+    encode_with_rate_control_extras_tracked(encoder, precomputed, config, &[], None)
+}
+
+pub(crate) fn encode_with_rate_control_extras_tracked(
+    encoder: &VarDctEncoder,
+    precomputed: &EncoderPrecomputed,
+    config: &RateControlConfig,
+    extras: &[crate::api::ExtraChannel<'_>],
+    stop: Option<&dyn enough::Stop>,
+) -> Result<(super::encoder::FrameBytes, usize)> {
     let target = encoder.distance;
 
     // Compute distance params from effort profile
@@ -95,12 +115,13 @@ pub fn encode_with_rate_control(
     let qf_lower = config.qf_min as f32;
     let qf_upper = config.qf_max as f32;
 
-    let mut best_encoded: Option<Vec<u8>> = None;
+    let mut best_encoded: Option<super::encoder::FrameBytes> = None;
     let mut best_p95: f32 = f32::MAX;
 
     for iter in 0..=config.max_iterations {
         // Encode with current quant field
-        let encoded = encode_iteration(encoder, precomputed, &quant_field)?;
+        crate::error::check_stop(stop)?;
+        let encoded = encode_iteration(encoder, precomputed, &quant_field, extras, stop)?;
 
         // On last iteration or if decoding fails, return what we have
         if iter == config.max_iterations {
@@ -108,7 +129,7 @@ pub fn encode_with_rate_control(
         }
 
         // Decode and measure quality
-        let decoded = match decode_jxl_to_linear(&encoded, encoder.color_encoding.as_ref()) {
+        let decoded = match decode_jxl_to_linear(&encoded.data, encoder.color_encoding.as_ref()) {
             Some(d) => d,
             None => {
                 // Decode failed - return encoded data anyway
@@ -174,7 +195,10 @@ pub fn encode_with_rate_control(
         // Track best result
         if p95_dist < best_p95 {
             best_p95 = p95_dist;
-            best_encoded = Some(encoded.clone());
+            best_encoded = Some(super::encoder::FrameBytes {
+                data: encoded.data.clone(),
+                frame_level: encoded.frame_level,
+            });
         }
 
         // Check convergence: 95th percentile within tolerance of target
@@ -197,7 +221,13 @@ pub fn encode_with_rate_control(
     }
 
     // Should not reach here, but return best result if we do
-    Ok((best_encoded.unwrap_or_default(), config.max_iterations))
+    Ok((
+        best_encoded.unwrap_or_else(|| super::encoder::FrameBytes {
+            data: Vec::new(),
+            frame_level: 5,
+        }),
+        config.max_iterations,
+    ))
 }
 
 /// Encode a single iteration with the given quant field.
@@ -205,10 +235,10 @@ fn encode_iteration(
     encoder: &VarDctEncoder,
     precomputed: &EncoderPrecomputed,
     quant_field: &[u8],
-) -> Result<Vec<u8>> {
-    // Create a modified encoder state and encode
-    // This is essentially the encode_from_precomputed method
-    encoder.encode_from_precomputed(precomputed, quant_field)
+    extras: &[crate::api::ExtraChannel<'_>],
+    stop: Option<&dyn enough::Stop>,
+) -> Result<super::encoder::FrameBytes> {
+    encoder.encode_from_precomputed_tracked(precomputed, quant_field, extras, stop)
 }
 
 /// Adjust quant field based on butteraugli tile distances.

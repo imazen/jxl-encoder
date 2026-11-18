@@ -159,3 +159,77 @@ resource observation, not encoder latency. Runtime profile SHA256 is
 `f00a42a54feb8451165adb25dcc57e2a59d07c3a6b4619e73a7e55f0c8bd5016`.
 No byte-lock migration, public signature, registry gate or default encoding
 policy changes here. The public request/CLI API is still separately qualified.
+
+
+## November 19: approved request controller adapter
+
+The additive `EncodeRequest::with_rate_control(self, RateControlConfig) -> Self`
+uses the existing public configuration type behind the existing rate-control
+feature. Unset requests keep ordinary encoding. The adapter reuses source
+conversion, stride handling, metadata, extra channels, limits, cancellation and
+container finalization. It supports lossy Full444 single-frame input at effective
+255-nit intensity and spatial factor one. Lossless, animation, subsampling,
+external scorer and loop-trace combinations return configuration errors.
+Default HDR peaks are refused; explicitly selecting255nits retains the ordinary
+PQ/HLG source conversion. Profile conversion keeps its existing std requirement.
+No controller streaming constructor is introduced.
+
+The raw public prepared controller retains its codestream contract. Private
+iteration records carry each selected stream's emitted-frame requirement through
+the same input and output owners. Alpha and additional channels travel with each
+iteration, while Stop checks cover preparation, individual encodes and final
+return. The source precomputation is shared with the existing raw wrapper;
+quantization arithmetic and the historical final-cap/decoder-failure policy are
+unchanged by this adapter. There is no convergence, universal quality-improvement
+or whole-controller process-RSS guarantee.
+
+`request-cli-queue41-library-gates-v3` and `request-callers-q47-runtime-v6`
+retain complete native v0.12/primary source, precision, profile, metadata,
+extra-channel, canonicalization and resource controls under all seventeen
+inventoried audit policies. Every observed cancellation checkpoint is injected
+on the retained input; destinations remain unchanged and a subsequent successful
+encode retains its bytes. A one-byte precompute budget produces a real refusal.
+`request-faults-q44-runtime-v4` separately restores controller dispatch,
+canonical-controller propagation and extra-channel faults: all fail at runtime,
+and each exact fixed source is restored.
+
+`request-feature-q47-isolated-v7` passes the full library baseline, minimal
+std/convenience request controls, progressive CLI controls, unchanged normal and
+strict byte locks, divergence checks, strict broad optional library/CLI lint,
+no-default compilation and scoped formatting. The separate unset-feature
+profile retains ordinary encoding choices with the optional feature compiled.
+Existing ignores, hash expectations and quality bounds remain unchanged.
+
+The remaining mapped gaps precede the observed fractions: animation/error
+location regions and the surrounding controller's decoder/error/final-tail
+paths remain unobserved in this union. The inclusive loop returns at its cap,
+so its post-loop fallback has no caller witness. Allocation failure is not
+injected and a private helper's accounting does not bound the whole controller.
+`request-cancellation-regions-q48-v1` binds exact function bodies: setter4/4,
+validator40/40, validation window3/3, canonical copy9/9, request dispatch21/21,
+adapter37/37 and surrounding controller106/118. These are mapped execution
+regions, not input-space coverage or a complete controller qualification.
+
+The paired CLI repair has retained actual-file controls for all six strategy
+spellings in both modes. It preserves input layouts, exact integer alpha,
+gamma, ICC/EXIF/XMP, container policy, LF payloads and the iteration selector.
+The original-profile native observer explicitly selects signal or linear output;
+fixed sRGB ICC tests map the primary's documented linear fallback to their known
+signal domain without changing the0.001 agreement or0.01 source bounds.
+The APNG, automatic JPEG, coarsening and distance-zero before failures are
+retained separately. Normal JPEG controls fully render and reconstruct exact
+original bytes before refusal checks. Forced JPEG shares the transcode guard
+and has a positive/refusal control after that guard; it is not a separate
+observed failing-before claim.
+
+`request-complete-cli-q50-runtime-v11/runtime` passes all selected source,
+metadata, precision, LF, iteration and unsupported-route families with the
+JPEG and Brotli features compiled together. The subsequent complete existing
+CLI suite passes its delta-palette, gamma, ICC, JPEG, modular-width and
+progressive checks, then stops before Gaborish input on disk exhaustion.
+The Gaborish and later checks, lint and format still need continuation; this
+partial encompassing run is not green. The exact old cache is archived before
+reclamation, preserving every test artifact. The trusted-limit large LF-area
+runtime is also separate: strict LF-off has completed full rendering, while
+all remaining policy/LF cases are still active. Its elapsed wall includes
+verified freezer intermissions and is not a latency result.
