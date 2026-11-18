@@ -2560,3 +2560,43 @@ modular-width-scoped-final manifest:
     cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,jpeg-reencoding --example modular_width_pixel_replay --example jpeg_pixel_parity --example lossy_multiseed_isolate_ab -- -D warnings
     cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,jpeg-reencoding
     cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder -p jxl-encoder-simd -p jxl-encoder-cli -p jxl-encoder-macros -p zenjxl-tuning-runner -- --check
+
+color-optional-icc-quantization-build build output:
+    c++ -std=c++17 -O2 -I{{quote(build + "/lib/include")}} scripts/optional_icc_quantization_oracle.cc -L{{quote(build + "/lib")}} -Wl,-rpath,{{quote(build + "/lib")}} -ljxl -llcms2 -o {{quote(output)}}
+    {{quote(output)}}
+
+color-optional-icc-quantization-control oracle cjxl djxl input output:
+    python3 scripts/optional_icc_quantization_control.py {{quote(oracle)}} {{quote(cjxl)}} {{quote(djxl)}} {{quote(input)}} {{quote(output)}}
+
+color-optional-icc-native-table oracle cjxl djxl offered gamma transfer output:
+    python3 scripts/optional_icc_native_table.py {{quote(oracle)}} {{quote(cjxl)}} {{quote(djxl)}} {{quote(offered)}} {{quote(gamma)}} {{quote(transfer)}} {{quote(output)}}
+
+color-optional-icc-production-evidence manifest output coverage_env:
+    mkdir -p {{quote(output)}}
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3/units" api::cms:: --features std,convenience,__expert,jpeg-reencoding,chroma-subsampling --no-default-features --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/cms.rs --source jxl-encoder/tests/fixtures/icc_extreme_gamma.hex; python3 scripts/run_selected_test_evidence.py "$2" "$3/public" optional_icc:: --test-target source_color_contract --features std,convenience,__expert,jpeg-reencoding,chroma-subsampling --no-default-features --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/cms.rs --source jxl-encoder/tests/source_color_contract/optional_icc.rs --source jxl-encoder/tests/source_color_contract/optional_icc_native.tsv --source jxl-encoder/tests/fixtures/icc_extreme_gamma.hex' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+color-optional-icc-faults manifest output coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/test_optional_icc_mutations.py "$2" "$3"' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+color-optional-icc-minimal manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features __expert,jpeg-reencoding,chroma-subsampling --test optional_icc_minimal_contract -- --test-threads=1
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features __expert,jpeg-reencoding,chroma-subsampling --lib --test optional_icc_minimal_contract -- -D warnings
+
+color-optional-icc-extreme-profile output binary:
+    c++ -std=c++17 -O2 scripts/icc_extreme_profile_oracle.cc -llcms2 -o {{quote(binary)}}
+    {{quote(binary)}} {{quote(output)}}
+
+color-optional-icc-default-disabled-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" default_disabled_features_convert --test-target optional_icc_minimal_contract --features __expert,jpeg-reencoding,chroma-subsampling --no-default-features --source jxl-encoder/src/api.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+color-optional-icc-regions llvm output units public minimal reference_root:
+    python3 scripts/color_admission_coverage.py {{quote(llvm)}} {{quote(output)}} {{quote(units)}} {{quote(public)}} {{quote(minimal)}} --optional-icc --reference-root {{quote(reference_root)}}
+
+color-optional-icc-broad manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,jpeg-reencoding,chroma-subsampling --lib
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,jpeg-reencoding,chroma-subsampling --test it -- hash_lock strategy_libjxl_byte_lock divergence_table_drift --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,jpeg-reencoding,chroma-subsampling --test subsampled_metadata --test subsampled_odd_shapes --test source_color_contract -- --test-threads=1
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,jpeg-reencoding,chroma-subsampling --lib --test source_color_contract --test subsampled_metadata --test subsampled_odd_shapes -- -D warnings
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features __expert,jpeg-reencoding,chroma-subsampling --lib --test optional_icc_minimal_contract -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder -- --check
+

@@ -22,6 +22,7 @@ p.add_argument('--animation-state', action='store_true')
 p.add_argument('--animation-deltas', action='store_true')
 p.add_argument('--frame-levels', action='store_true')
 p.add_argument('--modular-width-levels', action='store_true')
+p.add_argument('--optional-icc', action='store_true')
 p.add_argument('--reference-root', type=Path)
 a = p.parse_args()
 a.output.mkdir(exist_ok=False)
@@ -93,6 +94,22 @@ def observe(relative, name, occurrence=0, window=False):
                      inputs=inputs, excluded_different_body=excluded, covered=sum(v > 0 for v in counts.values()), total=len(counts),
                      missing_relative_regions=[k for k, v in sorted(counts.items()) if not v]))
     print(json.dumps(rows[-1]))
+
+if a.optional_icc:
+    for archive in a.archives:
+        identity = json.loads((archive / 'identity.json').read_text())
+        assert not identity.get('coverage_scope', {}).get('driver_only', False)
+    observe('jxl-encoder/src/api/cms.rs', 'rgb_to_icc')
+    observe('jxl-encoder/src/api.rs', 'subsampled_icc_pixels')
+    observe('jxl-encoder/src/api.rs', 'encode_lossy_sub_via_jpeg_path')
+    observe('jxl-encoder/src/api.rs', 'encode_lossy_sub_via_jpeg_path',
+            window=('let converted = if let Some(profile)', 8))
+    observe('jxl-encoder/src/api.rs', 'encode_lossy_sub_via_jpeg_path',
+            window=('let coding_pixels = converted', 3))
+    (a.output / 'regions.json').write_text(json.dumps(dict(inputs=identities, functions=rows,
+        source_comparison='Exact function bodies; code-region keys relative to each declaration'), indent=2))
+    raise SystemExit(0)
+
 
 if a.modular_width_levels:
     for archive in a.archives:

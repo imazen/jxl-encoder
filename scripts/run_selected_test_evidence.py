@@ -108,6 +108,9 @@ with (a.output / 'probe.log').open('x') as log:
                    env=dict(os.environ, LLVM_PROFILE_FILE=str(probe)),
                    stdout=log, stderr=subprocess.STDOUT, check=True)
 assert probe.is_file(), 'test target has no profiling runtime; refresh the coverage crate list'
+listed = [line.removesuffix(': test') for line in (a.output / 'probe.log').read_text().splitlines()
+          if line.endswith(': test')]
+assert any(a.filter in name for name in listed), 'explicit filter must select a test'
 if a.build_only:
     assert re.search(r': test\n', (a.output / 'probe.log').read_text()), 'filter must name a test'
     identity = dict(command=command, executable=str(executable), binary_sha256=digest,
