@@ -826,3 +826,6 @@ fn delta_palette_with_nonempty_patch_dictionary_preserves_selected_target() {
         }
     }
 }
+
+#[path = "delta_palette_float_contract.rs"]
+mod float_contract;

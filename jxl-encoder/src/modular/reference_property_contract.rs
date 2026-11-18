@@ -431,8 +431,7 @@ fn selected_reference_property_all_policies_and_callers() {
     }
 }
 
-#[path = "../../tests/support/pfm.rs"]
-mod pfm;
+use super::contract_pfm as pfm;
 #[test]
 #[ignore = "explicit native float color and extra-channel buffers"]
 fn selected_reference_property_floating_alpha_and_public_depth() {

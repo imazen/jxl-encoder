@@ -1,8 +1,8 @@
 # Conditional modular correctness controls
 
-Issue 144 E4 and E6 remain conditional. Native public controls below validate
-inputs and oracle interpretation; they do not observe a winning encoder tree
-or palette delta.
+Issue 144 E4 and E6 corrections are on main. The initial native controls
+below are historical; later sections record actual winning production witnesses
+and the selected caller, precision and source-identity qualification.
 
 ## Initial controls (historical)
 
@@ -264,3 +264,107 @@ strict workspace/focused lint and formatting pass. All eight owned overlays
 restore exactly. Evidence: reconstruction-model-isolated-final.log,
 rc0/152s, peak RSS1.93GiB/minimum available18111MiB. No floor-study data or
 quality threshold is regenerated.
+
+
+## E6 floating-point selected targets (November 19)
+
+Float palette quality, negative/nonfinite/extreme input qualification and
+allocation-failure injection are not established by this extension. It checks
+the existing predictor correction, without changing palette search,
+quantization, production defaults or any established expected output.
+
+Actual F16 and F32 palette winners now distinguish Gradient and Select.
+The normal F32 witness at (2,1), red, distinguishes packed words 1056997376
+and 1057030144. A declaration-only control preserves the palette indices and
+quantized words, changes exactly one stream bit, and makes both complete
+decoder buffers detect the incorrect Select declaration.
+
+The selected surface covers all four supported RGB/RGBA binary16/binary32
+color layouts, finite normal and positive subnormal families, 32×32/259×17,
+Huffman/ANS, and every offered policy binding. Every decoded color word equals
+the captured pre-entropy quantized target. Contracted alpha bits are exact.
+Request, legacy, writer, seven-row streaming and padded rows have identical
+bytes wherever the API exposes those inputs.
+
+Additional controls attach an independently typed u16 depth channel to float
+RGB, preserving every depth code alongside the selected float target. Its
+public attachment surface is request/strided/writer; legacy and streaming
+have no caller-extra attachment method. Genuine nonopaque associated RGBA
+controls require RGB<=alpha at input, observe the stored association flag,
+retain exact target/alpha words in both decoders and require stream/stride/
+writer equality. Both additions run across the offered policies and both group
+shapes with F16/F32. Default and default-disabled builds pass these controls.
+
+Lossless float animation is unsupported; CLI PNG input has no F16/F32 surface.
+Gray layouts have fewer than the palette kernel's three required color
+channels. Public automatic lossless patch detection excludes float layouts,
+so no float patched-frame palette application is claimed. The separate integer
+patched-writer evidence remains valid: its complete function body SHA256
+matches the current body. The multi-group patched route bypasses this palette,
+as established in the preceding integer controls.
+
+Pinned v0.12 InvPalette caps implicit palette depth at 24 too. This is not an
+encoder-only restriction. The acceptance oracle is complete original-profile
+native float output plus the primary Rust decoder, compared with captured
+quantized words interpreted independently as IEEE values. No original-source
+bit identity is promised under explicitly selected near-lossless quantization.
+
+### Evidence, exact scope and reproduction
+
+Retained passing captures:
+
+| Capture | Scope |
+|---|---|
+| delta-palette-float-strict-fault | Libjxl first; actual winners and one-bit declaration faults |
+| delta-palette-float-all | All policies, normal/subnormal RGB/RGBA, entropy and public still entries |
+| delta-palette-float-final-v2/depth | Independently typed public u16 depth with F16/F32 color |
+| delta-palette-float-final-v2/minimal | Original and depth matrices with default features disabled |
+| delta-palette-float-association-final-v4/associated and associated-minimal | Actual associated flag, nonopaque exact alpha/target and supported entries |
+| delta-palette-float-association-final-v4/shared-reader-e4 | Existing E4 native float/alpha/depth controls using the shared reader |
+
+The default float ELF is
+a83cc447c07996b65b583196159a349586494120cbbc4737a98bdb1636b79898;
+the minimal ELF is
+04988443f60994c27acfd646268265e3c6e5b904d62450d54bb328348eff1e97.
+Each archive retains its exact objects, profile, source records, inputs,
+quantized targets and decoder output. The unchanged PFM reader, primary-decoder
+helper and native wrapper have a supplemental binding to committed base 361d860f
+and the owned source export. That supplement was attached after the replays;
+its timing is explicit, and original replay identities are unchanged. It also
+verifies native ELF/shared-library/header hashes and records current loader
+resolution; it is not a historical environment capture. New recipes capture
+those helper sources when building subsequent runs.
+
+The final region report unions matching bodies from integer precision and
+float profiles. The declaration covers 4/4 regions and the ordinary single-group
+palette call 19/20. Its missing region propagates a writer error. The patched
+call is 0/20 in these profiles because the new float inputs cannot reach it;
+the unchanged body matches the earlier integer patched report's 19/20. Whole
+palette application remains 920/963 and multi-group writer 333/405; those larger
+bodies retain untested allocation, serializer and candidate-selection branches.
+These fractions describe exact mapped scopes, not complete inputs or quality.
+Artifact: delta-palette-float-regions-final/regions.json.
+
+The first complete wrapper retains a strict duplicate-module lint failure;
+the reader was then shared without changing its parser or assertions. The next
+wrapper passes associated/default-disabled/E4 runtime checks and default strict
+test lint, then fails because the new minimal lint command also selected legacy
+integration tests requiring disabled perceptual-loop APIs. The corrected caller
+runs the actual float unit tests in the minimal build, lints default tests and
+checks minimal library lint. No existing test is changed or hidden.
+
+Final selected-source qualification verifies every tracked production file
+against main 361d860f plus the selected test changes, then restores all seven
+owned overlays byte-for-byte. Library, unchanged normal/strict/drift contracts,
+strict default library/test lint, minimal library lint and formatting pass.
+Log delta-palette-float-isolated-v5: rc0 / 99s, run-heavy peak RSS 1.95 GiB,
+minimum available 17,622 MiB. Region/support extraction passes rc0 / 7s,
+peak RSS 0.52 GiB / minimum available 18,811 MiB. Earlier enclosing failures remain
+separate nonzero verdicts, not aggregate passes.
+
+Reproduce with delta-palette-float-evidence, delta-palette-float-minimal-evidence,
+delta-palette-float-association-final-check, qualify-delta-palette-float,
+delta-palette-float-regions and delta-palette-float-support-binding. Supply the
+pinned manifest, explicit source selection/base, verified native oracle and
+resource wrapper. No existing ignore annotation, expected byte or threshold
+is migrated.

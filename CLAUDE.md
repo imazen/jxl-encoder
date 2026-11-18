@@ -1788,6 +1788,23 @@ separate queue items. Broad/coverage/remote verdicts must be read independently.
 
 ## Known Bugs (ACTIVE)
 
+### RESOLVED 2026-11-19: floating palette target and caller qualification
+
+The existing Gradient declaration repair now has actual F16/F32 witnesses,
+complete independent native/primary quantized-target checks and exact alpha,
+including associated metadata and independently typed public u16 depth.
+Selected default/minimal policy/group/entry matrices pass. This changes test
+qualification only; negative/extreme float palette quality and allocation-fault
+injection are not established. The shared PFM parser is unchanged.
+
+Final base-plus-selected-source library, unchanged locks/drift, default strict
+library/test lint, minimal library lint and formatting pass. Earlier duplicate
+reader and unsupported minimal-integration lint failures remain separate nonzero
+records. Named declaration/caller regions and supplemental source-binding timing
+are explicit in [the owning contract](docs/CONDITIONAL_MODULAR_CONTRACT.md).
+No established expectation or ignore changes.
+
+
 ### 2026-11-19: C5 physical units and current auxiliary-source gate
 
 C5's owner-selected alternate-gamut candidate passes the retained matched gamut,

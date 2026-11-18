@@ -67,3 +67,7 @@ mod lz77_keep_best_tests;
 #[cfg(all(test, feature = "__expert", feature = "std"))]
 #[path = "../../tests/support/decoded_frames.rs"]
 pub(crate) mod contract_decoded_frames;
+
+#[cfg(all(test, feature = "__expert", feature = "std"))]
+#[path = "../../tests/support/pfm.rs"]
+mod contract_pfm;

@@ -22,7 +22,8 @@
 
 - Declare the actual Gradient predictor for selected near-lossless palette
   deltas; preserve quantized color and exact alpha through affected callers
-  (`1cc800cb`).
+  (`1cc800cb`). Selected F16/F32 targets now have native/primary controls,
+  including exact alpha, caller depth and associated-alpha metadata.
 
 - Preserve distinct empty JPEG DHT segments and real zero-symbol Huffman
   table definitions, including exact original-byte reconstruction and cloned
