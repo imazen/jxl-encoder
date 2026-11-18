@@ -345,7 +345,7 @@ bodies retain untested allocation, serializer and candidate-selection branches.
 These fractions describe exact mapped scopes, not complete inputs or quality.
 Artifact: delta-palette-float-regions-final/regions.json.
 
-The first complete wrapper retains a strict duplicate-module lint failure;
+The v2 baseline/lint continuation retains a strict duplicate-module failure;
 the reader was then shared without changing its parser or assertions. The next
 wrapper passes associated/default-disabled/E4 runtime checks and default strict
 test lint, then fails because the new minimal lint command also selected legacy

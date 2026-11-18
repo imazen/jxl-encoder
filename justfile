@@ -3133,3 +3133,50 @@ tc17-contract-isolated-check manifest:
 
 qualify-tc17-contract manifest selection base output:
     python3 scripts/qualify_selected_modular_source.py {{quote(manifest)}} {{quote(selection)}} {{quote(base)}} {{quote(output)}} --tc17-contract
+
+
+delta-palette-float-evidence manifest output coverage_env selection:
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" "$4" --include-ignored --features __expert,parallel --source jxl-encoder/src/modular/palette.rs --source jxl-encoder/src/modular/frame.rs --source jxl-encoder/src/modular/float_pack.rs --source jxl-encoder/src/modular/delta_palette_contract.rs --source jxl-encoder/src/modular/delta_palette_float_contract.rs --source jxl-encoder/tests/support/pfm.rs --source jxl-encoder/tests/support/decoded_frames.rs --source scripts/libjxl_original_profile.cc' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}} {{quote(selection)}}
+
+
+delta-palette-float-minimal-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" all_offered_delta_palette_float --include-ignored --no-default-features --features std,convenience,__expert --source jxl-encoder/src/modular/palette.rs --source jxl-encoder/src/modular/frame.rs --source jxl-encoder/src/modular/float_pack.rs --source jxl-encoder/src/modular/delta_palette_contract.rs --source jxl-encoder/src/modular/delta_palette_float_contract.rs --source jxl-encoder/tests/support/pfm.rs --source jxl-encoder/tests/support/decoded_frames.rs --source scripts/libjxl_original_profile.cc' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+
+delta-palette-float-isolated-check manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,parallel-tree-learning --lib
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --test it -- hash_lock strategy_libjxl_byte_lock divergence_table_drift --test-threads=1
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,parallel-tree-learning --lib --tests -- -D warnings
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert --lib -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+
+
+qualify-delta-palette-float manifest selection base output:
+    python3 scripts/qualify_selected_modular_source.py {{quote(manifest)}} {{quote(selection)}} {{quote(base)}} {{quote(output)}} --delta-palette-float
+
+
+delta-palette-float-regions llvm output integer default minimal depth associated associated_minimal:
+    python3 scripts/color_admission_coverage.py {{quote(llvm)}} {{quote(output)}} {{quote(integer)}} {{quote(default)}} {{quote(minimal)}} {{quote(depth)}} {{quote(associated)}} {{quote(associated_minimal)}} --delta-palette
+
+
+delta-palette-float-final-check manifest selection base output coverage_env normal_target:
+    mkdir {{quote(output)}}
+    just delta-palette-float-evidence {{quote(manifest)}} {{quote(output + "/depth")}} {{quote(coverage_env)}} with_public_integer_depth
+    just delta-palette-float-minimal-evidence {{quote(manifest)}} {{quote(output + "/minimal")}} {{quote(coverage_env)}}
+    CARGO_TARGET_DIR={{quote(normal_target)}} just qualify-delta-palette-float {{quote(manifest)}} {{quote(selection)}} {{quote(base)}} {{quote(output + "/isolated")}}
+
+
+delta-palette-float-associated-minimal-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" associated_alpha --include-ignored --no-default-features --features std,convenience,__expert --source jxl-encoder/src/modular/mod.rs --source jxl-encoder/src/modular/reference_property_contract.rs --source jxl-encoder/src/modular/delta_palette_float_contract.rs --source jxl-encoder/tests/support/pfm.rs --source jxl-encoder/tests/support/decoded_frames.rs --source scripts/libjxl_original_profile.cc --source jxl-encoder/src/modular/delta_palette_associated_contract.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+
+delta-palette-float-association-final-check manifest selection base output coverage_env normal_target:
+    mkdir {{quote(output)}}
+    just delta-palette-float-evidence {{quote(manifest)}} {{quote(output + "/associated")}} {{quote(coverage_env)}} associated_alpha
+    just delta-palette-float-associated-minimal-evidence {{quote(manifest)}} {{quote(output + "/associated-minimal")}} {{quote(coverage_env)}}
+    just reference-property-extra-evidence {{quote(manifest)}} {{quote(output + "/shared-reader-e4")}} {{quote(coverage_env)}}
+    CARGO_TARGET_DIR={{quote(normal_target)}} just qualify-delta-palette-float {{quote(manifest)}} {{quote(selection)}} {{quote(base)}} {{quote(output + "/isolated")}}
+
+
+delta-palette-float-support-binding manifest base output native_identity default minimal depth associated associated_minimal reader:
+    python3 scripts/bind_committed_support.py {{quote(manifest)}} {{quote(base)}} {{quote(output)}} {{quote(default)}} {{quote(minimal)}} {{quote(depth)}} {{quote(associated)}} {{quote(associated_minimal)}} {{quote(reader)}} --source jxl-encoder/tests/support/pfm.rs --source jxl-encoder/tests/support/decoded_frames.rs --source scripts/libjxl_original_profile.cc --native-identity {{quote(native_identity)}}
