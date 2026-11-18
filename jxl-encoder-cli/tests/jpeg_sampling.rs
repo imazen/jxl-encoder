@@ -108,3 +108,6 @@ mod metadata;
 
 #[path = "jpeg_sampling/dht.rs"]
 mod dht;
+
+#[path = "jpeg_sampling/grid.rs"]
+mod grid;

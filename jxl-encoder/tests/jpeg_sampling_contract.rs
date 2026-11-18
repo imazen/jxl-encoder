@@ -354,3 +354,12 @@ mod metadata;
 
 #[path = "jpeg_sampling_contract/dht.rs"]
 mod dht;
+
+#[path = "jpeg_sampling_contract/scans.rs"]
+mod scans;
+
+#[path = "jpeg_sampling_contract/common_grid.rs"]
+mod common_grid;
+
+#[path = "jpeg_sampling_contract/grid_callers.rs"]
+mod grid_callers;
