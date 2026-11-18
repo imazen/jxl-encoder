@@ -3117,3 +3117,19 @@ spline-and-cms-final-lint manifest:
 
 stage-spline-candidate manifest base output:
     python3 scripts/stage_spline_admission_candidate.py {{quote(manifest)}} {{quote(base)}} {{quote(output)}}
+
+
+tc17-relative-physical-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" strict_tc17 --test-target tc17_normalization_contract --features __expert,parallel --source jxl-encoder/src/headers/color_encoding.rs --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/ingest.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+
+tc17-contract-isolated-check manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --test tc17_normalization_contract -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert --test tc17_normalization_contract -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --lib from_cicp -- --test-threads=1
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --test tc17_normalization_contract -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+
+
+qualify-tc17-contract manifest selection base output:
+    python3 scripts/qualify_selected_modular_source.py {{quote(manifest)}} {{quote(selection)}} {{quote(base)}} {{quote(output)}} --tc17-contract

@@ -444,6 +444,12 @@ impl ColorEncoding {
     ///
     /// Mapping matches libjxl's `ApplyCICP` in `lib/jxl/cms/jxl_cms.cc:928`.
     ///
+    /// TC17 selects the relative JPEG XL DCI transfer. This descriptor does not
+    /// rescale samples or carry CICP17's absolute 52.37-nit normalization. For
+    /// absolute CICP17 samples, set the corresponding request intensity target
+    /// separately or normalize the samples to the chosen JPEG XL reference
+    /// white before encoding. Intensity metadata has binary16 precision.
+    ///
     /// # Errors
     ///
     /// Returns `Err(&'static str)` with a descriptive message when:

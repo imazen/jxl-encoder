@@ -488,6 +488,13 @@ jobs:
           cargo test --locked -p jxl-encoder --release
           --features "__expert,__internals,__pre_quantized,parallel,chroma-subsampling,jpeg-reencoding"
           --test spline_admission_contract --lib -- spline --test-threads=1
+      - name: TC17 relative transfer and physical white controls
+        env:
+          JXL_ENCODER_OUTPUT_DIR: ${{ runner.temp }}/issue144-contracts
+        run: >-
+          cargo test --locked -p jxl-encoder --release
+          --features "__expert,parallel" --test tc17_normalization_contract
+          -- --test-threads=1
       - name: Delta palette CLI callers
         env:
           JXL_ENCODER_OUTPUT_DIR: ${{ runner.temp }}/issue144-contracts

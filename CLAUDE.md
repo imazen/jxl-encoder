@@ -6797,3 +6797,14 @@ minimal/no-std builds and strict lint pass. This changes a reconstruction model,
 not an encoding strategy or a measured quality/performance policy. Historical
 floor-study numbers need remeasurement before comparison with this model.
 [Actual planes, regions and gaps](docs/CONDITIONAL_MODULAR_CONTRACT.md).
+
+
+### Issue 144 TC17: relative descriptor and explicit intensity normalization
+
+`ColorEncoding::from_cicp(_,17,0,true)` preserves the relative DCI mapping
+of native v0.12. The descriptor does not rescale pixels or set absolute nits.
+The actual strict code 63375/48-nit control renders native relative 0.9165498;
+code 65535 gives 1. Requesting 52.37 separately serializes 52.34375, which the
+physical-light control accounts for explicitly. Selected default/minimal
+qualification is recorded in [TC17_NORMALIZATION.md](docs/TC17_NORMALIZATION.md).
+No transfer implementation, API signature or established expectation changes.

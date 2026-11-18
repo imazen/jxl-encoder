@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- Document TC17 as a relative DCI descriptor; retain source/physical-white
+  controls for separately supplied absolute intensity normalization.
+
 - Validate manual spline wire geometry and checked coefficient quantization;
   return errors for unsupported animation, prepared coefficient and optional
   subsampling payload routes. Empty outer lists remain a legal disable
