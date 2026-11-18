@@ -251,7 +251,7 @@ jobs:
         run: >-
           cargo test --locked -p jxl-encoder --release
           --features __expert,parallel,rate-control --lib
-          vardct::tile_distmap::tests:: -- --test-threads=1
+          vardct::tile_distmap:: -- --test-threads=1
 
       - name: Test inherited limits and animation admission
         env:

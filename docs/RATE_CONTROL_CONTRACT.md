@@ -69,3 +69,8 @@ ARM lint run44490140699 failed at the strict version guard because that job
 had no reference installation; it supplies no pixel verdict. Runtime checks
 were relocated to the existing native reference-tool jobs with all assertions
 unchanged. A new commit's remote CI must retain its own verdict.
+
+Native CI now selects the complete `vardct::tile_distmap::` module, including
+the peak-admission and map/tile lifetime regressions. The earlier `tests::`
+filter selected the generic tile controls only. Local full-module baseline
+evidence is separate from each fresh platform CI verdict.
