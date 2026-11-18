@@ -339,3 +339,28 @@ retain their existing codestream contract. Container-owning CLI code also needs
 to consume or explicitly refuse source color/metadata options rather than
 silently dropping them. The private transport prototype is unqualified and
 adds no public API at this stage.
+
+
+## November 19: LF and additional CLI input layouts
+
+The separate source-isolated follow-up reuses the exact main-only CLI ELF
+`aeafeee5eef02f7d0956672f5cf7f58d444f16f704ca2ba66207e38ed006133a`.
+The LF-off 32x17 RGB8 control completely renders. Enabling LF is accepted,
+but both primary Rust and pinned djxl v0.12 fail complete rendering: the
+primary reports `NoLfFrame(0)`, while native reports a failed image decode.
+This is an actual small CLI caller failure, separate from the still-unexecuted
+large CLI LF-area probe.
+
+Gray8, Gray16 and RGB16 inputs at 32x17 and 259x17 panic in that rate-control
+branch. Gray inputs reach an RGB-triplet remainder index; RGB16 reaches a
+precomputed linear-RGB length assertion (3264 versus 1632 for 32x17).
+The matching RGB8 controls encode and fully render. The failed input layouts
+have no decoded-pixel error magnitude because encoding does not complete.
+
+The follow-up also reproduces the earlier container/dimension, CMYK-ICC and
+PNG gamma failures. Full child logs, identities and accepted control outputs
+remain in `frame-level-cli-followup-before-gates-v1/before`, with pixel/control
+records in `frame-level-auxiliary-contract/run-11` through `run-15`. The wrapper
+exits 1 in 24 seconds, run-heavy peak RSS 1.02 GiB, minimum available 18,324 MiB.
+These are before failures. No rate-control or prepared-LF repair is qualified
+by this run.

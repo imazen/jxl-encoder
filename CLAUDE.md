@@ -1788,6 +1788,17 @@ separate queue items. Broad/coverage/remote verdicts must be read independently.
 
 ## Known Bugs (ACTIVE)
 
+### 2026-11-19: CLI rate-control LF and input-layout failures
+
+The retained main-only CLI accepts LF on a 32x17 RGB8 input, but both the
+primary Rust decoder and pinned djxl v0.12 fail complete rendering; LF-off
+fully renders. Gray8/Gray16/RGB16 inputs at 32x17 and 259x17 panic before
+encoding completes, while RGB8 controls render. There is no decoded-pixel
+error measurement for failed encodes. The source-isolated follow-up exits 1
+in 24 seconds, peak RSS 1.02 GiB, minimum available 18,324 MiB.
+[Actual caller evidence](docs/FRAME_LEVEL_CONTRACT.md#november-19-lf-and-additional-cli-input-layouts).
+
+
 ### 2026-11-19: CLI rate control bypasses container and source metadata
 
 Source-isolated main `aac8dcce` emits a 262145x1 RGB8 rate-control output as
