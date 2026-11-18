@@ -1788,6 +1788,22 @@ separate queue items. Broad/coverage/remote verdicts must be read independently.
 
 ## Known Bugs (ACTIVE)
 
+### 2026-11-19: CLI rate control bypasses container and source metadata
+
+Source-isolated main `aac8dcce` emits a 262145x1 RGB8 rate-control output as
+bare implicit Level 5 with the 16-bit modular promise true; its dimension
+requires Level 10. Container-on is ignored, and container-off accepts that
+case and overwrites an existing destination. A supplied CMYK ICC is dropped
+without Black; a gamma50000 PNG is tagged sRGB while the ordinary request
+retains Gamma. Every emitted stream fully renders through primary Rust and
+pinned native v0.12, so acceptance does not settle these metadata errors.
+
+[Actual-file evidence and caller scope](docs/FRAME_LEVEL_CONTRACT.md#november-19-observed-cli-rate-control-bypasses).
+The prepared/rate-control return path discards the private frame-level result.
+A private request adapter is being qualified; no new public API or CLI repair
+is claimed. Large lossless-patch/LF all-policy qualification remains separate.
+
+
 ### RESOLVED 2026-11-19: floating palette target and caller qualification
 
 The existing Gradient declaration repair now has actual F16/F32 witnesses,
