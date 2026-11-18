@@ -78,6 +78,18 @@ jobs:
           cargo test --locked -p jxl-encoder --features jpeg-reencoding,chroma-subsampling
           --test subsampled_odd_shapes --test subsampled_metadata
 
+      - name: Optional source-to-ICC conversion and raw storage
+        if: matrix.os == 'ubuntu-latest'
+        run: >-
+          cargo test --locked -p jxl-encoder
+          --features __expert,jpeg-reencoding,chroma-subsampling
+          --test source_color_contract optional_icc:: -- --test-threads=1
+
+      - name: Default-disabled optional ICC feature graph and row conversion
+        run: |
+          cargo test --locked -p jxl-encoder --no-default-features --features __expert,jpeg-reencoding,chroma-subsampling --test optional_icc_minimal_contract
+          cargo test --locked -p jxl-encoder --no-default-features --features __expert,jpeg-reencoding,chroma-subsampling --lib api::cms::
+
       - name: Test the external loop metric (__external_metric)
         if: matrix.os == 'ubuntu-latest'
         run: cargo test --locked --release -p jxl-encoder --features __external_metric --test it -- external_metric loop_trace
@@ -179,6 +191,18 @@ jobs:
         if: matrix.run_tests
         run: cargo test --locked --workspace --release
 
+      - name: Optional ICC row conversion and default-disabled feature graph
+        run: |
+          cargo test --locked --release -p jxl-encoder --no-default-features --features __expert,jpeg-reencoding,chroma-subsampling --lib api::cms::
+          cargo test --locked --release -p jxl-encoder --no-default-features --features __expert,jpeg-reencoding,chroma-subsampling --test optional_icc_minimal_contract
+
+      - name: Optional ICC native source and original-profile samples
+        if: matrix.name == 'Linux'
+        run: >-
+          cargo test --locked --release -p jxl-encoder
+          --features __expert,jpeg-reencoding,chroma-subsampling
+          --test source_color_contract optional_icc:: -- --test-threads=1
+
       - name: Verify orientation in the original ICC color space
         if: matrix.name == 'Linux'
         run: cargo test --locked --release -p jxl-encoder --features corpus-tests --test native_orientation original_icc_orientation_control -- --exact
@@ -263,6 +287,14 @@ jobs:
         env:
           CROSS_CONTAINER_OPTS: --security-opt seccomp=unconfined
         run: cross test --locked --workspace --exclude zenjxl-tuning-runner --release --no-default-features --features "std" --lib --target ${{ matrix.target }}
+
+      - name: Optional ICC rows and default-disabled feature graph (cross/i686)
+        if: matrix.run_tests
+        env:
+          CROSS_CONTAINER_OPTS: --security-opt seccomp=unconfined
+        run: |
+          cross test --locked -p jxl-encoder --release --no-default-features --features __expert,jpeg-reencoding,chroma-subsampling --lib api::cms:: --target ${{ matrix.target }}
+          cross test --locked -p jxl-encoder --release --no-default-features --features __expert,jpeg-reencoding,chroma-subsampling --test optional_icc_minimal_contract --target ${{ matrix.target }}
 
   # ==========================================================================
   # WASM Runtime Tests (wasm32-wasip1 + simd128)
