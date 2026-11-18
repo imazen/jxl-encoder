@@ -130,6 +130,12 @@ let jxl = LossyConfig::new(1.0)
 `std` is on by default; `cargo add jxl-encoder` pulls the latest release. MSRV is
 Rust 1.93 on `main`; the published 0.3.x releases build with Rust 1.89.
 
+The development branch also offers the default-off `rate-control` feature and
+`EncodeRequest::with_rate_control(RateControlConfig)`. It retains the normal
+request's source interpretation, metadata and limits; supported inputs and
+qualification gaps are in the [controller contract](docs/RATE_CONTROL_CONTRACT.md).
+This addition is not part of the published0.3.x API shown above.
+
 ## Quality (distance) and effort
 
 **Distance** is the butteraugli target passed to `LossyConfig::new(distance)`.

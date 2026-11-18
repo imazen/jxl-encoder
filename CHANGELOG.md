@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+- Add the default-off `EncodeRequest::with_rate_control` adapter using the
+  existing configuration type, preserving the ordinary request pipeline
+  (`efebdb40`).
+
 - Honor configured Always/Never container policies in pixel requests,
   streaming and animation; reject unframed Level 10 output and retain
   codestream ICC when dropping container-only metadata.

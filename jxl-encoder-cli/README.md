@@ -27,12 +27,26 @@ cjxl-rs input.png output.jxl --lossless
 cjxl-rs input.png output.jxl -q 90
 ```
 
-Reads PNG (including APNG animation). Writes bare JXL codestream or container format (when metadata or animation is present).
+Reads PNG, APNG and PNM/PAM/PFM input. Writes a bare JXL codestream or a
+container according to `--container`, metadata and the required codestream level.
 
 Notes:
 - The output file is **overwritten silently** if it already exists — there is no `--force` / overwrite prompt.
 - If both `-d` and `-q` are given, `-d` wins (`-q` is only the fallback when `-d` is absent); they are not mutually exclusive.
 - `--lossless` and `-d 0` are equivalent — both select the modular path for true mathematical lossless. Either works.
+
+## Optional controller on the development branch
+
+Build with the `rate-control` Cargo feature to use `--rate-control` and
+`--rc-iterations N` (default3). The controller uses the same pixel request
+pipeline as ordinary encoding, retaining layouts, alpha, gamma, ICC and
+container metadata. Its iteration cap does not promise convergence.
+
+The implemented controller accepts lossy single-frame Full444 pixels at
+255nits and spatial factorone. Lossless pixel selection, APNG, JPEG transcode
+and JPEG coefficient coarsening return errors before replacing an existing
+destination. The library's trusted limits and caller coverage are documented
+in the [controller contract](../docs/RATE_CONTROL_CONTRACT.md).
 
 ## Flags
 
@@ -42,6 +56,8 @@ Notes:
 | `-q, --quality` | 90 | Quality 0-100 (alternative to distance) |
 | `-e, --effort` | 7 | Effort 1-12 (higher = slower, better compression; e10/e11/e12 extends libjxl kTortoise=9 — e12 = 32 butteraugli iters) |
 | `--lossless` | off | Lossless modular encoding |
+| `--rate-control` | off | Optional encode/decode controller; requires the Cargo feature |
+| `--rc-iterations N` | 3 | Controller iteration cap |
 | `--no-gaborish` | on | Disable gaborish pre-filter |
 | `--no-pixel-domain-loss` | on | Disable pixel-domain loss (faster, lower quality) |
 | `--no-ans` | ANS on | Use Huffman instead of ANS |

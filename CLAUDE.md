@@ -7012,3 +7012,18 @@ locks/lint pass; destination-wrapper/region checks and the approved controller
 CLI integration remain separately in progress. Native CLI container0 is
 automatic; our documented Never is deliberately stricter.
 [Evidence and current limits](docs/FRAME_LEVEL_CONTRACT.md).
+
+
+### 2026-11-19: request controller and early CLI branches
+
+The approved default-off request setter preserves ordinary ingestion and output
+finalization. The CLI uses that adapter instead of the former RGB-only bypass.
+Actual before probes retain APNG, automatic JPEG transcode, JPEG coarsening and
+lossless selection silently accepting the controller flag; each now refuses
+its unsupported combination before writing the destination. The feature-disabled
+fallback remains separate. Source/layout/precision/metadata/native/primary and
+restored-fault controls pass. The full existing CLI continuation and trusted-limit
+large-area runtime retain separate verdicts and must not be inferred from those
+selected passes. Current evidence and remaining exception regions live in
+[the controller contract](docs/RATE_CONTROL_CONTRACT.md). This API goes through
+its assigned review PR; no release is authorized by this change.

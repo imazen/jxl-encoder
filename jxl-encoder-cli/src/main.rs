@@ -787,6 +787,14 @@ fn main() {
         quality_to_distance(args.quality)
     };
 
+    #[cfg(feature = "rate-control")]
+    if args.rate_control && distance <= 0.0 {
+        eprintln!(
+            "Error: --rate-control requires lossy single-frame pixel input; lossless encoding is unsupported"
+        );
+        std::process::exit(1);
+    }
+
     if !args.quiet {
         println!("Input:    {}", args.input.display());
         println!("Output:   {}", args.output.display());
@@ -892,6 +900,13 @@ fn main() {
         // PreserveJxl lossy path: explicit `--jpeg-coarsen <scale>` on a JPEG
         // input. Routes through the coefficient-domain coarsener (no JBRD).
         if let Some(scale) = args.jpeg_coarsen {
+            #[cfg(feature = "rate-control")]
+            if args.rate_control {
+                eprintln!(
+                    "Error: --rate-control supports single-frame pixel input; JPEG coefficient coarsening is unsupported"
+                );
+                std::process::exit(1);
+            }
             let jpeg_bytes = match std::fs::read(&args.input) {
                 Ok(b) => b,
                 Err(e) => {
@@ -955,6 +970,13 @@ fn main() {
 
         let want_jpeg_transcode = args.lossless_jpeg || (is_jpeg_ext && !args.no_lossless_jpeg);
         if want_jpeg_transcode {
+            #[cfg(feature = "rate-control")]
+            if args.rate_control {
+                eprintln!(
+                    "Error: --rate-control supports single-frame pixel input; JPEG transcoding is unsupported"
+                );
+                std::process::exit(1);
+            }
             let jpeg_bytes = match std::fs::read(&args.input) {
                 Ok(b) => b,
                 Err(e) => {
@@ -1038,6 +1060,13 @@ fn main() {
     if !is_pnm {
         match read_apng(&args.input) {
             Ok(Some(apng)) => {
+                #[cfg(feature = "rate-control")]
+                if args.rate_control {
+                    eprintln!(
+                        "Error: --rate-control supports single-frame pixel input; animated PNG is unsupported"
+                    );
+                    std::process::exit(1);
+                }
                 if !args.quiet {
                     println!(
                         "APNG:     {}x{} {:?}, {} frames, {} loops",
@@ -1626,103 +1655,41 @@ fn main() {
             eprintln!("Rebuild with: cargo build --features zensim-loop");
         }
 
-        // Rate control path (uses internal VarDctEncoder directly)
+        // Rate control shares request ingestion, policy and container handling.
         #[cfg(feature = "rate-control")]
         if args.rate_control {
-            // Rate control needs the internal VarDctEncoder for multi-pass
-            use jxl_encoder::__pre_quantized::VarDctEncoder;
-            let mut tiny = VarDctEncoder::new(distance);
-            tiny.effort = args.effort;
-            // Rate control doesn't go through LossyConfig, so apply effort defaults manually
-            tiny.use_ans = if args.no_ans { false } else { args.effort >= 4 };
-            tiny.optimize_codes = args.effort >= 2;
-            tiny.custom_orders = args.effort >= 3;
-            tiny.ac_strategy_enabled = args.effort >= 3;
-            tiny.enable_noise = args.noise || args.denoise;
-            tiny.enable_denoise = args.denoise;
-            // libjxl gates gaborish at distance > 0.5 (enc_frame.cc:281).
-            // Mirror the LossyConfig::encode wiring at api.rs:3842 so the
-            // rate-control CLI path produces the same gaborish state as
-            // the default API path for the same distance.
-            tiny.enable_gaborish = if args.no_gaborish {
-                false
-            } else {
-                args.effort >= 3 && distance > 0.5
-            };
-            // EX-J13: adaptive gaborish is silently gated to be a subset
-            // of gaborish (no-op when the fixed inverse is disabled).
-            tiny.enable_adaptive_gaborish = tiny.enable_gaborish && args.adaptive_gaborish;
-            // libjxl `--epf -1..3` override (enc_frame.cc:284-285).
-            tiny.epf_level_override = if args.epf < 0 {
-                None
-            } else {
-                Some(args.epf.clamp(0, 3) as u32)
-            };
-            tiny.error_diffusion = args.error_diffusion;
-            tiny.pixel_domain_loss = if args.no_pixel_domain_loss {
-                false
-            } else {
-                args.effort >= 5
-            };
-            tiny.enable_lz77 = if args.lz77 {
-                true
-            } else if args.no_lz77 {
-                false
-            } else {
-                args.effort >= 9
-            };
-            if let Some(method) = lz77_method {
-                tiny.lz77_method = method;
-            }
-            if args.dct8_only {
-                tiny.force_strategy = Some(0);
-            }
-            if let Some(s) = args.force_strategy {
-                tiny.force_strategy = Some(s);
-            }
-            if let Some(max_size) = args.max_strategy_size {
-                if max_size < 16 {
-                    tiny.profile.try_dct16 = false;
-                }
-                if max_size < 32 {
-                    tiny.profile.try_dct32 = false;
-                }
-                if max_size < 64 {
-                    tiny.profile.try_dct64 = false;
-                }
-            }
-            if args.progressive {
-                tiny.progressive = ProgressiveMode::DcVlfLfAc;
-            }
-            if args.qprogressive {
-                tiny.progressive = ProgressiveMode::QuantizedAcFullAc;
-            }
-            if args.lf_frame {
-                tiny.use_lf_frame = true;
-            }
-
             if args.streaming_input && !args.quiet {
-                eprintln!("Warning: --streaming-input ignored — --rate-control encodes in memory");
+                eprintln!("Warning: --streaming-input is ignored with --rate-control");
             }
-            let linear_rgb = srgb_u8_to_linear_f32(&data);
-            let rc_config = jxl_encoder::vardct::RateControlConfig {
+            let mut req = cfg.encode_request(width, height, layout);
+            if let Some(ref meta) = metadata {
+                req = req.with_metadata(meta);
+            }
+            // cICP outranks gAMA (issue #71); the lossy PQ/HLG scale bug
+            // is fixed by the libjxl-parity intensity_target dispatch
+            // (issue #73 — SetIntensityTarget: PQ 10,000 / HLG 1,000 nits).
+            if let Some(ce) = cicp.and_then(|c| color_encoding_from_cicp(c, layout.is_grayscale()))
+            {
+                req = req.with_color_encoding(ce);
+            } else if let Some(gamma) = source_gamma {
+                req = req.with_source_gamma(gamma);
+            }
+            if let Some(it) = args.intensity_target {
+                req = req.with_intensity_target(it);
+            }
+            if let Some(q) = args.brotli_effort {
+                req = req.with_brotli_metadata(q);
+            }
+            if args.premultiply != 0 && layout.has_alpha() {
+                req = req.with_premultiplied_alpha_mode(PremultipliedAlphaMode::from_i8(
+                    args.premultiply,
+                ));
+            }
+            req = req.with_rate_control(jxl_encoder::vardct::RateControlConfig {
                 max_iterations: args.rc_iterations,
                 ..Default::default()
-            };
-            let result = tiny.encode_with_rate_control_config(
-                width as usize,
-                height as usize,
-                &linear_rgb,
-                &rc_config,
-            );
-            if !args.quiet
-                && let Ok((_, iters)) = &result
-            {
-                println!("Rate control converged in {} iterations", iters);
-            }
-            result
-                .map(|(data, _)| EncodeOutput::Bytes(data))
-                .map_err(|e| jxl_encoder::at(jxl_encoder::EncodeError::from(e)))
+            });
+            req.encode(&data).map(EncodeOutput::Bytes)
         } else if args.streaming_input
             && !args.progressive
             && !args.qprogressive
@@ -2355,30 +2322,6 @@ fn quality_to_distance(quality: u32) -> f32 {
     } else {
         2.0 + (70 - quality) as f32 / 10.0
     }
-}
-
-/// sRGB to linear conversion (exact IEC 61966-2-1 transfer function).
-#[cfg(feature = "rate-control")]
-fn srgb_to_linear(c: u8) -> f32 {
-    let c = c as f32 / 255.0;
-    if c <= 0.04045 {
-        c / 12.92
-    } else {
-        ((c + 0.055) / 1.055).powf(2.4)
-    }
-}
-
-#[cfg(feature = "rate-control")]
-fn srgb_u8_to_linear_f32(data: &[u8]) -> Vec<f32> {
-    data.chunks(3)
-        .flat_map(|px| {
-            [
-                srgb_to_linear(px[0]),
-                srgb_to_linear(px[1]),
-                srgb_to_linear(px[2]),
-            ]
-        })
-        .collect()
 }
 
 #[allow(clippy::type_complexity)]
