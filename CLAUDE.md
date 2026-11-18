@@ -6988,3 +6988,15 @@ small/prepared, library, unchanged lock/drift, focused lint, no-default and
 format gates pass. [Exact evidence and limits](docs/FRAME_LEVEL_CONTRACT.md).
 The separately approved optional CLI request/controller repair remains open;
 no new public API is included in this change.
+
+
+### 2026-11-19: isolated decoder source pins and controller integration
+
+The current 0.8 primary oracle selects the Imazen released-0.8 fork at
+`3d48825c`; the native decoder sibling selects `74eba39b`. HLG near-unity and
+global grayscale squeeze repairs retain separate native component and exact
+stream evidence. The optional controller uses the current 0.4 decoder alias
+and permits Level 10 format precision; request resource caps remain separate.
+Released 0.3 compatibility tests remain pinned independently. Integration
+qualification is recorded in [RATE_CONTROL_CONTRACT.md](docs/RATE_CONTROL_CONTRACT.md);
+the approved public request/CLI change remains a separate PR requirement.

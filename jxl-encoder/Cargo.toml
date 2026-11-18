@@ -55,11 +55,11 @@ brotli = { version = "9.0.0", default-features = false, features = ["std"], opti
 # so callers that don't ship YCbCr paths don't pull the extra binary.
 zenyuv = { version = "0.1.3", default-features = false, optional = true }
 # Optional dependencies for butteraugli-loop and rate-control features.
-# rate-control decodes via zenjxl-decoder (in-org, buttloop-tunable) — its
-# F32 output path yields linear sRGB directly. jxl-oxide remains a DEV
-# dependency only (secondary roundtrip-validation decoder; jxl-rs + djxl
-# stay primary per CLAUDE.md).
-zenjxl-decoder = { version = "0.3.8", optional = true }
+# Rate control uses the pinned current decoder through the existing alias.
+# F32 chooses storage; the controller explicitly requests linear transfer and
+# converts parametric primaries into its linear-sRGB measurement domain.
+# The released decoder remains a separate development compatibility control.
+zensim-decoder = { package = "zenjxl-decoder", version = "0.4.0", optional = true }
 # 0.9.4 minimum is REAL: `ButteraugliReference::estimated_reference_bytes`
 # (the #93 buttloop budget guard, vardct/perceptual_loop.rs) ships in 0.9.4;
 # 0.9.3 fails to compile (verified 2026-08-29, #76 step 7 probe).
@@ -171,7 +171,7 @@ debug-w44-65 = []
 debug-rect = []
 # Iterative rate control for improved distance targeting.
 # Requires zenjxl-decoder for decoding and butteraugli for quality measurement.
-rate-control = ["dep:zenjxl-decoder", "dep:butteraugli", "dep:imgref", "dep:rgb"]
+rate-control = ["dep:zensim-decoder", "dep:butteraugli", "dep:imgref", "dep:rgb"]
 # Butteraugli quantization loop: iteratively refines quant field using butteraugli distmap.
 butteraugli-loop = ["dep:butteraugli", "dep:imgref", "dep:rgb"]
 # W44-phase3-B1: GPU butteraugli backend for the buttloop. Implies
@@ -428,7 +428,7 @@ image = "0.25.10"
 # jxl-rs (github.com/lilith/jxl-rs) is the PRIMARY decoder for roundtrip tests
 jxl = "0.4.0"
 # ICC regressions include 4 MB profiles, beyond the old decoder's fixed cap.
-jxl-current = { package = "jxl", version = "0.8.0" }
+jxl-current = { package = "jxl", version = "0.8.0", git = "https://github.com/imazen/jxl-rs-v08", rev = "3d48825cd10d0a5c325a683136723198fb69859a" }
 jxl_transforms = "0.4.0"
 # jxl-oxide is secondary — always test jxl-rs first
 jxl-oxide = "0.12.6"
@@ -455,7 +455,7 @@ zenjpeg = { version = "0.9.0", default-features = false, features = ["parallel"]
 zenjxl-decoder = { version = "0.3.8", features = ["jpeg"] }
 # Current decoder for canonical delivered RGB8 and JPEG reconstruction.
 # The jpeg feature includes the standalone restart writer fix (#120).
-zensim-decoder = { package = "zenjxl-decoder", path = "../../zenjxl-decoder/zenjxl-decoder", features = ["jpeg"] }
+zensim-decoder = { package = "zenjxl-decoder", version = "0.4.0", features = ["jpeg"] }
 # Microbench harness for the chunk-1 SplitTreeSamples primitive (issue #40).
 # zenbench is the workspace-standard benchmarking tool — interleaved sampling
 # and paired statistics give cleaner signal than criterion's isolated rounds.

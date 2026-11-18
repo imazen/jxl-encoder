@@ -279,13 +279,17 @@ fn decode_jxl_to_linear(
     data: &[u8],
     source_encoding: Option<&crate::ColorEncoding>,
 ) -> Option<Vec<f32>> {
-    use zenjxl_decoder::api::{
+    use zensim_decoder::api::{
         JxlColorEncoding, JxlColorProfile, JxlDataFormat, JxlDecoder, JxlDecoderOptions,
         JxlOutputBuffer, JxlPixelFormat, ProcessingResult, states,
     };
 
     let mut input: &[u8] = data;
-    let decoder = JxlDecoder::<states::Initialized>::new(JxlDecoderOptions::default());
+    // Encoded controller inputs can use Level 10 sample precision. This
+    // selects the decoder's format limit; request resource caps stay separate.
+    let mut options = JxlDecoderOptions::default();
+    options.limits.max_codestream_level = zensim_decoder::api::JxlCodestreamLevel::Level10;
+    let decoder = JxlDecoder::<states::Initialized>::new(options);
     let mut dwi = match decoder.process(&mut input) {
         Ok(ProcessingResult::Complete { result }) => result,
         _ => return None,

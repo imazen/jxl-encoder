@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+- Pin isolated current-decoder HLG/global-squeeze repairs; use the current
+  native decoder alias for optional controller measurements with Level 10
+  format precision. Preserve the released compatibility oracle.
+
 - Correct optional rate-control quantizer feedback and keep above-target updates
   moving toward finer AC steps through damping and integer rounding.
 

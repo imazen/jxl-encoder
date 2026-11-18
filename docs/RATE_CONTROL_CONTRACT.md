@@ -56,7 +56,7 @@ execution fractions do not prove input-space coverage or a memory bound.
 
 Prepared/CLI LF, attached dictionaries, supplied DC width and the private
 request/CLI adapter retain their separate qualification/landing requirements.
-No new public request setter is approved or exposed. Retained metric sources:
+The owner approved a request setter and CLI repair through a PR assigned to lilith; that public change remains separately qualified and is not exposed here. Retained metric sources:
 `rate-control-metric-fix-selected-v6`; runtime/fault/union records:
 `metric-map-final-intermission5` and `metric-map-intermission9-regions-v1`.
 
@@ -129,3 +129,33 @@ perceptual improvement. Its final-iteration selection, alternate decoder
 failure fallback and arbitrary source/profile combinations retain separate
 coverage limits. The private request adapter and CLI bypass remain separate
 work; no public request setter is exposed by this repair.
+
+
+## November 19: pinned decoder integration
+
+The primary current-version oracle selects the released 0.8 source lineage
+plus the isolated Imazen HLG and global-squeeze repairs, revision
+`3d48825cd10d0a5c325a683136723198fb69859a`. The frozen native decoder sibling
+selects `74eba39b05e8fae933807f035f56c1a6ece2f8ce`. The optional controller
+uses that current 0.4 decoder through the existing `zensim-decoder` alias;
+the released 0.3 development compatibility oracle remains separate. Both
+normal and development uses share registry coordinates resolved by the
+workspace patch, avoiding conflicting canonical sources.
+
+The controller explicitly selects embedded-linear output and admits Level 10
+format precision for its own prepared streams. This decoder format limit is
+separate from request resource admission. Its color-domain and feedback
+controls compare complete native and primary output. The HLG original-signal
+repair is independently exercised by the decoder component and stream controls;
+that signal output is not the controller's requested linear output. Changing
+the pin alone is not evidence of a former controller measurement error.
+
+The isolated `decoder-pins-current-isolated-v1` qualification passes native/primary
+color and feedback controls, default/minimal rate-control runtime controls,
+unchanged normal/strict byte locks and divergence checks, strict focused Clippy,
+minimal compilation and scoped formatting. The wrapper returns zero in 283 seconds
+with peak RSS 1.83 GiB and minimum available memory 17,207 MiB. This is a build/test
+resource observation, not encoder latency. Runtime profile SHA256 is
+`f00a42a54feb8451165adb25dcc57e2a59d07c3a6b4619e73a7e55f0c8bd5016`.
+No byte-lock migration, public signature, registry gate or default encoding
+policy changes here. The public request/CLI API is still separately qualified.
