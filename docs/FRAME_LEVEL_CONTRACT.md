@@ -287,3 +287,19 @@ whole-current-source qualification. Rebuild current main plus only the private
 level repair and replay the large upsampled, lossless-patch and LF families
 before final acceptance. Frozen streams, binaries and incomplete predecessors
 remain retained separately; no earlier result is relabeled as a current pass.
+
+
+## November 19: remaining CLI rate-control caller
+
+The CLI rate-control branch constructs VarDctEncoder directly and writes the
+returned prepared-stream bytes as its final file. It accepts the LF-frame flag
+and can use the prepared patch producer; it does not use the request wrapper
+that classifies actual emitted frame records. Raw/prepared library methods leave
+container-level signaling to their callers, so the CLI needs its own gate in
+this audit. Source inspection alone does not establish an emitted-level defect.
+
+A new caller-selected large probe prepares small and 16384-square RGB PNM
+controls, LF on/off, records actual frame geometry and the modular-width
+promise, then completely renders primary/native samples before reporting a
+level mismatch. It has not executed yet. The frozen older auxiliary binary is
+not substituted for this caller or for a current-source qualification.
