@@ -3384,6 +3384,11 @@ name = "w45_p21_perf_ab"
 path = "examples/w45_p21_perf_ab.rs"
 
 [[example]]
+name = "prepared_frame_fixture_setup"
+path = "examples/prepared_frame_fixture_setup.rs"
+required-features = ["std", "corpus-tests"]
+
+[[example]]
 name = "jpeg_fixture_setup"
 path = "examples/jpeg_fixture_setup.rs"
 required-features = ["std", "jpeg-reencoding"]

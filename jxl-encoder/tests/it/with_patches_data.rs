@@ -172,7 +172,7 @@ fn linear_rgb_to_xyb_padded(
 /// — the test asserts this so a content regression that breaks our
 /// detector trigger is caught immediately (instead of silently skipping
 /// the case-1 path).
-fn build_precomputed(
+pub(super) fn build_precomputed(
     width: usize,
     height: usize,
     linear_rgb: &[f32],
