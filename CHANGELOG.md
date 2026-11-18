@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+- Preserve grayscale JPEG SOF sampling factors during transcoding, including
+  bare codestreams, recompression and embedded gain maps; restore exact JPEG
+  reconstruction through API and CLI entry points (`9efaa904`).
+
 - Require matching CMYK ICC and Black-channel metadata. Convert integer CMY/K
   source samples through the profile for lossy encoding; preserve independent
   Black precision and animation identity deltas. Lossless raw profile storage
