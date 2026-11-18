@@ -328,11 +328,9 @@ fn encode_jpeg_to_jxl_inner(
     }
 
     // Compute per-channel upsampling modes from sampling factors
-    let jpeg_upsampling = if num_components == 3 {
-        compute_jpeg_upsampling(jpeg, &jpeg_c_map)
-    } else {
-        [0; 3] // grayscale: no subsampling
-    };
+    // Grayscale has no relative subsampling, but its absolute SOF factors
+    // still travel in all three modes for byte-exact JPEG reconstruction.
+    let jpeg_upsampling = compute_jpeg_upsampling(jpeg, &jpeg_c_map);
 
     // Compute per-channel actual downsampling shifts.
     // JXL stores the sampling factor (as log2) in jpeg_upsampling, not the shift.

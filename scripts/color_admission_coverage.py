@@ -44,7 +44,7 @@ for index, archive in enumerate(a.archives):
     identities.append(dict(archive=str(archive), exit_code=0,
                            binary_sha256=identity['binary_sha256'], profile_sha256=identity['profile_sha256']))
 rows = []
-reference_root = a.reference_root or Path(__file__).resolve().parent.parent
+reference_root = (a.reference_root or Path(__file__).resolve().parent.parent).resolve()
 
 def body_span(lines, name, occurrence):
     starts = [i for i, line in enumerate(lines)

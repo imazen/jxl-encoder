@@ -27,10 +27,44 @@ expanded attempt stopped at native factor-four refusal. Neither supplies a
 completed supported-grid verdict. Factors above two already have an explicit
 encoder refusal and remain outside the supported preservation grid.
 
-A shared correction now computes grayscale's absolute sampling modes through
-the existing channel map. Its after, offered-policy, native reconstruction,
-exact-region, fault, unchanged-baseline and lint gates remain unrun. No C6
-repair is landed yet.
+The shared correction computes grayscale's absolute sampling modes through
+its existing channel map. It retains all relative channel shifts. Independent
+complete-envelope/TOC parsing checks the three serialized factors; both Rust
+and native v0.12 reconstruct every selected original exactly and fully render
+against the pinned reference. The restored original writer's retained failing
+streams provide the fault control for this one-call correction.
+
+| Caller | Selected execution |
+|---|---|
+| Parsed codestream/container | Explicit effort and default-effort wrappers |
+| Raw codestream/container | Ordinary and cancellable entry points; all offered policies |
+| JPEG recompression | Explicit, automatic and planar methods; exact floor and actually selected coarsened candidates |
+| Embedded JPEG gain map | Grayscale secondary factors; exact gain codestream and complete original JPEG tail reconstruction |
+| CLI | Automatic JPEG input and forced input with a non-JPEG extension; every strategy spelling/alias, experimental and implicit default |
+| Synthetic optional subsampling | RGB8-only admission; cannot construct a one-component grayscale coefficient image |
+
+Ordinary controls include 16x16, 64x32 and multigroup 272x144 images,
+1x1/2x1/1x2/2x2 factors, and strict efforts 1/3/7/8/9/11 around entropy-policy
+boundaries. Factors 3 and 4 retain clean raw/parsed refusals. Recompression
+checks the actual winning candidates, native/primary sample agreement and
+independent wire factors; it does not claim a recompression quality result.
+
+Checksum-bound LLVM evidence in `c6-last-regions/regions.json` covers 25/25
+regions in `compute_jpeg_upsampling` and 4/4 regions on the corrected call.
+Both complete production bodies match the earlier retained instrumented
+source byte for byte; the source hashes are recorded in that report. This is
+coverage of the sampling correction, not the complete JPEG encoder or every
+input/option combination. The newer caller tests have separate executable
+identities and are not silently attributed to the older coverage profile.
+
+The current pinned-graph library, unchanged normal/strict/divergence locks,
+minimal JPEG build and focused strict lint pass in
+`c6-grayscale-current-final.log` (144 seconds; build/test peak RSS 1.93 GiB,
+minimum available 18,634 MiB). Existing ignores and expected bytes remain
+unchanged. Additional caller/lint/region checks pass in
+`c6-grayscale-all-callers.log` (23 seconds; peak RSS 0.36 GiB, minimum
+available 20,140 MiB). Final fixture reach assertions have their own replay.
+Remote CI is a separate verdict.
 
 ## Metadata and conditional checks
 

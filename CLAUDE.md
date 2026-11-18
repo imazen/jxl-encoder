@@ -6640,3 +6640,14 @@ domain discrepancy (linear red 0.0585693233 versus normative 0.1157572791);
 see [the decoder finding](docs/DECODER_FINDINGS.md). This limits the decoder
 oracle, not the stored CMYK source/Black tests. Native CI remains a separate
 verdict. [Coverage and limits](docs/CMYK_SOURCE_CONTRACT.md).
+
+### RESOLVED November 18: grayscale JPEG SOF sampling preservation
+
+The shared JPEG writer now retains absolute grayscale sampling factors. Before
+streams reconstruct 0x11 instead of the input 0x22/0x21/0x12; pixels remain
+valid. Raw, cancellable, parsed, bare, recompression, embedded gain-map and
+CLI callers now pass independent fields plus complete rendering/reconstruction
+controls. Selected helper/call coverage is 25/25 and 4/4 regions, with exact
+body checks against retained instrumentation; this is not whole-JPEG coverage.
+Library, unchanged locks, minimal JPEG and strict focused lint pass. Existing
+expectations/ignores remain unchanged. [Evidence and limits](docs/JPEG_RECONSTRUCTION_CONTRACT.md).
