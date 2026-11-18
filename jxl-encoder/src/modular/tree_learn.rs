@@ -1827,7 +1827,7 @@ pub(crate) fn exact_bucketize_plan(
                                         [
                                             v.wrapping_abs(),
                                             v,
-                                            v.wrapping_sub(ref_predicted).wrapping_abs(),
+                                            (i64::from(v) - i64::from(ref_predicted)).abs() as i32,
                                             v.wrapping_sub(ref_predicted),
                                         ]
                                     }
@@ -3653,7 +3653,8 @@ fn gather_channel_samples(
                         let off = r * 4;
                         local_ref_props[off] = v.wrapping_abs();
                         local_ref_props[off + 1] = v;
-                        local_ref_props[off + 2] = v.wrapping_sub(ref_predicted).wrapping_abs();
+                        local_ref_props[off + 2] =
+                            (i64::from(v) - i64::from(ref_predicted)).abs() as i32;
                         local_ref_props[off + 3] = v.wrapping_sub(ref_predicted);
                     }
                     // Slots beyond ref_channel_indices.len() stay 0 by
@@ -12364,7 +12365,8 @@ pub(crate) fn collect_residuals_with_tree_offset_with_budget_wp(
                         if base + 3 < prop_stride {
                             row_props[base] = v.wrapping_abs();
                             row_props[base + 1] = v;
-                            row_props[base + 2] = v.wrapping_sub(ref_predicted).wrapping_abs();
+                            row_props[base + 2] =
+                                (i64::from(v) - i64::from(ref_predicted)).abs() as i32;
                             row_props[base + 3] = v.wrapping_sub(ref_predicted);
                         }
                     }

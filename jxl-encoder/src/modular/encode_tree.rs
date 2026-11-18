@@ -874,5 +874,7 @@ pub fn write_tree(writer: &mut BitWriter, tree: &super::tree::Tree) -> Result<()
         }
     }
 
+    #[cfg(all(test, feature = "__expert", feature = "std"))]
+    super::reference_property_contract::record(tree);
     Ok(())
 }

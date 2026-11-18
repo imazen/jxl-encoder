@@ -6711,6 +6711,18 @@ existing expectations unchanged. Remote CI is separate.
 [Evidence, portable-source correction and limits](docs/JPEG_COLOR_SIGNAL_CONTRACT.md).
 
 
+### RESOLVED issue 144 E4: selected wide reference properties
+
+An actual emitted node-1/property-18 threshold distinguishes narrow subtraction
+before absolute value from wide subtraction/absolute followed by final property
+narrowing. The original finite-f32 stream passes crates.io jxl 0.8's shared
+arithmetic but fails unmodified v0.12. All three encoder gather/emission sites
+now use the wide operation already present in the pinned jxl-rs-derived decoder.
+Exact source-word recovery is required in that decoder and native v0.12.
+The affected caller inventory, selected tree witness, region gaps and retained
+before/mutation controls are in docs/CONDITIONAL_MODULAR_CONTRACT.md. No gate,
+public API, existing byte expectation or scientific bound changes.
+
 ### RESOLVED issue 144 E6: selected delta-palette predictor declaration
 
 A recorded winning implicit delta at (2,1) distinguishes Gradient 132 from

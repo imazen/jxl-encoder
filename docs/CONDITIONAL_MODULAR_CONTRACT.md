@@ -4,6 +4,10 @@ Issue 144 E4 and E6 remain conditional. Native public controls below validate
 inputs and oracle interpretation; they do not observe a winning encoder tree
 or palette delta.
 
+## Initial controls (historical)
+
+These initial observations precede the repaired qualification below.
+
 ## E4 reference-property arithmetic
 
 `reference-property-native-controls` creates 64×32 linear RGB binary32 samples.
@@ -144,3 +148,61 @@ delta-palette-cli-evidence and delta-palette-final-regions. Each recipe takes
 an explicitly pinned source manifest or retained object/profile inputs; run
 long work through the configured resource wrapper. CLI child profiles remain
 separate from their integration driver's profile.
+
+
+## E4 repair: wide reference residual absolute values
+
+The actual selected node-1/property-18 witness at (2,0) gives 1073741824
+when subtraction narrows before absolute value, versus -1073741824 when the
+wide absolute value is finally converted to the signed decision property.
+The original stream is accepted by crates.io jxl 0.8 but rejected by unmodified
+v0.12. The pinned jxl-rs-derived decoder already computes the wide operation.
+The encoder now uses i64 subtraction and absolute value at all three sites:
+exact-bucket prewalk, raw sample gathering and residual emission. There is no
+new strategy gate, registry value, threshold or public API.
+
+The independent acceptance oracle requires every original finite binary32
+word through that pinned decoder and v0.12, rather than decoder voting.
+The emitted-tree observer records actual successful writes across workers.
+Only the single-tree 64×32 case claims the mapped distinguishing witness;
+local/multiple-tree checks require complete source recovery without guessing
+which local node corresponds to a whole-image coordinate.
+
+| Caller or condition | Evidence and boundary |
+| --- | --- |
+| Single-group learned stream | Four frozen source seeds, explicit fixed-tree control, selected threshold and exact primary/native words. |
+| Multi-group global, local and Hybrid trees | 64×32 and 259×17, 17 named/Custom/mode bindings, request, strided request and seven-row input streaming; actual tree writes and complete exact words. |
+| Effort and relevant Custom controls | Efforts 6–11, Reference/Experimental, all four tree-self-repair/large-bucket permission pairs; no property 18 below effort 9. Large-image bucket adoption is not claimed at these sizes; explicit expert settings retain precedence. |
+| Floating layout alpha and public extras | RGBA and gray-alpha binary32 plus RGB binary32 with public u16 depth; request, strided and writer buffers. Native public API requests original color fields and separate float extra buffers, avoiding PNG quantization. |
+| Requested squeeze | Wide samples fail the existing squeeze safety gate and remain exact with its permission both off and on. This does not claim wide squeeze execution. |
+| Huffman | The production dispatch requires ANS for learned reference trees. The explicit Huffman control checks exact complete samples and no emitted property 18. |
+| Lossless animation | Integer-only public surface rejects these float layouts before a tree is emitted; the rejection is tested. Integer sample ranges cannot create this reference residual overflow. |
+| CLI, JPEG, VarDCT auxiliaries | CLI input is PNG/APNG 8/16-bit, JPEG coefficients use their separate coder, and the lossy modular learner constructs zero reference-channel properties. These routes cannot select this distinguishing wide-float property. |
+
+All three changed expression windows execute 7/7 mapped regions in actual
+sectioned production controls, including the exact prewalk that the first
+probe missed. These are code-region observations, not proof of all trees,
+resource-error exits or every possible input. Restoring the three old
+expressions makes the selected runtime regression fail and restores the exact
+source afterwards. Existing byte expectations and scientific bounds remain
+unchanged. The separate decoder reconstruction model is outside this repair.
+
+Retained evidence includes reference-property-before-witness,
+reference-property-all-callers-v2, reference-property-extra,
+reference-property-final-expanded, reference-property-expanded-regions and
+conditional-modular-restored-faults. Reproduce the committed source gates with
+`just reference-property-isolated-check <pinned-manifest>`; the test target's
+explicit CI invocation supplies the verified v0.12 tools and buffer oracle.
+
+
+The final base-plus-E4 source qualification passes independently of the model
+candidate: all selected source/extra/caller controls, library baseline,
+unchanged hash/strict/drift expectations, no-default-features std runtime,
+doctests, no-std build, strict workspace/focused lint and formatting.
+Floating RGBA/gray-alpha streaming is included; the public depth route has no
+streaming extra-channel setter and uses request/writer entries. The wrapper
+restores every owned overlay byte-for-byte. Evidence:
+reference-property-isolated-final.log, rc0/275s, peak RSS1.96GiB,
+minimum available18114MiB. The final source inventory binds every tracked
+production file to main1e759639 plus this selected repair. Existing ignore
+annotations and established expected bytes are unchanged.

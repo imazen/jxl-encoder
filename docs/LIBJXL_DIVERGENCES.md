@@ -2886,3 +2886,10 @@ Remaining layout inventory is tracked separately in the progressive contract.
 | Site | Encoder | libjxl v0.12 / independent control | Status |
 | --- | --- | --- | --- |
 | `modular::palette::apply_lossy_palette_with_budget` | Declare Gradient (5) when a delta wins, Zero otherwise, matching the actual quantization predictor. | Native palette prediction follows its selected predictor (v0.12 production selects Average4); our quantizer uses Gradient. A declaration-only 4-to-5 control preserves our full payload and makes both complete decoder outputs equal the observed quantized values. | Reproduced at 32×32 and 259×17, including an actual distinguishing winning implicit delta. Unconditional correction; no registry gate or policy-value change. Integer API/CLI, entropy, alpha and patched-writer controls pass; see CONDITIONAL_MODULAR_CONTRACT.md. |
+
+
+### Issue 144 E4 selected reference-property arithmetic
+
+| Site | Encoder | Pinned reference / normative property | Status |
+| --- | --- | --- | --- |
+| `modular::tree_learn` previous-channel residual absolute properties, three gather/emission sites | Widen subtraction to i64, then take absolute value, then narrow the decision property to i32. | Part 1 H.4.1 property interpretation; unmodified v0.12 accepts the finite-f32 source and refuses the old selected-tree stream. The pinned jxl-rs-derived decoder already uses wide subtraction/absolute. | Actual node-1/property-18 threshold at (2,0) distinguishes 1073741824 from -1073741824. Repaired without a gate or registry default change; exact primary/native source recovery, affected callers and limits are in CONDITIONAL_MODULAR_CONTRACT.md. |

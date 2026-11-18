@@ -23,6 +23,20 @@ Status values: `triage` (not yet known whether it is the decoder), `confirmed`
 
 ## Upstream jxl-rs (crates.io `jxl`)
 
+### Selected wide reference residual property, 2026-11-18
+
+Crates.io jxl 0.8 reproduces the source of the old encoder's selected property-18
+stream while native v0.12 rejects it. After the encoder applies wide subtraction
+and absolute value before converting the property to i32, native v0.12 and the
+pinned jxl-rs-derived decoder recover every finite source word. That pinned
+fork already computes the wide operation; crates.io jxl 0.8 instead reports
+AnsChecksumMismatch on the repaired strict control. The actual emitted threshold
+at pixel (2,0) distinguishes property values 1073741824 and -1073741824.
+This is a shared arithmetic defect, not a deciding decoder vote. The complete
+source identity, actual-tree witness and reproduction are in
+[the conditional modular contract](CONDITIONAL_MODULAR_CONTRACT.md).
+Status: confirmed locally; not reported outside the Imazen/Lilith repositories.
+
 ### One-pixel Multiply, 2026-11-17
 
 The pinned 0.4.3 API returns zero for a 1x1 RGB8 animation multiplying 64/255
