@@ -209,7 +209,21 @@ The failed test executable is
 streams, source and observed table are retained in `color-optional-icc-before`.
 The current optional writer directly codes the nonlinear samples and replaces
 their description with ICC; it does not perform the required source-to-output
-conversion. The source/ICC conversion-or-refusal contract is pending owner
-clarification. The pinned zenpixels converter already offers a CMS backend;
+conversion. The owner authorized conversion when available and a typed error
+otherwise on November 18. The pinned zenpixels converter offers a CMS backend;
 no sibling or CMS dependency has been modified. H5 remains open for this
 caller, and its failing regression has not been included in the H4 fix.
+
+## Authorized remaining color contracts — November 18
+
+The owner selected source-to-ICC conversion when available, with a typed error
+when the requested conversion cannot be built. This applies to the optional
+subsampled paths above; raw ICC storage and prediction remain permissive.
+Implementation and the expanded entry/mode matrix remain outstanding.
+
+For H10, the owner selected required CMYK ICC metadata and profile-based lossy
+CMYK conversion, including migration of the seven legacy unprofiled/inverted
+fixtures and their old model oracle. Exact lossless sample preservation remains
+the contract. CMYK animation Black forwarding and streaming admission belong
+to that repair's affected-entry inventory; this decision alone is no execution
+evidence for those paths.
