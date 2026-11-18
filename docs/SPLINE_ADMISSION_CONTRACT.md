@@ -117,3 +117,15 @@ the complete fixture exactly (`spline-native-object-only.log`). Fixture SHA256:
 Remote CI for this repair remains a separate verdict. No full-input-space or complete spline conformance claim follows from
 this selected matrix. Spline point-count/area limits and general resource
 accounting are separate from this admission repair.
+
+
+Repair `787d9f3c` is verified on origin/main. Reproduce the final source check
+with `just qualify-selected-spline <manifest> <selection.json> <base> <out>`.
+The selector binds every tracked production source to the committed base plus
+the supplied checksum-frozen selection and restores owned overlays afterward.
+Use `just spline-final-evidence` for instrumented public/component captures,
+`just spline-region-evidence` for exact-body windows, and
+`just spline-restored-faults` for runtime regression sensitivity. The native
+fixture generator is `just spline-native-quantization <v0.12-source>
+<v0.12-build> <new-binary>`; output paths must be new. These commands require
+caller-selected verified reference binaries and the owned pinned source graph.

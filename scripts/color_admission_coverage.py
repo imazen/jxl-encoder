@@ -25,6 +25,7 @@ p.add_argument('--jpeg-color', action='store_true')
 p.add_argument('--delta-palette', action='store_true')
 p.add_argument('--reference-property', action='store_true')
 p.add_argument('--resampling-model', action='store_true')
+p.add_argument('--spline-admission', action='store_true')
 p.add_argument('--display-extents', action='store_true')
 p.add_argument('--animation-state', action='store_true')
 p.add_argument('--animation-deltas', action='store_true')
@@ -106,6 +107,23 @@ def observe(relative, name, occurrence=0, window=False):
                      inputs=inputs, excluded_different_body=excluded, covered=sum(v > 0 for v in counts.values()), total=len(counts),
                      missing_relative_regions=[k for k, v in sorted(counts.items()) if not v]))
     print(json.dumps(rows[-1]))
+
+if a.spline_admission:
+    for name in ['rounded_coordinate', 'validate_splines', 'quantized_coefficient', 'from_spline', 'from_splines']:
+        observe('jxl-encoder/src/vardct/splines.rs', name)
+    observe('jxl-encoder/src/vardct/splines.rs', 'encode_splines_section', window=('validate_splines(&data.splines)?;', 7))
+    observe('jxl-encoder/src/vardct/splines.rs', 'spline_passes_trial_encode_gate', window=('let Ok(trial_data) =', 12))
+    observe('jxl-encoder/src/api/validate.rs', 'validate_lossy_manual_splines')
+    observe('jxl-encoder/src/api.rs', 'encode_inner_with_stop', window=('validate_lossy_manual_splines(cfg)?;', 1))
+    observe('jxl-encoder/src/api.rs', 'push_rows_inner', window=('validate_lossy_manual_splines(&self.cfg)?;', 1))
+    observe('jxl-encoder/src/api.rs', 'encode_lossy_sub_via_jpeg_path', window=('if cfg', 10))
+    observe('jxl-encoder/src/api/animate.rs', 'encode_animation_lossy', window=('validate_lossy_manual_splines(cfg)?;', 10))
+    for name, length in [('encode_inner', 3), ('encode_from_precomputed_with_extras', 8), ('encode_from_pre_quantized_ac_with_extras', 8)]:
+        observe('jxl-encoder/src/vardct/encoder.rs', name, window=('if let Some(splines) = &self.splines', length))
+    observe('jxl-encoder/src/vardct/bitstream.rs', 'encode_frame_to_writer', window=('if let Some(splines) = &self.splines', 8))
+    (a.output / 'regions.json').write_text(json.dumps(dict(inputs=identities, functions=rows,
+        note='Exact function bodies and admission windows. Region execution is not input-space coverage.'), indent=2))
+    sys.exit(0)
 
 if a.delta_palette or a.reference_property or a.resampling_model:
     if a.delta_palette:

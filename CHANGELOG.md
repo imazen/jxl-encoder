@@ -4,7 +4,8 @@
 
 - Validate manual spline wire geometry and checked coefficient quantization;
   return errors for unsupported animation, prepared coefficient and optional
-  subsampling payload routes. Empty outer lists remain a legal disable.
+  subsampling payload routes. Empty outer lists remain a legal disable
+  (`787d9f3c`).
 
 - Reflect decoder support in the internal 2× reconstruction model while
   retaining clamped v0.12 encoder search, frozen arithmetic and encoded bytes.

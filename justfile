@@ -3020,3 +3020,100 @@ reconstruction-model-isolated-check manifest:
 
 qualify-selected-reconstruction-model manifest selection base output:
     python3 scripts/qualify_selected_modular_source.py {{quote(manifest)}} {{quote(selection)}} {{quote(base)}} {{quote(output)}} --reconstruction-model
+
+spline-admission-evidence manifest output coverage_env selection:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" "$4" --test-target spline_admission_contract --features __expert,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/api/validate.rs --source jxl-encoder/src/vardct/encoder.rs --source jxl-encoder/src/vardct/splines.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}} {{quote(selection)}}
+
+spline-admission-before-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" strict_ --test-target spline_admission_contract --features __expert,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/api/validate.rs --source jxl-encoder/src/vardct/splines.rs --source jxl-encoder/src/vardct/encoder.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+spline-admission-expanded-before manifest output coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" strict_ --test-target spline_admission_contract --features __expert,__internals,__pre_quantized,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/vardct/bitstream.rs --source jxl-encoder/src/vardct/splines.rs --source jxl-encoder/src/vardct/encoder.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+spline-admission-all-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" spline --test-target spline_admission_contract --features __expert,__internals,__pre_quantized,parallel --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/api/validate.rs --source jxl-encoder/src/vardct/bitstream.rs --source jxl-encoder/src/vardct/splines.rs --source jxl-encoder/src/vardct/encoder.rs --source scripts/libjxl_original_profile.cc' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+spline-original-additional-before manifest base output coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/test_spline_original_admission.py "$2" "$3" "$4"' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(base)}} {{quote(output)}}
+
+spline-admission-expanded-all-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" spline --test-target spline_admission_contract --features __expert,__internals,__pre_quantized,parallel,chroma-subsampling,jpeg-reencoding --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/api/validate.rs --source jxl-encoder/src/vardct/bitstream.rs --source jxl-encoder/src/vardct/splines.rs --source jxl-encoder/src/vardct/encoder.rs --source scripts/libjxl_original_profile.cc' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+spline-components-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" vardct::splines::admission_tests --features __expert,__internals,__pre_quantized,parallel,chroma-subsampling,jpeg-reencoding --source jxl-encoder/src/vardct/splines.rs --source jxl-encoder/src/vardct/spline_admission_tests.rs --source jxl-encoder/src/vardct/spline_quantization_native.tsv --source jxl-encoder/src/vardct/encoder.rs --source jxl-encoder/src/vardct/bitstream.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+spline-final-evidence manifest output coverage_env:
+    mkdir {{quote(output)}}
+    just spline-admission-expanded-all-evidence {{quote(manifest)}} {{quote(output + "/callers")}} {{quote(coverage_env)}}
+    just spline-components-evidence {{quote(manifest)}} {{quote(output + "/components")}} {{quote(coverage_env)}}
+
+spline-restored-faults manifest output coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/test_spline_mutations.py "$2" "$3"' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+spline-native-quantization source build output:
+    python3 scripts/frame_header_oracle.py --component spline_quantization {{quote(source)}} {{quote(build)}} {{quote(output)}}
+
+spline-isolated-check manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel,chroma-subsampling,jpeg-reencoding --test spline_admission_contract --lib -- spline --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,parallel-tree-learning --lib
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --test it -- hash_lock strategy_libjxl_byte_lock divergence_table_drift --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --test it auto_splines -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,__expert,__internals,__pre_quantized --test spline_admission_contract --lib -- spline --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --doc
+    cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --lib
+    cargo clippy --locked --manifest-path {{quote(manifest)}} --workspace --all-targets -- -D warnings
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel,chroma-subsampling,jpeg-reencoding --lib --test spline_admission_contract -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+
+spline-remaining-faults manifest output coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/test_spline_mutations.py "$2" "$3" --case subsampling-refusal --case frame-writer-refusal --case section-shape' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+spline-region-evidence llvm manifest output callers components:
+    python3 scripts/color_admission_coverage.py {{quote(llvm)}} {{quote(output)}} {{quote(callers)}} {{quote(components)}} --spline-admission --reference-root {{quote(parent_directory(manifest))}}
+
+spline-native-and-region-check source build binary llvm manifest output callers components:
+    just spline-native-quantization {{quote(source)}} {{quote(build)}} {{quote(binary)}}
+    just spline-region-evidence {{quote(llvm)}} {{quote(manifest)}} {{quote(output)}} {{quote(callers)}} {{quote(components)}}
+
+qualify-selected-spline manifest selection base output:
+    python3 scripts/qualify_selected_modular_source.py {{quote(manifest)}} {{quote(selection)}} {{quote(base)}} {{quote(output)}} --spline-admission
+
+spline-final-selected-check llvm manifest selection base output callers components:
+    just spline-region-evidence {{quote(llvm)}} {{quote(manifest)}} {{quote(output + "/regions")}} {{quote(callers)}} {{quote(components)}}
+    just qualify-selected-spline {{quote(manifest)}} {{quote(selection)}} {{quote(base)}} {{quote(output + "/source")}}
+
+spline-final-repaired-check llvm manifest selection base output coverage_env callers:
+    mkdir {{quote(output)}}
+    just spline-components-evidence {{quote(manifest)}} {{quote(output + "/components")}} {{quote(coverage_env)}}
+    just spline-region-evidence {{quote(llvm)}} {{quote(manifest)}} {{quote(output + "/regions")}} {{quote(callers)}} {{quote(output + "/components")}}
+    just qualify-selected-spline {{quote(manifest)}} {{quote(selection)}} {{quote(base)}} {{quote(output + "/source")}}
+
+spline-continuation-check manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel,chroma-subsampling,jpeg-reencoding --test spline_admission_contract --lib -- spline --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,__expert,__internals,__pre_quantized --test spline_admission_contract --lib -- spline --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert --doc
+    cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --lib
+    cargo clippy --locked --manifest-path {{quote(manifest)}} --workspace --all-targets -- -D warnings
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel,chroma-subsampling,jpeg-reencoding --lib --test spline_admission_contract -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+
+qualify-selected-spline-continuation manifest selection base output:
+    python3 scripts/qualify_selected_modular_source.py {{quote(manifest)}} {{quote(selection)}} {{quote(base)}} {{quote(output)}} --spline-admission --continue-spline-checks
+
+spline-lint-final-check manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel,chroma-subsampling,jpeg-reencoding --test spline_admission_contract -- manual_spline_admission --test-threads=1
+    cargo clippy --locked --manifest-path {{quote(manifest)}} --workspace --all-targets -- -D warnings
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel,chroma-subsampling,jpeg-reencoding --lib --tests -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+
+qualify-selected-spline-lint-final manifest selection base output:
+    python3 scripts/qualify_selected_modular_source.py {{quote(manifest)}} {{quote(selection)}} {{quote(base)}} {{quote(output)}} --spline-admission --spline-lint-final
+
+spline-and-cms-final-lint manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel,chroma-subsampling,jpeg-reencoding --lib -- finite_source_with_nonfinite_cms_output_is_refused --test-threads=1
+    cargo clippy --locked --manifest-path {{quote(manifest)}} --workspace --all-targets -- -D warnings
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel,chroma-subsampling,jpeg-reencoding --lib --tests -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+
+stage-spline-candidate manifest base output:
+    python3 scripts/stage_spline_admission_candidate.py {{quote(manifest)}} {{quote(base)}} {{quote(output)}}

@@ -5,7 +5,7 @@ from pathlib import Path
 import subprocess
 
 p = argparse.ArgumentParser(description=__doc__)
-p.add_argument("--component", choices=["frame_header", "color_header", "color_profile", "icc_policy", "extra_rect", "squeeze_params", "lf_squeeze_color", "squeeze_gray_geometry", "progressive_brackets", "progressive_ac", "color_matrix", "reference_passes", "animation_alpha", "animation_blend", "color_admission", "custom_xy", "extra_metadata", "cmyk_source", "clock_level", "zero_area"], default="frame_header")
+p.add_argument("--component", choices=["frame_header", "color_header", "color_profile", "icc_policy", "extra_rect", "squeeze_params", "lf_squeeze_color", "squeeze_gray_geometry", "progressive_brackets", "progressive_ac", "color_matrix", "reference_passes", "animation_alpha", "animation_blend", "color_admission", "custom_xy", "extra_metadata", "cmyk_source", "clock_level", "zero_area", "spline_quantization"], default="frame_header")
 p.add_argument("source", type=Path, help="source exported from v0.12.0")
 p.add_argument("build", type=Path, help="existing Ninja build of v0.12.0")
 p.add_argument("output", type=Path, help="new executable path")
@@ -26,6 +26,16 @@ command = ["c++", "-std=c++17", "-O2", "-fno-rtti", "-DNDEBUG",
            "-L" + str(a.build / "lib"), "-Wl,-rpath," + str(a.build / "lib"),
            "-ljxl_cms", "-lhwy", "-lbrotlidec", "-lbrotlicommon", "-lbrotlienc",
            "-pthread", "-o", str(a.output)]
+if a.component == 'spline_quantization':
+    # This test defines the declared encoder friend for read-only observation.
+    # Link only the unmodified Create object, excluding the native encoder's
+    # separate friend definition. Unused decode/render symbols stay unresolved.
+    command = ["c++", "-std=c++17", "-O2", "-fno-rtti", "-DNDEBUG", "-no-pie",
+               "-I" + str(a.source), "-I" + str(a.source / "lib/include"),
+               "-I" + str(a.build / "lib/include"),
+               str(Path(__file__).with_name("spline_quantization_oracle.cc")),
+               str(a.build / "lib/CMakeFiles/jxl_dec-obj.dir/jxl/splines.cc.o"),
+               "-Wl,--unresolved-symbols=ignore-all", "-o", str(a.output)]
 if a.component == 'cmyk_source':
     command += ['-llcms2']
 subprocess.run(command, check=True)
