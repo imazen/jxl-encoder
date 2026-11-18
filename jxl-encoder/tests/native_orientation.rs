@@ -5,8 +5,7 @@ use jxl_encoder::{
     PixelLayout,
 };
 use zensim_decoder::api::{
-    JxlColorType, JxlDataFormat, JxlDecoder, JxlOutputBuffer, JxlPixelFormat,
-    ProcessingResult,
+    JxlColorType, JxlDataFormat, JxlDecoder, JxlOutputBuffer, JxlPixelFormat, ProcessingResult,
 };
 
 #[path = "support/decoder_level.rs"]
