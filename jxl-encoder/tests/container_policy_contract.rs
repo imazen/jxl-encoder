@@ -406,3 +406,131 @@ fn configured_never_keeps_icc_and_drops_only_container_metadata() {
         }
     }
 }
+
+#[test]
+fn configured_policy_reaches_every_pixel_output_wrapper() {
+    use std::io::Write;
+    let out = directory();
+    let mut journal =
+        std::io::BufWriter::new(std::fs::File::create(out.join("wrappers.tsv")).unwrap());
+    macro_rules! exercise {
+        ($config:expr, $pixels:expr, $width:expr, $name:expr, $lossless:expr, $mode:expr) => {{
+            let matrix_config = &$config;
+            let pixels = &$pixels;
+            let expected = matrix_config.encode(pixels, $width, 1, PixelLayout::Rgb8);
+            if let Err(error) = &expected {
+                assert!(error.to_string().contains("container mode Never"));
+            }
+            for route in 0..7 {
+                let prefix = b"existing destination";
+                let mut sink = prefix.to_vec();
+                let result = match route {
+                    0 => matrix_config
+                        .encode_request($width, 1, PixelLayout::Rgb8)
+                        .encode_with_stats(pixels)
+                        .map(|mut r| {
+                            sink.extend(r.take_data().unwrap());
+                        }),
+                    1 => matrix_config
+                        .encode_request($width, 1, PixelLayout::Rgb8)
+                        .encode_into(pixels, &mut sink)
+                        .map(|_| ()),
+                    2 => matrix_config
+                        .encode_request($width, 1, PixelLayout::Rgb8)
+                        .encode_to(pixels, &mut sink)
+                        .map(|_| ()),
+                    _ => {
+                        let mut encoder =
+                            matrix_config.encoder($width, 1, PixelLayout::Rgb8).unwrap();
+                        encoder.push_rows(pixels, 1).unwrap();
+                        match route {
+                            3 => encoder.finish_with_stats().map(|mut r| {
+                                sink.extend(r.take_data().unwrap());
+                            }),
+                            4 => encoder.finish_into(&mut sink).map(|_| ()),
+                            5 => encoder.finish_to(&mut sink).map(|_| ()),
+                            6 => {
+                                let mut cursor = std::io::Cursor::new(sink);
+                                cursor.set_position(prefix.len() as u64);
+                                let result = encoder.finish_to_seekable(&mut cursor).map(|_| ());
+                                sink = cursor.into_inner();
+                                result
+                            }
+                            _ => unreachable!(),
+                        }
+                    }
+                };
+                match &expected {
+                    Ok(bytes) => {
+                        result.unwrap();
+                        assert_eq!(&sink[..prefix.len()], prefix);
+                        assert_eq!(&sink[prefix.len()..], bytes);
+                    }
+                    Err(_) => {
+                        assert!(
+                            result
+                                .unwrap_err()
+                                .to_string()
+                                .contains("container mode Never")
+                        );
+                        assert_eq!(sink, prefix);
+                    }
+                }
+            }
+            let mut legacy = b"existing destination".to_vec();
+            let result =
+                matrix_config.encode_into(pixels, $width, 1, PixelLayout::Rgb8, &mut legacy);
+            match &expected {
+                Ok(bytes) => {
+                    result.unwrap();
+                    assert_eq!(&legacy[..20], b"existing destination");
+                    assert_eq!(&legacy[20..], bytes);
+                }
+                Err(_) => {
+                    assert!(
+                        result
+                            .unwrap_err()
+                            .to_string()
+                            .contains("container mode Never")
+                    );
+                    assert_eq!(legacy, b"existing destination");
+                }
+            }
+            writeln!(
+                journal,
+                "{}\t{}\t{}\t{:?}\tcomplete",
+                $name, $lossless, $width, $mode
+            )
+            .unwrap();
+            journal.flush().unwrap();
+        }};
+    }
+    for (name, strategy, encoder_mode) in policies::policies() {
+        for width in [32_u32, 262145] {
+            let pixels = [64_u8; 3].repeat(width as usize);
+            let modes = if width == 32 {
+                &[
+                    ContainerMode::Auto,
+                    ContainerMode::Always,
+                    ContainerMode::Never,
+                ][..]
+            } else {
+                &[ContainerMode::Never][..]
+            };
+            for &mode in modes {
+                let lossless = LosslessConfig::new()
+                    .with_effort(1)
+                    .with_strategy(strategy.clone())
+                    .with_mode(encoder_mode)
+                    .with_container_mode(mode);
+                exercise!(lossless, pixels, width, name, true, mode);
+                let lossy = LossyConfig::new(1.0)
+                    .with_effort(1)
+                    .with_strategy(strategy.clone())
+                    .with_mode(encoder_mode)
+                    .with_container_mode(mode);
+                exercise!(lossy, pixels, width, name, false, mode);
+            }
+        }
+    }
+}

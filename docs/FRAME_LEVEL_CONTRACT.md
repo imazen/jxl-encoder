@@ -456,7 +456,37 @@ sRGB profile, preserving the0.01 source and0.001 decoder-agreement bounds.
 Accepted source: `container-policy-core-selected-v4`; final qualification:
 `container-policy-final-isolated-v4` and `container-policy-final-gates-v4`.
 Wrapper rc0,216seconds,peak RSS1.56GiB,minimum available17,499MiB. These are
-build/test resources, not encoder latency. Additional destination-wrapper
-checks and the mapped-region audit remain in progress; test counts do not
-establish coverage. The separately approved request-controller/CLI API remains
+build/test resources, not encoder latency. Destination-wrapper and mapped-region follow-up is recorded below; test
+counts do not establish coverage. The separately approved request-controller/CLI API remains
 under qualification and is not part of this shared policy change.
+
+
+### Current-main destination wrappers and remaining region gaps
+
+Five animation-finalizer regions and eight colr/hCdR emission regions remain
+unobserved in this selected profile; further controls/source attribution remain
+in progress. No allocation-failure injection or whole-code coverage is claimed.
+
+The current-main wrapper gate passes every offered policy in both encoder
+modes, lossless/lossy,32x1 Auto/Always/Never and262145x1 Never. Request stats,
+append and Write; legacy append; and streaming stats, append, Write and
+seekable Write all match the ordinary encoded bytes exactly. Every negative
+case preserves the existing destination. The accompanying native/primary
+policy controls also pass. Journal: `run-744/case-748/wrappers.tsv` under the
+retained frame-level-auxiliary-contract output root.
+
+The source-bound region export observes policy helper16/16, metadata wrapper
+18/18, config accessor7/7, animation finalizer30/35 and box wrapper25/33.
+These are mapped regions of the exact retained functions, not a count of
+covered inputs or complete encoder coverage. Exact ELF
+`0f9dcf4ee37d58f8d4df510140a35e92e93fbb7a38c663d6d00cc59ba7589453`;
+profile`dc2b7aed1b574926ca81ed32c03d59c6d8da299935483544af136db109033e6b`.
+Runtime archive`container-policy-wrappers-gates-v5`; region export
+`container-policy-regions-v5`. Runtime wrapper rc0,1064seconds,peakRSS0.97GiB,
+minimum available18,119MiB; this includes repeated encodes/decodes and artifact
+I/O, not an encoder latency measurement. Focused strict lint and format pass
+in `container-policy-wrapper-lint-isolated-v5`. The initial encompassing region
+queue fails on reversed tool arguments, before export; the corrected container
+export succeeds. The stale request profile is correctly refused when its full
+animation-finalizer body differs from current source; that separate request
+profile is being regenerated, without weakening body-identity checks.
