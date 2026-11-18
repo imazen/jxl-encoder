@@ -1,6 +1,6 @@
 //! Partial absolute grids through automatic, forced and coarsening CLI routes.
 use super::*;
-fn native(input: &std::path::Path, output: &std::path::Path) {
+pub(super) fn native(input: &std::path::Path, output: &std::path::Path) {
     let r = Command::new(jxl_encoder::test_helpers::djxl_path())
         .arg(input)
         .arg(output)
@@ -17,7 +17,7 @@ fn native(input: &std::path::Path, output: &std::path::Path) {
     .unwrap();
     assert!(r.status.success());
 }
-fn run_cli(command: &mut Command, label: &str) -> std::process::Output {
+pub(super) fn run_cli(command: &mut Command, label: &str) -> std::process::Output {
     let profile = std::env::var_os("LLVM_PROFILE_FILE")
         .map(std::path::PathBuf::from)
         .map(|p| p.with_file_name(format!("grid-child-{label}-%p-%m.profraw")));

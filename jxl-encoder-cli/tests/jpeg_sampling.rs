@@ -111,3 +111,6 @@ mod dht;
 
 #[path = "jpeg_sampling/grid.rs"]
 mod grid;
+
+#[path = "jpeg_sampling/color.rs"]
+mod color;
