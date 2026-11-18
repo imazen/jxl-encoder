@@ -2,6 +2,15 @@
 
 Tracking: [issue 144](https://github.com/imazen/jxl-encoder/issues/144).
 
+H4's numeric admission, zero-y-primary handling, full-range direct gamma
+and affected-caller corrections are on main (`4e1f7c1d`, `4daffa19`). The
+retained before/candidate stages below are chronological evidence; the final
+selected regions and their unexecuted error alternatives are listed at the end.
+H5 source conversion and H10 CMYK interpretation have separate owning records.
+TC17's relative descriptor/absolute normalization distinction is documented in
+[TC17_NORMALIZATION.md](TC17_NORMALIZATION.md). Full ICC-content validation
+remains caller-owned.
+
 ## Explicit ICC presence
 
 Part 1 E.2 requires the ICC selector and profile payload to agree. An explicit
@@ -87,8 +96,9 @@ The corrected XYB descriptions render fully in pinned djxl. The pinned jxl-rs
 still refuses XYB with `InvalidColorEncoding`, and both pinned decoders refuse
 Unknown without ICC. That is a decoder-support limit, not evidence against
 valid syntax. No sibling or reference implementation is modified. Primary
-Rust rendering of those descriptions remains unavailable. Admission and color
-interpretation findings H4/H5 and full ICC-content validation remain open.
+Rust rendering of those descriptions remains unavailable. H4 admission and H5 source interpretation have separate qualification
+records below and in SOURCE_COLOR_CONVERSION.md; full ICC-content validation
+remains caller-owned.
 
 The first strict 64x32 RGB8 still controls illustrate the retained identities:
 
@@ -328,8 +338,8 @@ set separately panics under D65. Under custom D50 it encodes, but current Rust
 has maximum original-sample error0.50379306 and native linear-sRGB output
 differs from unmodified v0.12 CMS by1.1509478. The failing streams and exact
 source/object/profile are retained in `color-admission-before-pixels`; these
-are actual decoded observations, not predicted magnitudes. Production repair
-and expanded affected-entry coverage are still pending.
+are actual decoded observations, not predicted magnitudes. These are retained before observations; the numeric, gamma and caller
+repairs are recorded in later sections.
 
 `scripts/color_admission_oracle.cc` keeps three observations separate: public
 `SetColorEncoding` status, actual AddImageFrame/ProcessOutput status, and the
@@ -360,7 +370,7 @@ The raw-small and wire-singular primary controls have finite bounded raw CMS
 matrices, isolating determinant admission and coordinate quantization from
 an unrelated derived-matrix overflow.
 
-## H4 candidate behavior and caller inventory
+## H4 corrected behavior and caller inventory
 
 The candidate validates the quantized wire coordinates, direct gamma field,
 raw primary determinant, normalized gray white and Bradford/adapted RGB
@@ -404,7 +414,8 @@ The selected direct/prepared/prequantized/rate invalid-entry matrix passes in
 minimum available 20,565 MiB). The preceding build-only error is not a runtime
 verdict. Subsequent numeric-only library/lock/lint verification is recorded
 below and is on main at `4e1f7c1d`. The separate gamma, streaming and animation
-changes remain under final verification. H4 is still open.
+changes were verified afterward; their completed controls and scoped gaps
+are recorded in the final sections.
 
 The first positive direct-gamma endpoint run exposes a separate source-input
 error: strict d0.01 RGB8 white at minimum legal gamma decodes to native linear

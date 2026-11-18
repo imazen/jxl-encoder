@@ -3,7 +3,7 @@
 ## [Unreleased]
 
 - Document TC17 as a relative DCI descriptor; retain source/physical-white
-  controls for separately supplied absolute intensity normalization.
+  controls for separately supplied absolute intensity normalization (`be0a0150`).
 
 - Validate manual spline wire geometry and checked coefficient quantization;
   return errors for unsupported animation, prepared coefficient and optional

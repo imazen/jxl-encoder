@@ -6808,3 +6808,16 @@ code 65535 gives 1. Requesting 52.37 separately serializes 52.34375, which the
 physical-light control accounts for explicitly. Selected default/minimal
 qualification is recorded in [TC17_NORMALIZATION.md](docs/TC17_NORMALIZATION.md).
 No transfer implementation, API signature or established expectation changes.
+
+
+### Issue 144 H4 and H9/H10 final scope audit
+
+H4's numeric/gamma/imaginary-primary corrections and H9/H10's metadata/model
+requirements are on main. The owning documents now distinguish retained before
+stages from completed caller qualification. Exact unexecuted regions remain
+listed: unreachable derived-matrix alternatives, fallible writes/allocations
+and separate decoder output limitations are not represented as covered.
+Complete encoder CI44427177805 is green at `fa4da9fb`; selected CMYK physical
+controls and the progressive-CMYK follow-up retain their own scopes. The latter
+continues under V1. See docs/COLOR_METADATA_CONTRACT.md,
+docs/EXTRA_METADATA_CONTRACT.md and docs/CMYK_SOURCE_CONTRACT.md.

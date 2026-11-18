@@ -1,8 +1,10 @@
 # Extra-channel metadata contract
 
 Issue [144](https://github.com/imazen/jxl-encoder/issues/144), H9/H10.
-Black/CMYK profile requirements and animation's missing Black plane remain open.
-This increment addresses the independent metadata bounds.
+The metadata bounds and Black/profile requirements are on main. This record
+covers the independent metadata bounds; [CMYK_SOURCE_CONTRACT.md](CMYK_SOURCE_CONTRACT.md)
+covers source conversion, Black precision and animation forwarding, including
+the separate primary-decoder float ICC blend discrepancy.
 
 `ExtraChannelInfo::validate` checks dimension shift 0–3, name length at most
 1071 bytes, CFA index 0–274, finite representable binary16 spot components,

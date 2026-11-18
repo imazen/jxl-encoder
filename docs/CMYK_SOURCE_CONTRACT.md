@@ -2,7 +2,10 @@
 
 The core corrections pass the retained native/source controls, restored faults,
 locked library/doctest/byte-lock checks and strict workspace/expert lint.
-Encoder platform CI remains pending. Additional ReferenceOnly, explicit Add,
+Encoder CI run44427177805 passes completely at `fa4da9fb`, including the
+native required platforms, i686 and expert checks. That aggregate verdict does
+not imply every CMYK fixture executes on every platform; the selected physical
+controls retain their own source/native oracle scope. Additional ReferenceOnly, explicit Add,
 one-axis and vertical/corner controls are described below. The primary decoder's
 default float ICC blend output has a measured domain discrepancy.
 These results do not qualify arbitrary ICC profiles or every option combination.
