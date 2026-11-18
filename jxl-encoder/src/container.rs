@@ -759,9 +759,34 @@ pub fn is_bare_codestream(data: &[u8]) -> bool {
 /// The box goes where libjxl puts a box queued before the frames (cjxl queues
 /// `jhgm` after Exif, XMP and JUMBF): see [`insert_box`]. A bare codestream
 /// becomes a container first.
-#[must_use]
-pub fn append_gain_map_box(jxl_data: &[u8], jhgm_payload: &[u8]) -> Vec<u8> {
-    insert_box(jxl_data, b"jhgm", jhgm_payload)
+///
+/// This checks box boundaries and gain-map multiplicity. It does not validate
+/// the supplied bundle payload, codestream, or unrelated box contents.
+///
+/// # Errors
+///
+/// Returns [`crate::EncodeError::InvalidInput`] if an existing container has
+/// malformed box boundaries or already contains a direct or Brotli-wrapped
+/// gain map. The input is borrowed and remains unchanged on failure.
+pub fn append_gain_map_box(
+    jxl_data: &[u8],
+    jhgm_payload: &[u8],
+) -> Result<Vec<u8>, crate::EncodeError> {
+    if is_container(jxl_data) {
+        let boxes = top_level_boxes(jxl_data).ok_or_else(|| crate::EncodeError::InvalidInput {
+            message: "cannot append a gain map to malformed container boxes".into(),
+        })?;
+        if boxes.iter().any(|b| {
+            b.box_type == *b"jhgm"
+                || b.box_type == *b"brob"
+                    && jxl_data[b.offset + b.header..b.offset + b.size].starts_with(b"jhgm")
+        }) {
+            return Err(crate::EncodeError::InvalidInput {
+                message: "JPEG XL container already contains a gain map".into(),
+            });
+        }
+    }
+    Ok(insert_box(jxl_data, b"jhgm", jhgm_payload))
 }
 
 /// Add a `jumb` box (JUMBF / C2PA superbox, ISO 19566-5) to JXL data.
@@ -1403,7 +1428,7 @@ mod tests {
         let codestream = b"\xFF\x0A\x00\x01\x02\x03";
         let jhgm_payload = b"\x00\x00\x03\x01\x02\x03\x00\x00\x00\x00\x00\xFF\x0A";
 
-        let result = append_gain_map_box(codestream, jhgm_payload);
+        let result = append_gain_map_box(codestream, jhgm_payload).unwrap();
 
         // Should start with container signature
         assert!(is_container(&result));
@@ -1431,7 +1456,7 @@ mod tests {
         write_box(&mut container, b"jxlc", codestream);
 
         let jhgm_payload = b"\x00\x00\x01\xAA\x00\x00\x00\x00\x00\xFF\x0A";
-        let result = append_gain_map_box(&container, jhgm_payload);
+        let result = append_gain_map_box(&container, jhgm_payload).unwrap();
 
         // A codestream without a header to parse: jhgm goes ahead of the
         // jxlc box, which follows unchanged.
@@ -1439,6 +1464,38 @@ mod tests {
         assert_eq!(&result[36..40], b"jhgm");
         assert_eq!(&result[40..40 + jhgm_payload.len()], jhgm_payload);
         assert_eq!(&result[40 + jhgm_payload.len()..], &container[32..]);
+    }
+
+    #[test]
+    fn gain_map_append_refuses_existing_and_malformed_boxes() {
+        let bare = b"\xFF\x0A\x00\x00";
+        let first = append_gain_map_box(bare, b"gain map").unwrap();
+        assert!(matches!(
+            append_gain_map_box(&first, b"second"),
+            Err(crate::EncodeError::InvalidInput { .. })
+        ));
+        let mut compressed = wrap_in_container(bare, None, None);
+        write_box(&mut compressed, b"brob", b"jhgm");
+        assert!(matches!(
+            append_gain_map_box(&compressed, b"second"),
+            Err(crate::EncodeError::InvalidInput { .. })
+        ));
+        let mut malformed = wrap_in_container(bare, None, None);
+        malformed.extend_from_slice(b"\x00\x00\x00\x04test");
+        let saved = malformed.clone();
+        assert!(matches!(
+            append_gain_map_box(&malformed, b"gain map"),
+            Err(crate::EncodeError::InvalidInput { .. })
+        ));
+        assert_eq!(malformed, saved);
+        // Also exercises extended-size conversion refusal on 32-bit targets.
+        let mut oversized = wrap_in_container(bare, None, None);
+        oversized.extend_from_slice(b"\0\0\0\x01test");
+        oversized.extend_from_slice(&u64::MAX.to_be_bytes());
+        assert!(matches!(
+            append_gain_map_box(&oversized, b"gain map"),
+            Err(crate::EncodeError::InvalidInput { .. })
+        ));
     }
 
     #[test]
@@ -2241,7 +2298,7 @@ mod tests {
     fn test_insert_box_at_libjxl_position() {
         let (codestream, _) = codestream_with(&FileHeader::new_rgb(64, 64), None);
         // A bare codestream: split after the header.
-        let bare = append_gain_map_box(&codestream, b"gain map");
+        let bare = append_gain_map_box(&codestream, b"gain map").unwrap();
         assert_eq!(
             types(&bare),
             [*b"JXL ", *b"ftyp", *b"jxlp", *b"jhgm", *b"jxlp"]
@@ -2259,7 +2316,8 @@ mod tests {
         let jxlc = append_gain_map_box(
             &wrap_in_container_with_level(&codestream, None, None, 10),
             b"gain map",
-        );
+        )
+        .unwrap();
         assert_eq!(
             types(&jxlc),
             [*b"JXL ", *b"ftyp", *b"jxll", *b"jxlp", *b"jhgm", *b"jxlp"]

@@ -487,6 +487,13 @@ jobs:
         env:
           JXL_ENCODER_OUTPUT_DIR: ${{ runner.temp }}/issue144-contracts
         run: cargo test --locked -p jxl-encoder-cli --release --features jpeg-reencoding --test jpeg_sampling -- --test-threads=1
+      - name: Test gain-map duplicate and container-boundary admission
+        env:
+          JXL_ENCODER_OUTPUT_DIR: ${{ runner.temp }}/issue144-contracts
+        run: >-
+          cargo test --locked -p jxl-encoder --release
+          --features "__expert,parallel,hdr-gainmap,brotli-metadata"
+          --test gain_map_duplicate_contract -- --test-threads=1
       - name: Test optional subsampling resampling admission
         env:
           JXL_ENCODER_OUTPUT_DIR: ${{ runner.temp }}/issue144-contracts

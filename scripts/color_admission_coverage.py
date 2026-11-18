@@ -19,6 +19,7 @@ p.add_argument('archives', nargs='+', type=Path)
 p.add_argument('--extra-metadata', action='store_true')
 p.add_argument('--jpeg-metadata', action='store_true')
 p.add_argument('--jpeg-dht', action='store_true')
+p.add_argument('--gain-map', action='store_true')
 p.add_argument('--jpeg-scan-grid', action='store_true')
 p.add_argument('--jpeg-color', action='store_true')
 p.add_argument('--delta-palette', action='store_true')
@@ -137,6 +138,14 @@ if a.jpeg_color:
     (a.output / 'regions.json').write_text(json.dumps(dict(inputs=identities, functions=rows,
         source_comparison='Exact function bodies; code-region keys relative to each declaration'), indent=2))
     raise SystemExit(0)
+
+if a.gain_map:
+    observe('jxl-encoder/src/container.rs', 'append_gain_map_box')
+    observe('jxl-encoder/src/container.rs', 'top_level_boxes')
+    observe('jxl-encoder/src/hdr/bundle.rs', 'append_gain_map_bundle')
+    (a.output / 'regions.json').write_text(json.dumps(dict(inputs=identities, functions=rows,
+        note='Exact source bodies; mapped regions, not complete input/option combinations.'), indent=2))
+    sys.exit(0)
 
 if a.jpeg_scan_grid:
     observe('jxl-encoder/src/jpeg/encode.rs', 'compute_jpeg_upsampling')

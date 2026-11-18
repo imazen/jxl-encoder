@@ -58,7 +58,7 @@ pub struct GainMapBundle {
     /// encoding. This does not describe the gain-value codestream's colors.
     /// Its `want_icc` flag must agree with whether [`Self::alt_icc`] is nonempty.
     pub color_encoding: Option<ColorEncoding>,
-    /// Compressed ICC profile bytes for the gain map's alternate color
+    /// Compressed ICC profile bytes for the reconstructed alternate image's color
     /// space. Set when the HDR "alternate" image has an ICC profile
     /// distinct from the SDR base. Empty when not needed.
     pub alt_icc: Vec<u8>,
@@ -240,13 +240,14 @@ impl GainMapBundle {
 ///
 /// # Errors
 ///
-/// Forwards any error from [`GainMapBundle::serialize`].
+/// Forwards errors from [`GainMapBundle::serialize`] and
+/// [`crate::container::append_gain_map_box`], including an existing gain map.
 pub fn append_gain_map_bundle(
     jxl_data: &[u8],
     bundle: &GainMapBundle,
 ) -> Result<Vec<u8>, EncodeError> {
     let payload = bundle.serialize()?;
-    Ok(container::append_gain_map_box(jxl_data, &payload))
+    container::append_gain_map_box(jxl_data, &payload)
 }
 
 #[cfg(test)]
