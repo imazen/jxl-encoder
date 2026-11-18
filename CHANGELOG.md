@@ -4,7 +4,7 @@
 
 - Reflect decoder support in the internal 2× reconstruction model while
   retaining clamped v0.12 encoder search, frozen arithmetic and encoded bytes.
-  Support strided sample planes in the shared private kernel; historical floor
+  Support strided sample planes in the shared private kernel (`3c9fb262`); historical floor
   studies require new measurements before comparison with the corrected model.
 
 - Correct selected modular reference-residual absolute properties at all three

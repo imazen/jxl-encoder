@@ -4,7 +4,9 @@ import argparse,hashlib,json,subprocess
 from pathlib import Path
 p=argparse.ArgumentParser(description=__doc__)
 p.add_argument('manifest',type=Path);p.add_argument('selection',type=Path);p.add_argument('base');p.add_argument('output',type=Path)
-p.add_argument('--reference-property',action='store_true',help='retain the selected E4 repair and remove only the separate model candidate')
+mode=p.add_mutually_exclusive_group()
+mode.add_argument('--reference-property',action='store_true',help='retain the selected E4 repair and remove only the separate model candidate')
+mode.add_argument('--reconstruction-model',action='store_true',help='qualify only the model selection against the supplied committed base')
 a=p.parse_args();root=a.manifest.resolve().parent
 assert not(root/'.git').exists()and(root.parent.parent/'provenance.json').is_file()
 a.output.mkdir(exist_ok=False)
@@ -24,7 +26,7 @@ try:
   content=Path(row['verified_source']).read_bytes();assert sha(content)==row['verified_sha256']
   if row['parent_sha256']is not None:assert sha(get(relative))==row['parent_sha256']
   overlay(relative,content)
- reset_paths=['jxl-encoder/src/vardct/resampling.rs'] if a.reference_property else ['jxl-encoder/src/modular/encode_tree.rs','jxl-encoder/src/modular/tree_learn.rs','jxl-encoder/src/vardct/resampling.rs']
+ reset_paths=[] if a.reconstruction_model else (['jxl-encoder/src/vardct/resampling.rs'] if a.reference_property else ['jxl-encoder/src/modular/encode_tree.rs','jxl-encoder/src/modular/tree_learn.rs','jxl-encoder/src/vardct/resampling.rs'])
  for relative in reset_paths:
   overlay(relative,get(relative))
  tracked=subprocess.check_output(['git','ls-tree','-r','--name-only',a.base,'--','jxl-encoder/src']).decode().splitlines()
@@ -37,7 +39,8 @@ try:
   assert(root/relative).read_bytes()==get(relative),relative
  (a.output/'overlay.json').write_text(json.dumps(rows,indent=2)+'\n')
  (a.output/'production.json').write_text(json.dumps(dict(base=a.base,files=verified),indent=2)+'\n')
- command=['just','reference-property-isolated-check' if a.reference_property else 'delta-palette-isolated-check',str(a.manifest)]
+ recipe='reconstruction-model-isolated-check' if a.reconstruction_model else ('reference-property-isolated-check' if a.reference_property else 'delta-palette-isolated-check')
+ command=['just',recipe,str(a.manifest)]
  with(a.output/'checks.log').open('x')as log:
   result=subprocess.run(command,stdout=log,stderr=subprocess.STDOUT)
  (a.output/'verdict.json').write_text(json.dumps(dict(command=command,exit_code=result.returncode),indent=2)+'\n')

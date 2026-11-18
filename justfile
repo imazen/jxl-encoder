@@ -2988,3 +2988,35 @@ gain-map-final-validation manifest output coverage_env llvm:
     cargo clippy --locked --manifest-path {{quote(manifest)}} --workspace --all-targets -- -D warnings
     cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,hdr-gainmap,brotli-metadata --test gain_map_duplicate_contract -- -D warnings
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --lib -- append_gain_map gain_map_append --test-threads=1
+
+
+reconstruction-model-final-check manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,parallel-tree-learning --lib selected_reference_property_effort_and_custom_boundaries -- --include-ignored --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,parallel-tree-learning --lib -- internal_2x_border_model reconstruction_model_routes batched_stencils_match_frozen_scalar --include-ignored --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,parallel-tree-learning --lib
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --test it -- hash_lock strategy_libjxl_byte_lock divergence_table_drift --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,__expert --lib -- internal_2x_border_model reconstruction_model_routes batched_stencils_match_frozen_scalar --include-ignored --test-threads=1
+    cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features __internals --lib
+    cargo clippy --locked --manifest-path {{quote(manifest)}} --workspace --all-targets -- -D warnings
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,parallel,parallel-tree-learning --lib --tests -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+
+reconstruction-model-restored-fault manifest output coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/test_conditional_modular_mutations.py "$2" "$3" --case model-clamped-support' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+reconstruction-model-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" internal_2x_border_model --also-filter reconstruction_model_routes --also-filter batched_stencils_match_frozen_scalar --include-ignored --features __expert,parallel --source jxl-encoder/src/vardct/resampling.rs --source jxl-encoder/src/vardct/resampling_decoder_contract.rs --source jxl-encoder/src/vardct/resampling_reference_tests.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+reconstruction-model-isolated-check manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,parallel-tree-learning --lib -- internal_2x_border_model reconstruction_model_routes batched_stencils_match_frozen_scalar --include-ignored --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,parallel-tree-learning --lib
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --test it -- hash_lock strategy_libjxl_byte_lock divergence_table_drift --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,__expert --lib -- internal_2x_border_model reconstruction_model_routes batched_stencils_match_frozen_scalar --include-ignored --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals --doc
+    cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features __internals --lib
+    cargo clippy --locked --manifest-path {{quote(manifest)}} --workspace --all-targets -- -D warnings
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,parallel,parallel-tree-learning --lib --tests -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+
+qualify-selected-reconstruction-model manifest selection base output:
+    python3 scripts/qualify_selected_modular_source.py {{quote(manifest)}} {{quote(selection)}} {{quote(base)}} {{quote(output)}} --reconstruction-model
