@@ -1779,6 +1779,19 @@ misclassify that CLI limitation as an invalid stream or strip the ICC to hide it
 
 ## Known Bugs (ACTIVE)
 
+### 2026-11-18: frame-dependent level declarations, animation repair
+
+`f00ee41d` classifies the actual emitted animation sequence, including selected
+trial records. Both writers now require Level 10 above the consecutive
+zero-duration area bound or below the positive rational-duration bound. Pinned
+native v0.12 shares the original omissions; Annex M supplies the requirement.
+Every offered policy passes selected area/duration controls with full primary
+Rust/native rendering. Unchanged library/locks, focused lint and independent
+fault/production-region checks pass. Missing error-return regions and the
+unlanded still/streaming auxiliary transport remain explicit in the
+[caller and evidence record](docs/FRAME_LEVEL_CONTRACT.md). H14 stays open
+for the real LF caller and still-image finalization.
+
 ### RESOLVED 2026-11-18: selected full-frame deltas read the wrong saved source
 
 A real regional +1 RGB8 change makes the full-frame delta win, but its default
@@ -1787,7 +1800,6 @@ Rust and pinned native v0.12 return wrong source codes. Explicit source-one
 controls are exact. The shared repair pins that candidate to slot one. Isolated default/minimal
 policy/layout/profile checks, source-field fault, unchanged library/locks and
 strict focused lint pass. [Evidence and remaining gates](docs/ANIMATION_DELTA_CONTRACT.md).
-
 
 ### RESOLVED 2026-11-17: descending and equal animation clocks
 

@@ -408,6 +408,7 @@ jobs:
           --test extra_metadata_contract --test animation_level_contract
           --test animation_resampling_contract --test animation_clock_contract
           --test animation_crop_reference_contract --test animation_delta_candidate_contract
+          --test animation_zero_area_contract --test frame_level_delta_contract
           -- --test-threads=1
       - name: Test optional subsampling resampling admission
         env:
