@@ -346,3 +346,14 @@ with stderr included on failure. The local pinned replay passes automatic,
 forced and coarsening controls across all CLI policies, including destination
 preservation on controller refusal. Its retained ELF is
 `6b04550accbfdee6b3ac08dcd989a4e654c338f7de9549db18792fe5bf73990f`.
+
+A fresh a7a9c78 reference build with CMake's JPEG package disabled and
+`JPEGXL_ENABLE_TRANSCODE_JPEG=ON` reproduces the old invocation's
+`Unknown argument: --reconstruct_jpeg` diagnostic. Automatic `.jpg` output
+rebuilds all 2983 fixture bytes, SHA256
+`37420ea8f86ac752377c31d000eca2840b1b92b99ce0f6e8519044db8129c203`.
+The complete repaired JPEG route test passes with that lean decoder across
+all CLI policy bindings. The decoder executable SHA256 is
+`c43273619e4ec1a97f9d6fd5a062cb65ae0df6efca4608019bd15c130130d3c3`.
+The build and replay wrapper exits zero after 89 seconds, with peak RSS of
+0.84 GiB and minimum available memory of 17254 MiB.
