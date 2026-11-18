@@ -1788,6 +1788,24 @@ separate queue items. Broad/coverage/remote verdicts must be read independently.
 
 ## Known Bugs (ACTIVE)
 
+### 2026-11-19: primary alpha decoder agreement at an LF-group edge
+
+PR146 run44577850969's expert alpha matrix reports primary code155 where the
+unchanged pinned-v0.12 reference expects154, at2049x2048, alpha distance25,
+coordinate(2044,2040). The artifact's native decode of our stream also returns154;
+its independent native reference agrees. This localizes the observed split to
+the primary decoding/check path, without establishing an inverse-transform root
+cause yet. The five buffering selections and three progressive modes reproduce
+the same first mismatch. The assertion remains unchanged. Exact source streams,
+full alpha planes and per-member CRC/SHA evidence are retained under
+`pr146-alpha-ci-failure-v1` and `pr146-alpha-ci-own-native-v1`. The isolated
+primary decoder's scalar/SIMD replay is pending; this is not a passing CI result.
+
+The same run's Windows ARM reference setup fails in `djxl --version` with
+exit-2147483644 after `cjxl v0.12.0` verification. It supplies no encoder or pixel
+verdict. A fresh PR head has its own platform run.
+
+
 ### RESOLVED 2026-11-19: optional rate-control quantizer feedback
 
 The old controller coarsens unmet tiles by dividing the integer AC quantizer,

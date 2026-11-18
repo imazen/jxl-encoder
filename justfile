@@ -3291,3 +3291,7 @@ container-policy-boxes-supplement-check manifest artifacts coverage_env:
 
 container-policy-minimal-check manifest:
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert --test container_policy_contract -- --test-threads=1
+
+# Retain selected members without downloading a multi-gigabyte CI ZIP.
+ci-artifact-members repository artifact output pattern:
+    python3 scripts/extract_ci_artifact_members.py {{quote(repository)}} {{quote(artifact)}} {{quote(output)}} --member {{quote(pattern)}}

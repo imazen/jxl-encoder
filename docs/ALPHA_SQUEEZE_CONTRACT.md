@@ -295,3 +295,22 @@ All six input archives record exit zero; exact function bodies and original
 object/profile checksums are compared. The separate failed-run coverage export
 retains its nonzero verdict explicitly. Coverage extraction has no mapping
 diagnostics. Animation alpha-setting forwarding remains an open task.
+
+
+## November 19: retained native/primary CI disagreement
+
+[PR146 expert run44577850969](https://github.com/imazen/jxl-encoder/actions/runs/44577850969)
+fails the unchanged exact-alpha comparison at2049x2048, alpha distance25,
+coordinate(2044,2040). Native v0.12 decodes both our stream and its independently
+encoded reference to code154; the primary0.8 decoder reports155. All five
+buffering choices and three progressive variants report that same first split.
+The artifact's native planes therefore distinguish this from an observed
+encoder mismatch; the decoder/check-path root cause remains under investigation.
+
+Selected artifact members retain their ZIP CRC checks and SHA256 identities in
+`pr146-alpha-ci-failure-v1` and `pr146-alpha-ci-own-native-v1`. The full original
+artifact remains on GitHub. `just ci-artifact-members` retains explicitly named
+members by HTTP range, without requiring a local copy of the complete7GB ZIP.
+The isolated primary decoder has a complete-plane scalar/SIMD replay prepared.
+No expectation or tolerance is relaxed, and this failed job is not counted as a
+passing platform verdict.
