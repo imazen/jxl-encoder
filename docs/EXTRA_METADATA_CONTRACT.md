@@ -164,3 +164,39 @@ instrumented object and profile are
 `fdd162ead1523f57ac45d2cc5c0498cfbeb74b89c1828031dbac66880fd7ae6e`.
 The wrapper exits zero after 496 seconds with build and test peak RSS of
 1.84 GiB and minimum available memory of 17103 MiB.
+
+The sensitivity runs remove or bypass each count check independently. The
+shared cap, wire check, supplied-count check, implicit alpha and Black
+counts, canonicalization order, and three raw VarDCT entry checks each
+produce a runtime test failure. The final prepared-layout check also fails
+when removed. The discriminating input has nonopaque layout alpha and one
+caller-provided alpha plane, so a later duplicate-plane error cannot
+satisfy the required count refusal. Each replay verifies exact source
+restoration. The first run exits zero in 400 seconds with peak RSS of
+1.89 GiB. The prepared-layout continuation exits zero in 124 seconds with
+peak RSS of 1.88 GiB. These measurements cover the qualification processes.
+
+The checksum-bound region union uses the passing integration object, the
+seeded-writer unit check and the passing canonicalized request controls.
+
+| Selected code scope | Executed / mapped |
+|---|---:|
+| Request count admission and adjacent limit check | 27 / 28 |
+| Prepared-layout count check | 13 / 13 |
+| Request error adapter | 5 / 5 |
+| Shared Level 10 count validator | 6 / 6 |
+| File-header wire limit | 4 / 4 |
+| Raw direct VarDCT entry | 9 / 9 |
+| Tracked precomputed VarDCT entry | 6 / 6 |
+| Prequantized VarDCT entry | 6 / 6 |
+
+The unobserved request region is the adjacent `self.check_limits()?`
+error return. The report measures these selected code regions. The
+fixture families and measurements above establish the scope of the pixel
+comparisons.
+
+Reproduce the functional checks with `just extra-count-check <manifest>`
+against a pinned source export. Use `just extra-count-native <libjxl-source>
+<libjxl-build> <new-observer>` for the native count table, and
+`just extra-count-faults <manifest> <new-output> <coverage-env>` in an owned
+mutable export for the sensitivity replays.

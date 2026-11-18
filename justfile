@@ -3337,3 +3337,19 @@ animation-alpha-compatibility-check manifest:
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --test progressive_ac_contract animation_ -- --test-threads=1
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert --test progressive_ac_contract animation_ -- --test-threads=1
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --test cmyk_animation_layers_contract -- --test-threads=1
+
+# Native syntax range and Level 10 input admission are separate observations.
+extra-count-native source build output:
+    just extra-metadata-native {{quote(source)}} {{quote(build)}} {{quote(output)}}
+    {{quote(output)}} --counts
+
+extra-count-check manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel,rate-control --test extra_metadata_contract -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert,__internals,__pre_quantized,rate-control --test extra_metadata_contract -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --lib extra_channel_count_wire_bound_precedes_header_writes
+
+extra-count-faults manifest output coverage_env:
+    bash -c 'set -e; source "$1"; shift; exec python3 scripts/test_extra_count_mutations.py "$@"' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+extra-count-regions output llvm +archives:
+    python3 scripts/color_admission_coverage.py {{quote(llvm)}} {{quote(output)}} {{archives}} --extra-count

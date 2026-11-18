@@ -671,6 +671,13 @@ jobs:
           cargo test --locked -p jxl-encoder --release
           --features "__expert,__internals,__pre_quantized,parallel"
           --test extra_metadata_contract extra_metadata_prepared -- --test-threads=1
+      - name: Test extra-channel count boundaries through request rate control
+        env:
+          JXL_ENCODER_OUTPUT_DIR: ${{ runner.temp }}/issue144-contracts
+        run: >-
+          cargo test --locked -p jxl-encoder --release
+          --features "__expert,__pre_quantized,parallel,rate-control"
+          --test extra_metadata_contract extra_metadata_count_request_controller -- --test-threads=1
       - name: Test progressive AC rate-control callers
         env:
           JXL_ENCODER_OUTPUT_DIR: ${{ runner.temp }}/issue144-contracts

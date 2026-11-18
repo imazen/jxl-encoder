@@ -831,3 +831,38 @@ fn extra_metadata_count_admission_precedes_budget_and_invalid_planes() {
         }
     }
 }
+
+#[test]
+fn extra_metadata_count_canonicalized_admission_precedes_budget() {
+    let plane = [7];
+    let extras = vec![ExtraChannel::depth(&plane); 257];
+    let config = LossyConfig::new(1.0)
+        .with_effort(3)
+        .with_canonicalize_input(true);
+    let limits = jxl_encoder::Limits::default().with_max_memory_bytes(1);
+    let error = config
+        .encode_request(1, 1, PixelLayout::Rgba8)
+        .with_extra_channels(&extras)
+        .with_limits(&limits)
+        .encode(&[32, 64, 96, 255])
+        .unwrap_err();
+    assert!(error.to_string().contains("extra channel count"), "{error}");
+}
+
+#[test]
+fn extra_metadata_count_canonicalization_retains_nonopaque_alpha_in_count() {
+    let plane = [127];
+    let mut extras = vec![ExtraChannel::depth(&plane); 255];
+    // A duplicate alpha plane errors later in lossy pixel preparation if
+    // the prepared-layout count check is missing.
+    extras.push(ExtraChannel::from_alpha_buf(&plane, false));
+    let config = LossyConfig::new(1.0)
+        .with_effort(3)
+        .with_canonicalize_input(true);
+    let error = config
+        .encode_request(1, 1, PixelLayout::Rgba8)
+        .with_extra_channels(&extras)
+        .encode(&[32, 64, 96, 127])
+        .unwrap_err();
+    assert!(error.to_string().contains("extra channel count"), "{error}");
+}

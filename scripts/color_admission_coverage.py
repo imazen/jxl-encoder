@@ -17,6 +17,7 @@ p.add_argument('llvm', type=Path)
 p.add_argument('output', type=Path)
 p.add_argument('archives', nargs='+', type=Path)
 p.add_argument('--extra-metadata', action='store_true')
+p.add_argument('--extra-count', action='store_true')
 p.add_argument('--jpeg-metadata', action='store_true')
 p.add_argument('--jpeg-dht', action='store_true')
 p.add_argument('--gain-map', action='store_true')
@@ -432,6 +433,24 @@ if a.display_extents:
     observe('jxl-encoder/src/api.rs', 'encode_lossy', window=('enc.display_dims = Some(self.display_dimensions()?);', 1))
     observe('jxl-encoder/src/headers/file_header.rs', 'validate_display_dimensions')
     observe('jxl-encoder/src/headers/file_header.rs', 'write', occurrence=1, window=('Self::validate_display_dimensions(self.width, self.height)?;', 1))
+    (a.output / 'regions.json').write_text(json.dumps(dict(inputs=identities, functions=rows,
+        source_comparison='Exact function bodies; code-region keys relative to each declaration'), indent=2))
+    raise SystemExit(0)
+
+if a.extra_count:
+    api = 'jxl-encoder/src/api.rs'
+    observe(api, 'encode_inner_with_stop',
+            window=('validate::validate_extra_channel_count(self.extra_channels.len())?;', 14))
+    observe(api, 'encode_prepared',
+            window=('validate::validate_extra_channel_count(', 8))
+    observe('jxl-encoder/src/api/validate.rs', 'validate_extra_channel_count')
+    observe('jxl-encoder/src/headers/extra_channels.rs', 'validate_supported_count')
+    observe('jxl-encoder/src/headers/file_header.rs', 'write', occurrence=1,
+            window=('if meta.extra_channels.len() > 4096 {', 6))
+    for name in ['encode_with_extras_stop_impl', 'encode_from_precomputed_tracked',
+                 'encode_from_pre_quantized_ac_with_extras']:
+        observe('jxl-encoder/src/vardct/encoder.rs', name,
+                window=('validate_supported_count(extras.len())?;', 2))
     (a.output / 'regions.json').write_text(json.dumps(dict(inputs=identities, functions=rows,
         source_comparison='Exact function bodies; code-region keys relative to each declaration'), indent=2))
     raise SystemExit(0)
