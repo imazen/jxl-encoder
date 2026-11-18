@@ -1,12 +1,12 @@
+#[path = "support/decoder_level.rs"]
+mod decoder_level;
 use jxl_encoder::{
     AnimationFrame, AnimationParams, ImageMetadata, LosslessConfig, LossyConfig, PixelLayout,
 };
 
 #[test]
 fn animation_metadata_embeds_the_supplied_icc_profile() {
-    use zensim_decoder::api::{
-        JxlColorProfile, JxlDecoder, JxlDecoderOptions, ProcessingResult, states,
-    };
+    use zensim_decoder::api::{JxlColorProfile, JxlDecoder, ProcessingResult, states};
     let icc = zenpixels_convert::icc_profiles::DISPLAY_P3_V4;
     let metadata = ImageMetadata::default().with_icc_profile(icc);
     let pixels = [37, 101, 219].repeat(32 * 17);
@@ -39,7 +39,7 @@ fn animation_metadata_embeds_the_supplied_icc_profile() {
                 )
         }
         .unwrap();
-        let decoder = JxlDecoder::<states::Initialized>::new(JxlDecoderOptions::default());
+        let decoder = JxlDecoder::<states::Initialized>::new(decoder_level::options(&encoded));
         let ProcessingResult::Complete { result: decoder } =
             decoder.process(&mut encoded.as_slice()).unwrap()
         else {
@@ -62,10 +62,10 @@ fn decode_rgb_f32(encoded: &[u8], bits: u32) -> Vec<Vec<f32>> {
 
 fn decode_f32(encoded: &[u8], bits: u32, alpha: bool) -> Vec<Vec<f32>> {
     use zensim_decoder::api::{
-        JxlDecoder, JxlDecoderOptions, JxlOutputBuffer, JxlPixelFormat, ProcessingResult, states,
+        JxlDecoder, JxlOutputBuffer, JxlPixelFormat, ProcessingResult, states,
     };
     let mut input = encoded;
-    let init = JxlDecoder::<states::Initialized>::new(JxlDecoderOptions::default());
+    let init = JxlDecoder::<states::Initialized>::new(decoder_level::options(encoded));
     let ProcessingResult::Complete {
         result: mut decoder,
     } = init.process(&mut input).unwrap()
@@ -764,5 +764,57 @@ fn animation_hdr_loss_and_loop_trace_follow_the_request() {
     assert!(
         failures.is_empty(),
         "animation HDR request mismatch: {failures:?}"
+    );
+}
+
+#[test]
+fn declared_level10_animation_keeps_a_level5_refusal_control() {
+    use zensim_decoder::api::{JxlDecoder, JxlDecoderOptions, states};
+    let samples = [1_u16, 32768, 65535, 65534].repeat(32 * 17);
+    let pixels: Vec<u8> = samples
+        .iter()
+        .flat_map(|value| value.to_ne_bytes())
+        .collect();
+    let encoded = LosslessConfig::new()
+        .with_effort(1)
+        .encode_animation(
+            32,
+            17,
+            PixelLayout::Rgba16,
+            &AnimationParams::default(),
+            &[AnimationFrame::new(&pixels, 10)],
+        )
+        .unwrap();
+    assert_eq!(decoder_level::declared_level(&encoded), 10);
+    let error = JxlDecoder::<states::Initialized>::new(JxlDecoderOptions::default())
+        .process(&mut encoded.as_slice())
+        .err()
+        .expect("default Level5 refuses 32-bit modular buffers");
+    assert!(
+        format!("{error:?}").contains("modular buffer bits"),
+        "{error:?}"
+    );
+    let frames = decode_f32(&encoded, 16, true);
+    assert_eq!(frames.len(), 1);
+    assert!(
+        frames[0]
+            .iter()
+            .zip(samples.iter())
+            .all(|(actual, expected)| (*actual * 65535.0).round() as u16 == *expected)
+    );
+    let mut underdeclared = encoded.clone();
+    let mut offset = 0;
+    while &underdeclared[offset + 4..offset + 8] != b"jxll" {
+        offset +=
+            u32::from_be_bytes(underdeclared[offset..offset + 4].try_into().unwrap()) as usize;
+    }
+    underdeclared[offset + 8] = 5;
+    let error = JxlDecoder::<states::Initialized>::new(decoder_level::options(&underdeclared))
+        .process(&mut underdeclared.as_slice())
+        .err()
+        .expect("Level5 declaration cannot raise the cap");
+    assert!(
+        format!("{error:?}").contains("modular buffer bits"),
+        "{error:?}"
     );
 }
