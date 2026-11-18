@@ -1788,6 +1788,17 @@ separate queue items. Broad/coverage/remote verdicts must be read independently.
 
 ## Known Bugs (ACTIVE)
 
+### RESOLVED 2026-11-19: strict optional CMS overflow-test lint
+
+The existing CMS overflow regression now destructures its error directly.
+This preserves every assertion and avoids `err().expect()` without requiring
+Debug on its successful pixel-storage type. The focused runtime control,
+workspace/all-target and full optional-feature lib/test Clippy, and scoped
+formatting pass. No production conversion or acceptance behavior changes.
+The enclosing spline/CMS wrapper passes rc0/50s, peak RSS2.02GiB and minimum
+available17848MiB (`spline-and-cms-final-lint.log`).
+
+
 ### 2026-11-18: common absolute JPEG sampling frame grid
 
 A 16x8 grayscale 2x2 source has the native-matching header but the encoder

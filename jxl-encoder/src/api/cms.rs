@@ -445,9 +445,9 @@ mod tests {
             true,
             None,
         );
-        let error = result
-            .err()
-            .expect("CMS overflow must be refused before quantization");
+        let Err(error) = result else {
+            panic!("CMS overflow must be refused before quantization");
+        };
         assert!(
             matches!(&error, EncodeError::InvalidInput { .. })
                 && format!("{error:?}").contains("non-finite"),
