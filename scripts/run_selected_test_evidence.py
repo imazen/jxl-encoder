@@ -16,6 +16,10 @@ p.add_argument('manifest', type=Path)
 p.add_argument('output', type=Path)
 p.add_argument('filter')
 p.add_argument('--test-target')
+p.add_argument('--include-ignored', action='store_true',
+               help='explicitly select the retained large-resource probes')
+p.add_argument('--build-only', action='store_true',
+               help='retain a compiled executable and source identity without running tests')
 p.add_argument('--driver-only-coverage', action='store_true',
                help='instrument the integration driver, not production pixel kernels')
 p.add_argument('--package', default='jxl-encoder', choices=['jxl-encoder', 'jxl-encoder-cli'])
@@ -100,17 +104,29 @@ assert hashlib.sha256(executable.read_bytes()).hexdigest() == digest
 # Verify the profiling runtime before spending time on the actual cells.
 probe = (a.output / 'probe.profraw').resolve()
 with (a.output / 'probe.log').open('x') as log:
-    subprocess.run([str(executable), a.filter, '--list'],
+    subprocess.run([str(executable), a.filter, '--list'] + (['--include-ignored'] if a.include_ignored else []),
                    env=dict(os.environ, LLVM_PROFILE_FILE=str(probe)),
                    stdout=log, stderr=subprocess.STDOUT, check=True)
 assert probe.is_file(), 'test target has no profiling runtime; refresh the coverage crate list'
+if a.build_only:
+    assert re.search(r': test\n', (a.output / 'probe.log').read_text()), 'filter must name a test'
+    identity = dict(command=command, executable=str(executable), binary_sha256=digest,
+                    filter=a.filter, include_ignored=a.include_ignored, pid=None, sources=source_rows, exit_code=None,
+                    stage='built-unexecuted', profile_sha256=None,
+                    coverage_scope=dict(instrumented_crates=os.environ.get(
+                        '__CARGO_LLVM_COV_RUSTC_WRAPPER_CRATE_NAMES','').split(','),
+                        driver_only=a.driver_only_coverage))
+    (a.output / 'identity.json').write_text(json.dumps(identity, indent=2))
+    print('Built and retained unexecuted test: ' + a.filter, flush=True)
+    sys.exit(0)
 profile = (a.output / 'test.profraw').resolve()
 env = dict(os.environ, LLVM_PROFILE_FILE=str(profile))
 with (a.output / 'test.log').open('x') as log:
-    child = subprocess.Popen([str(executable), a.filter, '--nocapture', '--test-threads=1'],
+    child = subprocess.Popen([str(executable), a.filter, '--nocapture', '--test-threads=1'] +
+                             (['--include-ignored'] if a.include_ignored else []),
                              env=env, stdout=log, stderr=subprocess.STDOUT)
     identity = dict(command=command, executable=str(executable), binary_sha256=digest,
-                    filter=a.filter, pid=child.pid, sources=source_rows,
+                    filter=a.filter, include_ignored=a.include_ignored, pid=child.pid, sources=source_rows,
                     coverage_scope=dict(instrumented_crates=os.environ.get(
                         '__CARGO_LLVM_COV_RUSTC_WRAPPER_CRATE_NAMES','').split(','),
                         driver_only=a.driver_only_coverage))

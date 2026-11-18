@@ -20,6 +20,7 @@ p.add_argument('--extra-metadata', action='store_true')
 p.add_argument('--display-extents', action='store_true')
 p.add_argument('--animation-state', action='store_true')
 p.add_argument('--animation-deltas', action='store_true')
+p.add_argument('--frame-levels', action='store_true')
 p.add_argument('--reference-root', type=Path)
 a = p.parse_args()
 a.output.mkdir(exist_ok=False)
@@ -91,6 +92,23 @@ def observe(relative, name, occurrence=0, window=False):
                      inputs=inputs, excluded_different_body=excluded, covered=sum(v > 0 for v in counts.values()), total=len(counts),
                      missing_relative_regions=[k for k, v in sorted(counts.items()) if not v]))
     print(json.dumps(rows[-1]))
+
+if a.frame_levels:
+    for archive in a.archives:
+        identity = json.loads((archive / 'identity.json').read_text())
+        assert not identity.get('coverage_scope', {}).get('driver_only', False), 'driver-only profiles cannot establish production coverage'
+    for name in ['record', 'append', 'required_level']:
+        observe('jxl-encoder/src/frame_level.rs', name)
+    for name in ['append_byte_aligned', 'append_unaligned', 'record_frame', 'frame_level']:
+        observe('jxl-encoder/src/bit_writer.rs', name)
+    observe('jxl-encoder/src/headers/frame_header.rs', 'write')
+    observe('jxl-encoder/src/api/animate.rs', 'finish_animation_codestream',
+            window=('let frame_level = frames', 3))
+    observe('jxl-encoder/src/api/ingest.rs', 'finish_animation_output',
+            window=('.max(encoded.frame_level);', 1))
+    (a.output / 'regions.json').write_text(json.dumps(dict(inputs=identities, functions=rows,
+        source_comparison='Exact function bodies; code-region keys relative to each declaration'), indent=2))
+    raise SystemExit(0)
 
 if a.animation_deltas:
     for archive in a.archives:

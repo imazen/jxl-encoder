@@ -15,10 +15,11 @@ p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('before', type=Path)
 p.add_argument('after', type=Path)
 p.add_argument('output', type=Path)
+p.add_argument('--filename', default='output.jxl', choices=['output.jxl', 'input.jxl'])
 a = p.parse_args()
 assert not a.output.exists()
-before = {x.relative_to(a.before): x for x in a.before.glob('*/output.jxl')}
-after = {x.relative_to(a.after): x for x in a.after.glob('*/output.jxl')}
+before = {x.relative_to(a.before): x for x in a.before.glob('*/' + a.filename)}
+after = {x.relative_to(a.after): x for x in a.after.glob('*/' + a.filename)}
 assert before and before.keys() == after.keys()
 
 def inspect(stream):

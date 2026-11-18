@@ -18,6 +18,34 @@ if (root / '.git').exists() or not (root.parent.parent / 'provenance.json').is_f
     p.error('requires an owned clean-source export')
 a.output.mkdir(exist_ok=False)
 cases = [
+    ('level-record', 'jxl-encoder/src/headers/frame_header.rs',
+     '        writer.record_frame(self)', '        Ok(())', None, 'frame_level::'),
+    ('level-compact-record', 'jxl-encoder/src/headers/frame_header.rs',
+     '        writer.record_frame(self)', '        if self.all_default_fast_path && self.is_all_default() { Ok(()) } else { writer.record_frame(self) }', None, 'frame_level::'),
+    ('level-byte-append', 'jxl-encoder/src/bit_writer.rs',
+     '        self.frame_sequence.append(&other.frame_sequence)\n', '        Ok(())\n', None, 'frame_level::'),
+    ('level-bit-append', 'jxl-encoder/src/bit_writer.rs',
+     '        self.frame_sequence.append(&other.frame_sequence)?;\n', '', None, 'frame_level::'),
+    ('level-area-boundary', 'jxl-encoder/src/frame_level.rs',
+     'if zero_area > 1 << 28 {', 'if zero_area >= 1 << 28 {', None, 'frame_level::'),
+    ('level-area-reset', 'jxl-encoder/src/frame_level.rs',
+     '                zero_area = 0;', '                zero_area += 0;', None, 'frame_level::'),
+    ('level-duration-boundary', 'jxl-encoder/src/frame_level.rs',
+     '< u128::from(numerator)', '<= u128::from(numerator)', None, 'frame_level::'),
+    ('level-duration-denominator', 'jxl-encoder/src/frame_level.rs',
+     '* u128::from(denominator) * 120', '* 120', None, 'frame_level::'),
+    ('level-spatial-units', 'jxl-encoder/src/frame_level.rs',
+     'let lf_scale = 1_u32 << (3 * frame.lf_level);',
+     'let lf_scale = (1_u32 << (3 * frame.lf_level)) * frame.upsampling;', None, 'frame_level::'),
+    ('level-reference-duration', 'jxl-encoder/src/frame_level.rs',
+     'if normal && header.have_animation {', 'if header.have_animation {', None, 'frame_level::'),
+    ('level-static-duration', 'jxl-encoder/src/frame_level.rs',
+     'if normal && header.have_animation {', 'if normal {', None, 'frame_level::'),
+    ('level-lf-crop', 'jxl-encoder/src/frame_level.rs',
+     'let crop = !lf_frame\n            && (', 'let crop = (', None, 'frame_level::'),
+    ('level-actual-crop', 'jxl-encoder/src/frame_level.rs',
+     'let (w, h) = frame.crop.unwrap_or((width, height));',
+     'let (w, h) = (width, height);', None, 'frame_level::'),
     ('anim-selected-delta-source', 'jxl-encoder/src/api/animate.rs',
      'delta_options.blend_source = Some(1);', 'delta_options.blend_source = Some(0);',
      'animation_delta_candidate_contract', 'strict_selected_delta_reads'),
@@ -371,6 +399,10 @@ for name, source, before, after, target, selection in cases:
         if name == 'anim-selected-delta-source':
             command += ['--source', 'jxl-encoder/tests/animation_delta_candidate_contract/layouts.rs',
                         '--source', 'jxl-encoder/tests/animation_delta_candidate_contract/profiles.rs']
+        if name.startswith('level-'):
+            command += ['--source', 'jxl-encoder/src/frame_level.rs',
+                        '--source', 'jxl-encoder/src/bit_writer.rs',
+                        '--source', 'jxl-encoder/src/headers/frame_header.rs']
         if name.startswith('anim-'):
             command += ['--source', 'jxl-encoder/src/api/animate.rs',
                         '--source', 'jxl-encoder/src/api/animation.rs',

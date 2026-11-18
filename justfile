@@ -2388,3 +2388,21 @@ animation-delta-final-continuation manifest artifacts coverage_env lint_home lin
     env CARGO_HOME={{quote(lint_home)}} CARGO_TARGET_DIR={{quote(lint_target)}} cargo +1.100.0 clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --lib --test animation_delta_candidate_contract -- -D warnings
     cargo check --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features
     cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+
+animation-large-area-production-evidence manifest output coverage_env selection:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" "$4" --driver-only-coverage --include-ignored --test-target animation_zero_area_contract --features __expert,parallel --source jxl-encoder/src/frame_level.rs --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/api/ingest.rs --source jxl-encoder/src/bit_writer.rs --source jxl-encoder/src/headers/frame_header.rs --source jxl-encoder/src/vardct/bitstream.rs --source jxl-encoder/src/vardct/lf_frame.rs --source scripts/check_explicit_blend_headers.py --source scripts/jxl_bitstream_diff.py --source scripts/jxl_container.py' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}} {{quote(selection)}}
+
+frame-level-strict-candidate manifest artifacts coverage_env:
+    mkdir {{quote(artifacts)}}
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3/unit" frame_level:: --features __expert,parallel --source jxl-encoder/src/frame_level.rs --source jxl-encoder/src/bit_writer.rs --source jxl-encoder/src/headers/frame_header.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    just animation-large-area-production-evidence {{quote(manifest)}} {{quote(artifacts + "/strict-duration")}} {{quote(coverage_env)}} strict_minimum_nonzero
+    just animation-large-area-production-evidence {{quote(manifest)}} {{quote(artifacts + "/strict-area")}} {{quote(coverage_env)}} strict_zero_duration
+
+frame-level-core-library-check manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" frame_level:: --features __expert,parallel --source jxl-encoder/src/frame_level.rs --source jxl-encoder/src/bit_writer.rs --source jxl-encoder/src/headers/frame_header.rs --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/ingest.rs --source jxl-encoder/src/vardct/encoder.rs --source jxl-encoder/src/vardct/bitstream.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+frame-level-all-offered-evidence manifest output coverage_env:
+    just animation-large-area-production-evidence {{quote(manifest)}} {{quote(output)}} {{quote(coverage_env)}} all_offered
+
+frame-level-winning-delta-evidence manifest output coverage_env:
+    bash -c 'set -e; source "$1"; export CARGO_TARGET_DIR="$CARGO_LLVM_COV_TARGET_DIR"; python3 scripts/run_selected_test_evidence.py "$2" "$3" strict_winning --driver-only-coverage --test-target frame_level_delta_contract --features __expert,parallel --source jxl-encoder/src/frame_level.rs --source jxl-encoder/src/api.rs --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/api/ingest.rs --source jxl-encoder/src/bit_writer.rs --source jxl-encoder/src/headers/frame_header.rs' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
