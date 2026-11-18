@@ -1,7 +1,8 @@
 # Progressive AC coefficient controls
 
-Issue 144 V1 has a locally verified rectangular-LLF repair. The wider caller
-and feature audit remains open; the remaining gaps are listed below. The native component control links
+Issue 144 V1's rectangular-LLF, static-dispatch and ReferenceOnly repairs are
+on main. The selected caller audit includes the renewed CMYK controls below.
+The named region results and remaining supporting-code limits are explicit. The native component control links
 unmodified libjxl v0.12.0 `a7a9c78` objects and invokes actual
 `AcStrategy::ComputeNaturalCoeffOrder` and
 `ProgressiveSplitter::SplitACCoefficients` for the nineteen transform codes
@@ -115,7 +116,7 @@ producer-option comparisons with parallel and loop support disabled. The first
 minimal attempt failed to compile the new explicit-loop fixture without the
 loop feature; that fixture now carries the same feature condition as its setter.
 
-## Open verification
+## Region and caller qualification
 
 The original flat-prefix mutation is detected by the sparse production test;
 its exact mutated object, profile, source and nonzero verdict remain in
@@ -189,9 +190,8 @@ non-improving best-result, early convergence and its unreachable final fallback
 remain outside this grid. These supporting routines were not repaired by V1;
 these observations establish caller reach, not their complete qualification.
 
-V1 remains open while the accepted animation-layout inventory is checked.
-Older notes asserting that float animation is unsupported are not sufficient
-input-admission evidence. GPU execution has not been measured; external
+The accepted animation-layout inventory is checked below. Earlier assertions
+that float animation is unsupported were corrected against actual admission. GPU execution has not been measured; external
 prequantized inputs share the tested existing CPU emission seam.
 
 
@@ -260,3 +260,79 @@ animation controls successfully (retained object
 PID 2122811). Expanded feature/CLI/workspace lint also passes.
 `progressive-ac-typed-minimal-lint.log`: rc0, 93 seconds, peak RSS
 0.89 GiB, minimum available 20,911 MiB.
+
+
+## November 19: CMYK caller qualification on current source
+
+The original rectangular count repair is `f273358e`; this qualification adds
+no production arithmetic, preset or public API. All tracked encoder production
+files, Cargo.lock and sibling pins were checked against `43fa78ce` before the
+selected tests, with unrelated overlays restored byte for byte afterward.
+
+Interleaved CMYK8/16 uses the required existing profile and independent LCMS
+swatches. Each of the seventeen policy bindings runs Single, two-pass and
+three-pass output at 1x17, 32x17, 259x17 and 17x259. Both uniform controls and
+varying swatch blocks exercise request, strided, writer and distinct two-frame
+explicit Replace animation inputs. The animation convenience entry agrees with
+the request entry. Actual headers must carry the requested pass count.
+Every final color and Black sample equals that decoder's own Single result.
+Primary Rust and the pinned native float decoder fully render every selected
+stream, with exact source Black codes.
+
+Separate CMY/Black requests additionally exercise RGB8/BGR8/RGBA8/BGRA8/RGB16/
+RGBA16, optional straight alpha, packed/strided/writer entries and both shapes.
+Every alpha code remains exact too. Already-linear precomputed and prequantized
+engines hold prepared coefficients and quantizers fixed across passes, preserve
+Black, and leave container signaling to their caller. These cases assign the
+resolved EffortProfile and mode through existing fields; other engine defaults
+remain as constructed. This is not a full named-strategy entry point. They run with defaults,
+minimal std/convenience features and the std Cargo feature disabled. All 408
+named prepared output pairs between the latter two builds are byte-identical;
+this measures those outputs, not every feature or input.
+
+CMYK streaming explicitly refuses the layout; legacy still conveniences have
+no profile attachment surface. Their refusal controls remain in the H10 suite.
+Rate control has no Black input surface and refuses a CMYK profile. JPEG
+transcodes use their separate coefficient writer rather than these VarDCT pass
+presets. These are caller classifications, not silent missing-file skips.
+
+The original-count replay changes 1536 of 1632 actual color samples in each
+complete decoder output on the 32x17 varying input, with 544 Black samples
+unchanged in each. The first primary words are 1065335378 versus 1065334088;
+the first native words are 1065335375 versus 1065334104. The failing streams,
+raw float output and native PFMs precede the assertion. The restored fault
+and corrected strict replay retain separate source/profile identities.
+
+The initial new fixture incorrectly extended the established uniform-swatch
+0.005 physical bound to sharp boundaries. Single itself fails there: d0.01
+maximum errors are 0.024695158/0.024695277 in primary/native, and d0.001 gives
+0.012850583/0.012851059. Those attempts remain failures. The corrected fixture
+keeps the unchanged 0.005 assertion on uniform swatches, retains varying-source
+errors as diagnostics, and requires exact progressive-vs-Single samples and
+the 0.001 decoder-agreement assertion. No established source-quality
+assertion, expected bytes or ignore changed.
+
+`progressive-cmyk-current-isolated-v5` passes the complete expanded default and
+minimal runtimes, library baseline and unchanged lock/drift checks, then fails
+at one new-test fixed-chunk Clippy diagnostic (1106 s, run-heavy peak RSS
+1.77 GiB, minimum available17733 MiB). The mechanical iterator correction
+and direct std-feature-disabled caller pass in the continuation. The extra
+strict std-feature-disabled lint probe in v6 exposes nineteen baseline
+unused-variable/diagnostic/experimental-variant errors outside the new test;
+its failing log is retained. Default and minimal-with-std strict lint pass.
+`progressive-cmyk-current-isolated-v7` passes the final strict/fault/direct
+runtime, those two strict lint configurations and formatting, restoring all
+five overlays (102 s, peak RSS1.06 GiB, minimum available18423 MiB).
+`just progressive-cmyk-std-feature-disabled-lint <manifest>` preserves the
+separate failing baseline probe; it is not credited as passing lint.
+
+`progressive-cmyk-current-regions-v7/regions.json` combines checksum-verified
+passing CMYK archives with the prior diagnostic-loop control, after comparing
+exact current function bodies. Counter35/35, quantizer delegate20/20,
+tokenizer281/281 and splitter39/39 mapped regions are observed. Earlier static
+and ReferenceOnly dispatch windows retain their separate15/15 and3/3 results.
+These are named code regions, not full encoder/input coverage. Supporting
+rate-control errors/allocation/HDR/bailout paths and actual GPU execution retain
+the limits already stated above. The supplemental native/support binding was
+attached after replay and explicitly records its attachment time; original
+archive identities remain unchanged.

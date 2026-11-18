@@ -2726,17 +2726,21 @@ in [the contract](ALPHA_SQUEEZE_CONTRACT.md); registry Rust's separate global-ba
 panic is retained as a decoder gap.
 
 
-### Issue 144: progressive rectangular LLF counting (I144-V1, local validation)
+### Issue 144: progressive rectangular LLF counting (I144-V1, resolved)
 
 Progressive pass nonzeros previously skipped the first `covered_blocks` flat
 positions. Part 1 I.3.2/I.4 and unmodified native natural orders instead place
 LLF in the top-left normalized rectangle. Native DCT16x16 positions 2/3 are AC,
 while positions 16/17 are LLF. Both sparse tokens and real-image final colors
-fail before repair. The candidate shares the original quantizer's rectangular
+fail before repair. Repair `f273358e` shares the original quantizer's rectangular
 count with progressive tokenization, preserving original count arithmetic,
 rounding, pass schedules, policy gates and public API. Selected real-image/policy/public/layout/animation/prepared-engine/CLI callers
-and the unchanged byte-lock/library baseline pass. Full caller/region and
-feature verification remain open in [the contract](PROGRESSIVE_AC_CONTRACT.md).
+and the unchanged byte-lock/library baseline pass. Renewed CMYK, separate
+Black/alpha and already-linear engine controls preserve final samples through
+selected default/minimal/std-feature-disabled callers. Exact-body counter,
+delegate, tokenizer and splitter regions are fully observed; supporting caller
+errors and the baseline std-feature-disabled lint gap remain explicit in
+[the contract](PROGRESSIVE_AC_CONTRACT.md).
 
 
 ### Issue 144: static entropy progressive admission (I144-V1-static, resolved)

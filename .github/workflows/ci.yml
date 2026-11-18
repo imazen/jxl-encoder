@@ -70,12 +70,20 @@ jobs:
           --features __expert,__internals,__pre_quantized,parallel,rate-control,jpeg-reencoding,chroma-subsampling
           --test black_profile_contract --test cmyk_source_contract
           --test cmyk_prepared_contract --test cmyk_animation_layers_contract
+          --test progressive_cmyk_contract
           -- --test-threads=1
 
       - name: CMYK storage with the std Cargo feature disabled
         run: >-
           cargo test --locked --release -p jxl-encoder --no-default-features
           --features __expert,convenience --test cmyk_default_disabled_contract
+          -- --test-threads=1
+
+      - name: Progressive prepared Black with the std Cargo feature disabled
+        run: >-
+          cargo test --locked --release -p jxl-encoder --no-default-features
+          --features convenience,__expert,__internals,__pre_quantized
+          --test progressive_cmyk_contract prepared_black_engines
           -- --test-threads=1
 
       - name: Check minimal JPEG transcode feature combination
@@ -211,12 +219,20 @@ jobs:
           --features __expert,__internals,__pre_quantized,parallel,rate-control,jpeg-reencoding,chroma-subsampling
           --test black_profile_contract --test cmyk_source_contract
           --test cmyk_prepared_contract --test cmyk_animation_layers_contract
+          --test progressive_cmyk_contract
           -- --test-threads=1
 
       - name: CMYK storage with the std Cargo feature disabled
         run: >-
           cargo test --locked --release -p jxl-encoder --no-default-features
           --features __expert,convenience --test cmyk_default_disabled_contract
+          -- --test-threads=1
+
+      - name: Progressive prepared Black with the std Cargo feature disabled
+        run: >-
+          cargo test --locked --release -p jxl-encoder --no-default-features
+          --features convenience,__expert,__internals,__pre_quantized
+          --test progressive_cmyk_contract prepared_black_engines
           -- --test-threads=1
 
       - name: Optional ICC row conversion and default-disabled feature graph

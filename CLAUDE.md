@@ -2152,7 +2152,7 @@ normal/strict/drift locks, focused and workspace all-target strict lint pass
 minimum available 19,755 MiB). The wider V1 caller audit remains separate.
 
 
-### 2026-11-17: progressive AC flat-prefix nonzero count (issue 144 V1)
+### RESOLVED 2026-11-19: progressive AC flat-prefix nonzero count (issue 144 V1)
 
 Retained sparse production tokens lose native DCT16x16 position 2 value +2
 (recovered zero) and miscount nonzero LLF positions. The independent native
@@ -2162,13 +2162,17 @@ for raw types 3,4,10,11,16,17,18; twelve other offered types remain unchanged.
 Both actual before tests fail with exact objects/profiles/source and streams
 retained under `progressive-ac-unit-before`, `progressive-ac-real-before` and
 `live-tests/progressive-ac-contract/run-0` at the issue artifact root.
-The candidate reuses the original quantizer's rectangular LLF count through a
+Repair `f273358e` reuses the original quantizer's rectangular LLF count through a
 shared private helper. Sparse and real-image controls now pass, as do selected
 policy/public/layout/animation/prepared-engine/CLI callers and the unchanged
 library/byte-lock baseline, minimal feature controls and strict lint. Selected
-region evidence and original-count mutation are retained. Full caller validation remains open
-in [the contract](docs/PROGRESSIVE_AC_CONTRACT.md). Existing nearest precision
-rounding and preset schedules remain unchanged.
+region evidence and original-count mutation are retained. Renewed CMYK, separate
+Black/alpha and prepared/prequantized controls pass default/minimal runtimes;
+already-linear prepared output also passes with the std Cargo feature disabled.
+Its extra strict-lint probe exposes nineteen baseline diagnostics, retained as
+a separate gap. Exact-body counter/delegate/tokenizer/splitter regions are all
+observed. [Caller scopes, actual failures and remaining supporting-code limits](docs/PROGRESSIVE_AC_CONTRACT.md)
+remain explicit. Existing nearest precision rounding and preset schedules are unchanged.
 
 
 ### 2026-11-17: expert wire-control command required an absent tool
