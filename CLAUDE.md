@@ -1788,6 +1788,19 @@ separate queue items. Broad/coverage/remote verdicts must be read independently.
 
 ## Known Bugs (ACTIVE)
 
+### RESOLVED 2026-11-19: optional rate-control quantizer feedback
+
+The old controller coarsens unmet tiles by dividing the integer AC quantizer,
+and its integer fallback subtracts one. Selected native p95 rises 1.1234435 to
+2.231186 at distance 1. Multiplication plus finer minimum progress after damping
+repairs the selected strict-first controls; primary/native complete pixels and
+all seventeen audit bindings pass. Proportional and rounding fault controls
+remain independent. [Contract and qualification limits](docs/RATE_CONTROL_CONTRACT.md).
+Broad rate-control library, unchanged byte/drift locks and strict default/minimal
+lint/format pass. Exact update regions 33/33 are observed; surrounding controller
+gaps remain documented. No universal convergence claim.
+
+
 ### RESOLVED 2026-11-19: rate-control metric peak and retained reservations
 
 The planar metric helper reserves the pinned comparator peak plus external

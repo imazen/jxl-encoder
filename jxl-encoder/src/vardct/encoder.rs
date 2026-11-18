@@ -7072,8 +7072,8 @@ impl VarDctEncoder {
     /// 2. Loops: encode → decode → butteraugli → adjust quant field
     /// 3. Returns when converged (within 5% of target) or max iterations reached
     ///
-    /// Typically converges in 2-4 iterations. Each iteration costs ~50% of a
-    /// full encode since XYB conversion, CfL, masking, and AC strategy are reused.
+    /// XYB conversion, CfL, masking, and AC strategy are reused. Reaching the
+    /// iteration cap does not guarantee the target or universal improvement.
     ///
     /// Returns the encoded bytes. Use `encode_with_rate_control_config` for
     /// iteration count and custom configuration.

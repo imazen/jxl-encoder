@@ -5,8 +5,8 @@
 //! Iterative rate control for improved distance targeting.
 //!
 //! This module implements libjxl-style rate control: encode → decode → measure
-//! butteraugli → adjust quant field → repeat. Typically converges in 2-4
-//! iterations with 5% tolerance of target distance.
+//! butteraugli → adjust quant field → repeat. The caller selects the iteration
+//! cap and tolerance; reaching the cap does not guarantee the target distance.
 
 use super::VarDctEncoder;
 use super::adaptive_quant::quantize_quant_field;
@@ -239,15 +239,10 @@ fn adjust_quant_field(
             let ratio = dist / target;
             let old = quant_field[idx] as f32;
 
-            // Decrease quant value (lower = more bits = better quality)
-            // quant_field controls quantization strength, so LOWER values = finer quantization
-            // To improve quality, we divide by ratio (or equivalently, multiply by 1/ratio)
-            let mut new_val = old / ratio;
-
-            // Ensure at least some change when ratio > 1
-            if ratio > 1.0 && (new_val as u8) == (old as u8) {
-                new_val = old - 1.0;
-            }
+            // The integer field multiplies AC quantization, while decoded
+            // steps divide by it (libjxl Quantizer::inv_quant_ac). Raise it
+            // when error exceeds the target so the next frame is finer.
+            let mut new_val = old * ratio;
 
             // On iteration 1, blend with initial to prevent oscillation
             if iter == 1 {
@@ -255,8 +250,10 @@ fn adjust_quant_field(
                 new_val = 0.6 * new_val + 0.4 * init;
             }
 
-            // Clamp to valid range
-            new_val = new_val.clamp(qf_lower, qf_upper);
+            // Above-target tiles must progress toward finer steps even when
+            // integer rounding or initial-field damping would stall or reverse
+            // the update. The caller's upper bound still takes precedence.
+            new_val = new_val.max(old + 1.0).clamp(qf_lower, qf_upper);
             quant_field[idx] = new_val as u8;
         }
     }
@@ -530,3 +527,7 @@ mod color_domain_tests {
         assert_eq!(budget.used(), 0);
     }
 }
+
+#[cfg(all(test, feature = "__expert"))]
+#[path = "rate_control_direction_tests.rs"]
+mod direction_tests;

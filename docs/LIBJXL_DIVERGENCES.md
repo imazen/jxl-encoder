@@ -2953,3 +2953,10 @@ Remaining layout inventory is tracked separately in the progressive contract.
 | Site | Encoder contract | Reference distinction | Qualification |
 |---|---|---|---|
 | `vardct::tile_distmap` comparator and tile construction | Reserve structural comparator peak plus six inputs, returned padded map and visible output; release scoped map/tile reservations on drop. Retain reflect101/minimum-eight preparation and metric arithmetic | Resource accounting around the existing pinned Rust Butteraugli comparator; no new encoding gate/default or numeric tuning | Exact finite-map, rendering, refusal/lifetime and restored-fault controls pass. Whole-controller/RSS and defensive error gaps: RATE_CONTROL_CONTRACT.md. |
+
+
+### Issue 144: optional controller quantizer feedback
+
+| Site | Encoder behavior | Reference units | Qualification |
+|---|---|---|---|
+| `vardct/rate_control.rs::adjust_quant_field` | Multiply by error/target for unmet tiles; enforce minimum finer progress after damping, subject to caller bounds | v0.12 `Quantizer::inv_quant_ac` divides decoded AC steps by the integer field. This separate controller is not the complete libjxl search policy. | Strict-first native/primary pixel and prepared-entry checks, all seventeen audit bindings, integer/damping controls and restored arithmetic faults pass. No gate or registry-value changes. Broad/unchanged-lock checks and all 33 update regions pass; surrounding loop gaps and limits: RATE_CONTROL_CONTRACT.md. |

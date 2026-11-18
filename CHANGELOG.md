@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- Correct optional rate-control quantizer feedback and keep above-target updates
+  moving toward finer AC steps through damping and integer rounding.
+
 - Preserve prepared LF DC, attached patch dictionaries and supplied DC-width
   promises. Reject LF at prequantized callers without DC, raw upsampling greater
   than one, and unsupported animation payload routes.

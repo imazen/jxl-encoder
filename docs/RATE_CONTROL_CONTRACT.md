@@ -74,3 +74,58 @@ Native CI now selects the complete `vardct::tile_distmap::` module, including
 the peak-admission and map/tile lifetime regressions. The earlier `tests::`
 filter selected the generic tile controls only. Local full-module baseline
 evidence is separate from each fresh platform CI verdict.
+
+## November 19: quantizer feedback direction and rounding
+
+The optional controller divided its integer quantizer by observed error/target,
+and its minimum-change fallback subtracted one. Larger integer fields mean finer
+AC steps in our transform and pinned v0.12 `Quantizer::inv_quant_ac`. The shared
+update now multiplies; after existing damping it enforces at least one finer
+integer step, subject to the caller's bounds. There is no new strategy gate or
+registry value.
+
+Fresh pure-main forced-DCT8/no-filter 32x17 streams completely render in primary
+Rust and native v0.12, with the unchanged 0.001 linear-pixel agreement bound.
+Native tile p95 at requested 0.1 rises from 0.11604721 to 0.16096665 on the old
+controller; at requested 1 it rises from 1.1234435 to 2.231186. The first sign-only
+candidate still worsens the latter to 2.193624 because integer rounding can
+reverse it. With both repairs, those strict controls reach 0.096703894 and
+0.94171447 after one adjustment. These are observations of decoded pixels,
+scored by the separately qualified metric, not inferred from encoded size.
+
+Selected controls cover all seventeen audit policy bindings, distances 0.1/1,
+zero/two iteration caps and ordinary versus public prepared entries. Corresponding
+entry bytes and iteration counts agree. Raw constructor options are explicitly
+bound for this control; this is not complete high-level libjxl search parity.
+Direct proportional-response and no-reversal controls cover integer values
+1 through 255, above-target ratios, damping and upper saturation. Restoring the
+wrong arithmetic is detected by the proportional assertion; restoring missing
+minimum progress is detected by the rounding control. The native improvement
+fixture alone does not detect every partial repair.
+
+Default/minimal pixel checks, existing rate-control callers, the full
+rate-control-enabled library, unchanged normal/strict/drift locks and strict
+default/minimal lint/format pass. Existing hash expectations and ignores remain
+unchanged. `rate-control-direction-queue22-broad-v1` records the broad gate.
+The enclosing queue exits nonzero later because a separate native HLG observer
+cannot execute from its archive mount; that supplies no HLG result.
+
+Exact-body evidence observes 33/33 update-helper regions and 94/109 surrounding
+controller regions. Missing controller regions include error propagation,
+decoder-failure fallback, explicit color-encoding dispatch and a worse
+intermediate result. The post-loop fallback is unreachable because the inclusive
+loop returns at its cap. Feature-disabled diagnostics are not execution evidence.
+These fractions describe instrumented regions, not complete input-space coverage.
+`rate-control-direction-queue22-regions-v1` binds the bodies and profiles.
+Native CI selects the new module in both feature configurations after installing
+the pinned tools; each remote commit still requires its own platform verdict.
+The original regression archive is `rate-control-direction-queue17-before-v1`;
+the sign-only failure is `rate-control-direction-queue18-gates-v1`. Accepted
+selected source is `rate-control-direction-after-selected-v4`; positive and
+restored-fault records are `rate-control-direction-queue21-gates-v1`.
+
+This controller's iteration cap does not promise convergence or universal
+perceptual improvement. Its final-iteration selection, alternate decoder
+failure fallback and arbitrary source/profile combinations retain separate
+coverage limits. The private request adapter and CLI bypass remain separate
+work; no public request setter is exposed by this repair.

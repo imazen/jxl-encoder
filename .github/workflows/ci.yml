@@ -246,6 +246,8 @@ jobs:
         run: |
           cargo test --locked -p jxl-encoder --release --no-default-features --features std,rate-control,__expert --test rate_control_feature_contract -- --test-threads=1
           cargo test --locked -p jxl-encoder --release --features __expert,parallel,rate-control --test rate_control_feature_contract -- --test-threads=1
+          cargo test --locked -p jxl-encoder --release --no-default-features --features std,rate-control,__expert --lib vardct::rate_control::direction_tests:: -- --test-threads=1
+          cargo test --locked -p jxl-encoder --release --features __expert,parallel,rate-control --lib vardct::rate_control::direction_tests:: -- --test-threads=1
 
       - name: Test rate-control metric peak and reservation lifetimes
         run: >-
