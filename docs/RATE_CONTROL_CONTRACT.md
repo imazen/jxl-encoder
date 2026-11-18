@@ -335,3 +335,14 @@ dependency selection. `request-dictionary-minimal-q67-runtime-v1/byte-identity.j
 retains every baseline/candidate stream hash; no new production region claim
 is made from this uninstrumented run. Reproduce the journal/stream comparison
 with `just request-dictionary-replay-identity <baseline-run> <candidate-run> <new-report>`.
+
+The native Linux ARM and Windows ARM jobs in run 44611150758 reached the
+JPEG reconstruction control and failed at the djxl invocation. Their
+reference builds report that CMake could not find JPEG. Pinned v0.12 only
+registers `--reconstruct_jpeg` in builds with a JPEG pixel encoder. Its
+`.jpg` output path attempts JPEG reconstruction first in either build.
+The test uses that path and requires exact equality to the original JPEG,
+with stderr included on failure. The local pinned replay passes automatic,
+forced and coarsening controls across all CLI policies, including destination
+preservation on controller refusal. Its retained ELF is
+`6b04550accbfdee6b3ac08dcd989a4e654c338f7de9549db18792fe5bf73990f`.

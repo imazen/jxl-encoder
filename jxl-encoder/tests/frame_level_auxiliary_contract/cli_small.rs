@@ -808,14 +808,20 @@ fn cli_small_rate_control_rejects_jpeg_domain_routes_before_writing() {
                 let mut rebuilt = Vec::new();
                 parsed.reconstruct_jpeg(&mut rebuilt).unwrap();
                 assert_eq!(rebuilt, original);
+                // A .jpg destination selects reconstruction first. The explicit
+                // flag is only registered in builds with a JPEG pixel encoder.
                 let native = std::process::Command::new(jxl_encoder::test_helpers::djxl_path())
                     .arg(out.join("output.jxl"))
                     .arg(out.join("rebuilt.jpg"))
-                    .arg("--reconstruct_jpeg")
+                    .arg("--num_threads=1")
                     .output()
                     .unwrap();
-                std::fs::write(out.join("reconstruct.log"), native.stderr).unwrap();
-                assert!(native.status.success());
+                std::fs::write(out.join("reconstruct.log"), &native.stderr).unwrap();
+                assert!(
+                    native.status.success(),
+                    "native JPEG reconstruction failed for {policy:?} {route}: {}",
+                    String::from_utf8_lossy(&native.stderr)
+                );
                 assert_eq!(std::fs::read(out.join("rebuilt.jpg")).unwrap(), original);
             }
             let sentinel = b"existing destination";
