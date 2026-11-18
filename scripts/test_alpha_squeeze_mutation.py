@@ -251,6 +251,10 @@ cases = [
      '__RESTORE_FLAT_AC_COUNT__',
      '                        let pass_nz: u16 = pass_coeffs[covered_blocks..].iter().filter(|&&v| v != 0).count() as u16;',
      None, 'progressive_sparse_ac_tokens'),
+    ('cmyk-ac-flat-prefix', 'jxl-encoder/src/vardct/bitstream.rs',
+     '__RESTORE_FLAT_AC_COUNT__',
+     '                        let pass_nz: u16 = pass_coeffs[covered_blocks..].iter().filter(|&&v| v != 0).count() as u16;',
+     'progressive_cmyk_contract', 'strict_cmyk_progressive'),
     ('survivor-multiplier', 'jxl-encoder/src/vardct/bitstream.rs',
      '__RESTORE_PLACEHOLDERS__',
      '        // Restore the original noncompacted local tree/channel sequence.\n        let section_channels: alloc::vec::Vec<_> = local_indices.iter().map(|&index| {\n            let channel = &pipeline.sub_channels[index].channel;\n            match crop_region {\n                None => channel.clone(),\n                Some(crop) => channel.extract_grid_cell(crop.grid_x, crop.grid_y, crop.group_dim)\n                    .unwrap_or_else(crate::modular::channel::Channel::new_zero_sized),\n            }\n        }).collect();\n        let per_sub_q: alloc::vec::Vec<_> = local_indices.iter()\n            .map(|&index| pipeline.sub_channels[index].q.max(1)).collect();\n        if !declare_squeeze && section_channels.is_empty() {\n            return Ok(());\n        }\n\n',
@@ -466,6 +470,13 @@ for name, source, before, after, target, selection in cases:
                         '--source', 'scripts/jxl_container.py']
         if name.startswith('rate-'):
             command += ['--features', '__expert,parallel,rate-control']
+        if name == 'cmyk-ac-flat-prefix':
+            command += ['--source', 'jxl-encoder/tests/progressive_cmyk_contract/prepared.rs',
+                        '--source', 'jxl-encoder/tests/progressive_cmyk_contract/separated.rs',
+                        '--source', 'jxl-encoder/src/vardct/ac_group.rs', '--source', 'jxl-encoder/src/api/cmyk.rs',
+                        '--source', 'jxl-encoder/tests/fixtures/ps_cmyk.hex',
+                        '--source', 'jxl-encoder/tests/fixtures/cmyk_lcms_swatches.hex',
+                        '--source', 'scripts/cmyk_raw_frame_oracle.cc']
         if name.startswith(('rate-', 'source-white-')):
             command += ['--source', 'jxl-encoder/src/vardct/source_white.rs',
                         '--source', 'jxl-encoder/src/vardct/xyb.rs',

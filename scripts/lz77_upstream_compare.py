@@ -24,17 +24,18 @@ def sha(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def read_pfm(path):
+def read_pfm(path, channels=3):
+    assert channels in (1, 3)
     stream = io.BytesIO(path.read_bytes())
-    assert stream.readline().strip() == b"PF", path
+    assert stream.readline().strip() == (b"PF" if channels == 3 else b"Pf"), path
     width, height = map(int, stream.readline().split())
     scale = float(stream.readline())
     assert abs(scale) == 1, (path, scale)
     body = stream.read()
-    assert len(body) == width * height * 12, path
+    assert len(body) == width * height * channels * 4, path
     if scale > 0:
         body = b"".join(body[i:i+4][::-1] for i in range(0, len(body), 4))
-    row = width * 12
+    row = width * channels * 4
     return width, height, b"".join(body[y*row:(y+1)*row] for y in reversed(range(height)))
 
 

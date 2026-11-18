@@ -3180,3 +3180,34 @@ delta-palette-float-association-final-check manifest selection base output cover
 
 delta-palette-float-support-binding manifest base output native_identity default minimal depth associated associated_minimal reader:
     python3 scripts/bind_committed_support.py {{quote(manifest)}} {{quote(base)}} {{quote(output)}} {{quote(default)}} {{quote(minimal)}} {{quote(depth)}} {{quote(associated)}} {{quote(associated_minimal)}} {{quote(reader)}} --source jxl-encoder/tests/support/pfm.rs --source jxl-encoder/tests/support/decoded_frames.rs --source scripts/libjxl_original_profile.cc --native-identity {{quote(native_identity)}}
+
+
+progressive-cmyk-evidence manifest output coverage_env selection:
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3" "$4" --test-target progressive_cmyk_contract --features __expert,parallel --source jxl-encoder/tests/progressive_cmyk_contract/prepared.rs --source jxl-encoder/tests/progressive_cmyk_contract/separated.rs --source jxl-encoder/src/api/cmyk.rs --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/vardct/bitstream.rs --source jxl-encoder/src/vardct/ac_group.rs --source jxl-encoder/tests/fixtures/ps_cmyk.hex --source jxl-encoder/tests/fixtures/cmyk_lcms_swatches.hex --source scripts/cmyk_raw_frame_oracle.cc' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}} {{quote(selection)}}
+
+
+progressive-cmyk-flat-prefix-fault manifest output coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/test_alpha_squeeze_mutation.py "$2" "$3" --case cmyk-ac-flat-prefix' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+
+progressive-cmyk-current-source-check manifest artifacts coverage_env:
+    mkdir {{quote(artifacts)}}
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3/default" "" --test-target progressive_cmyk_contract --features __expert,__internals,__pre_quantized,parallel --source jxl-encoder/tests/progressive_cmyk_contract/prepared.rs --source jxl-encoder/tests/progressive_cmyk_contract/separated.rs --source jxl-encoder/src/api/cmyk.rs --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/vardct/encoder.rs --source jxl-encoder/src/vardct/bitstream.rs --source jxl-encoder/src/vardct/ac_group.rs --source jxl-encoder/tests/fixtures/ps_cmyk.hex --source jxl-encoder/tests/fixtures/cmyk_lcms_swatches.hex --source scripts/cmyk_raw_frame_oracle.cc; python3 scripts/run_selected_test_evidence.py "$2" "$3/minimal" "" --no-default-features --test-target progressive_cmyk_contract --features std,convenience,__expert,__internals,__pre_quantized --source jxl-encoder/tests/progressive_cmyk_contract/prepared.rs --source jxl-encoder/tests/progressive_cmyk_contract/separated.rs --source jxl-encoder/src/api/cmyk.rs --source jxl-encoder/src/api/animate.rs --source jxl-encoder/src/vardct/encoder.rs --source jxl-encoder/src/vardct/bitstream.rs --source jxl-encoder/src/vardct/ac_group.rs --source jxl-encoder/tests/fixtures/ps_cmyk.hex --source jxl-encoder/tests/fixtures/cmyk_lcms_swatches.hex --source scripts/cmyk_raw_frame_oracle.cc' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    just alpha-squeeze-broad-baseline {{quote(manifest)}}
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel --lib --test progressive_cmyk_contract -- -D warnings
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert,__internals,__pre_quantized --lib --test progressive_cmyk_contract -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+
+
+progressive-cmyk-final-check manifest artifacts coverage_env:
+    mkdir {{quote(artifacts)}}
+    just progressive-cmyk-evidence {{quote(manifest)}} {{quote(artifacts + "/strict")}} {{quote(coverage_env)}} strict_cmyk_progressive
+    just progressive-cmyk-flat-prefix-fault {{quote(manifest)}} {{quote(artifacts + "/fault")}} {{quote(coverage_env)}}
+    bash -c 'set -e; source "$1"; python3 scripts/run_selected_test_evidence.py "$2" "$3/prepared-std-feature-disabled" prepared_black_engines --no-default-features --features convenience,__expert,__internals,__pre_quantized --test-target progressive_cmyk_contract --source jxl-encoder/tests/progressive_cmyk_contract/prepared.rs --source jxl-encoder/tests/progressive_cmyk_contract/separated.rs --source jxl-encoder/src/vardct/encoder.rs --source jxl-encoder/src/vardct/bitstream.rs --source jxl-encoder/src/vardct/ac_group.rs --source jxl-encoder/tests/fixtures/ps_cmyk.hex --source jxl-encoder/tests/fixtures/cmyk_lcms_swatches.hex --source scripts/cmyk_raw_frame_oracle.cc' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(artifacts)}}
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel --lib --test progressive_cmyk_contract -- -D warnings
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert,__internals,__pre_quantized --lib --test progressive_cmyk_contract -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+
+
+progressive-cmyk-std-feature-disabled-lint manifest:
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features convenience,__expert,__internals,__pre_quantized --lib --test progressive_cmyk_contract -- -D warnings

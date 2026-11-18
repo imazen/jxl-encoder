@@ -34,6 +34,7 @@ p.add_argument('--still-frame-levels', action='store_true')
 p.add_argument('--modular-width-levels', action='store_true')
 p.add_argument('--optional-icc', action='store_true')
 p.add_argument('--cmyk-source', action='store_true')
+p.add_argument('--progressive-cmyk', action='store_true')
 p.add_argument('--cmyk-handoffs', action='store_true')
 p.add_argument('--jpeg-sampling', action='store_true')
 p.add_argument('--reference-root', type=Path)
@@ -214,6 +215,15 @@ if a.jpeg_metadata:
             window=('let jpeg_upsampling = compute_jpeg_upsampling', 1))
     (a.output / 'regions.json').write_text(json.dumps(dict(inputs=identities, functions=rows,
         note='Exact source bodies and named windows; no whole-JPEG coverage claim.'), indent=2))
+    sys.exit(0)
+
+if a.progressive_cmyk:
+    for name in ['count_nonzero_except_llf', 'num_nonzero_except_llf']:
+        observe('jxl-encoder/src/vardct/ac_group.rs', name)
+    for name in ['tokenize_ac_group', 'split_coefficients_into_passes']:
+        observe('jxl-encoder/src/vardct/bitstream.rs', name)
+    (a.output / 'regions.json').write_text(json.dumps(dict(inputs=identities, functions=rows,
+        note='Exact progressive emission function regions from selected CMYK callers; not all input or encoder coverage.'), indent=2))
     sys.exit(0)
 
 if a.cmyk_handoffs:
