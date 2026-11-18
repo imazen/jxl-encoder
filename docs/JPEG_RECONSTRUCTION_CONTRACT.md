@@ -297,3 +297,27 @@ transcode selector 4/4, transcode call 3/3 and coarsen call 8/8. This is selecte
 window coverage, not full CLI or JPEG coverage. The corrected report/CLI chain
 passes (`jpeg-scan-grid-restored-regions-v2.log`, 49 seconds; peak RSS 1.15 GiB,
 minimum available 19,119 MiB).
+
+### Progressive absolute-factor follow-up
+
+`common_grid::progressive_common_absolute_sampling_frame_grid_matches_native`
+uses progressive SOF2, one DC scan and separate visible-block AC scans. Grayscale
+and equal-factor YCbCr use each supported absolute factor at 1x1, 16x8, 8x16,
+17x9 and 257x9. Unmodified v0.12 transcodes and reconstructs each source first;
+all offered API policy requests then require complete primary/native frame
+samples and exact reconstructed JPEG bytes. This adds progressive scan geometry
+to the baseline common-factor controls; it does not claim arbitrary progressive
+JPEG coverage.
+
+Normal and default-disabled builds pass, as does strict focused lint.
+Restoring either old dimension calculation fails both baseline and progressive
+controls. Dropped reset and extra-run mutations remain detected by the scan
+controls. All four mutations restore exact source checksums before the fresh
+passing evidence capture. Logs are `jpeg-progressive-common-grid-first.log`
+and `jpeg-progressive-common-grid-qualification.log`; the latter exits zero
+in 269 seconds (run-heavy peak RSS 1.11 GiB, minimum available 19,064 MiB).
+Exact executable/profile/source evidence is retained as
+`jpeg-progressive-common-grid-restored`; its region report retains the same
+25/25 sampling, 8/8 grid, 16/17 import and 48/53 scan-writer measurements and
+previously documented defensive error-return gaps. No production arithmetic,
+expected bytes, thresholds or ignores change in this follow-up.

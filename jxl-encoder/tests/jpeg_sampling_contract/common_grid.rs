@@ -1,6 +1,6 @@
 //! Absolute SOF sampling controls frame padding even with equal component factors.
 use super::*;
-fn source(width: u16, height: u16, h: u8, v: u8, gray: bool) -> Vec<u8> {
+fn source(width: u16, height: u16, h: u8, v: u8, gray: bool, progressive: bool) -> Vec<u8> {
     fn marker(out: &mut Vec<u8>, kind: u8, data: &[u8]) {
         out.extend([255, kind]);
         out.extend(u16::try_from(data.len() + 2).unwrap().to_be_bytes());
@@ -18,7 +18,7 @@ fn source(width: u16, height: u16, h: u8, v: u8, gray: bool) -> Vec<u8> {
     for c in 1..=channels {
         sof.extend([c, h * 16 + v, 0]);
     }
-    marker(&mut out, 0xc0, &sof);
+    marker(&mut out, if progressive { 0xc2 } else { 0xc0 }, &sof);
     let mut tables = vec![0, 1];
     tables.extend([0; 15]);
     tables.push(0);
@@ -30,7 +30,7 @@ fn source(width: u16, height: u16, h: u8, v: u8, gray: bool) -> Vec<u8> {
     for c in 1..=channels {
         scan.extend([c, 0]);
     }
-    scan.extend([0, 63, 0]);
+    scan.extend([0, if progressive { 0 } else { 63 }, 0]);
     marker(&mut out, 0xda, &scan);
     let blocks = if gray {
         usize::from(width).div_ceil(8) * usize::from(height).div_ceil(8)
@@ -41,25 +41,44 @@ fn source(width: u16, height: u16, h: u8, v: u8, gray: bool) -> Vec<u8> {
             * usize::from(v)
             * 3
     };
-    let bits = blocks * 2;
-    out.resize(out.len() + bits / 8, 0);
-    if !bits.is_multiple_of(8) {
-        out.push((1 << (8 - bits % 8)) - 1);
+    fn zero_bits(out: &mut Vec<u8>, bits: usize) {
+        out.resize(out.len() + bits / 8, 0);
+        if !bits.is_multiple_of(8) {
+            out.push((1 << (8 - bits % 8)) - 1);
+        }
+    }
+    zero_bits(&mut out, blocks * if progressive { 1 } else { 2 });
+    if progressive {
+        // Noninterleaved AC scans traverse visible blocks, even when the
+        // interleaved DC scan had a larger MCU-completed component grid.
+        let visible_blocks = usize::from(width).div_ceil(8) * usize::from(height).div_ceil(8);
+        for c in 1..=channels {
+            marker(&mut out, 0xda, &[1, c, 0, 1, 63, 0]);
+            zero_bits(&mut out, visible_blocks);
+        }
     }
     out.extend([255, 0xd9]);
     out
 }
 #[test]
 fn common_absolute_sampling_frame_grid_matches_native() {
+    check(false);
+}
+#[test]
+fn progressive_common_absolute_sampling_frame_grid_matches_native() {
+    check(true);
+}
+fn check(progressive: bool) {
     let root = directory();
     let mut failures = Vec::new();
     for gray in [true, false] {
         for (h, v) in [(1, 1), (2, 1), (1, 2), (2, 2)] {
             for (width, height) in [(1, 1), (16, 8), (8, 16), (17, 9), (257, 9)] {
-                let label = format!("gray-{gray}-{h}x{v}-{width}x{height}");
+                let label =
+                    format!("progressive-{progressive}-gray-{gray}-{h}x{v}-{width}x{height}");
                 let case = root.join(&label);
                 std::fs::create_dir(&case).unwrap();
-                let input = source(width, height, h, v, gray);
+                let input = source(width, height, h, v, gray, progressive);
                 let original = case.join("original.jpg");
                 std::fs::write(&original, &input).unwrap();
                 let reference = case.join("reference.jxl");
