@@ -6689,3 +6689,23 @@ controls. Selected helper/call coverage is 25/25 and 4/4 regions, with exact
 body checks against retained instrumentation; this is not whole-JPEG coverage.
 Library, unchanged locks, minimal JPEG and strict focused lint pass. Existing
 expectations/ignores remain unchanged. [Evidence and limits](docs/JPEG_RECONSTRUCTION_CONTRACT.md).
+
+
+### RESOLVED November 18: JPEG APP0 color interpretation and RGB sampling
+
+Unrelated APP0 payloads no longer override Adobe or explicit RGB identifiers.
+The independent libjpeg-turbo source control preserves every selected RGB8
+sample; the original classifier and pinned v0.12 change displayed pixels.
+Valid JFIF/Adobe precedence and identifier fallback retain their controls.
+Non-unit RGB sampling now returns a typed error rather than losing factors;
+pinned v0.12 returns an encoder error on the selected portable sources too.
+
+Expanded native controls also exposed an independent Rust JPEG reconstruction
+mapping error. The paired decoder pin e5cbff73 uses the frame YCbCr flag rather
+than JBRD identifier shortcuts. API/bare/default/recompression/gain-map/CLI
+routes, all offered policy bindings, complete primary/native samples and exact
+contracted JPEG bytes pass. Selected classifier/admission regions are 36/37
+and 8/8; the remaining defensive array-bound path is excluded by earlier
+metadata validation. Normal broad/minimal/optional/lint checks pass with all
+existing expectations unchanged. Remote CI is separate.
+[Evidence, portable-source correction and limits](docs/JPEG_COLOR_SIGNAL_CONTRACT.md).
