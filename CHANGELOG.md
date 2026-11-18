@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- Declare the actual Gradient predictor for selected near-lossless palette
+  deltas; preserve quantized color and exact alpha through affected callers.
+
 - Preserve distinct empty JPEG DHT segments and real zero-symbol Huffman
   table definitions, including exact original-byte reconstruction and cloned
   parsed-data consistency checks (`cc0e53a3`).

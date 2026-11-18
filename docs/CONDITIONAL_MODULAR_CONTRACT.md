@@ -49,3 +49,62 @@ Both tools require explicitly supplied v0.12.0 a7a9c78 executables and retain
 input, output, full logs, executable/source hashes and decoded-sample results.
 Pillow reads only explicitly selected RGB8 PNG output in the palette control;
 there is no binary16, HDR, alpha or complete mode/entry-path qualification.
+
+
+## E6 repaired: selected predictor and affected callers
+
+The earlier prepared-probe paragraphs record the initial investigation. E6
+now has an actual winning palette-delta witness and a verified correction.
+E4 and the decoder-model work remain independent of this palette change.
+
+At 32×32 and 259×17, index -1 wins at (2,1), red: Gradient 132 versus Select 136.
+Both complete decoder outputs differ from the recorded quantized target with
+declaration 4. A control changes only declaration 4 to 5: same stream length,
+same indices, same quantized output, exactly one changed bit. Both decoders
+then reproduce every target code. The producer now declares Gradient 5 whenever
+a delta wins, and Zero when no delta wins. The checkerboard control observes
+that actual Zero outcome. v0.12 production selects Average4 for its palette
+candidate; this correction preserves our existing Gradient quantizer and
+makes no whole-native-algorithm or quantized-source parity claim.
+
+The affected path inventory is the global single-group writer, its patched
+single-group caller, and the separate multi-group palette writer. Public
+legacy/request/strided/writer/streaming and both animation request spellings
+run over 17 policy bindings, Huffman/ANS and 32×32/259×17 inputs. Every complete
+primary/native color buffer equals the recorded quantized target, and still
+entries have identical bytes. Integer RGB/RGBA 8/16 controls retain every alpha
+code in both decoders. Two actual reference patches exercise the patched
+single-group caller with independent RGB addition. The multi-group patched
+writer bypasses this optional palette; that control requires exact original
+lossless pixels rather than pretending a palette was applied.
+
+Actual CLI subprocesses cover default, aliases and every offered spelling,
+Experimental on/off, both entropy settings, buffered/streaming-output options
+and the streaming-input option's documented palette fallback. APNG input uses
+the separate animation config branch and fully decodes both displayed frames.
+CLI/API bytes match. Explicit palette-off controls exercise both forwarding
+guard outcomes. CLI child profiles are retained separately from their test
+executable. This is selected caller evidence, not all pixel-pattern coverage,
+floating-point palette quality qualification or a compression improvement.
+
+Retained evidence:
+- conditional-modular-before-v5: actual winning-delta failures and one-bit
+  native interpretation controls.
+- delta-palette-after-callers: rc0/185s, peak RSS 1.96GiB/min available 18039MiB.
+- delta-palette-precision: rc0/47s, peak 1.94GiB/min18014MiB.
+- delta-palette-patch-bypass: rc0/37s, peak 1.95GiB/min17975MiB.
+- delta-palette-cli-expanded: rc0/163s, peak 1.07GiB/min18838MiB.
+- conditional-modular-restored-faults: palette fault fails at runtime;
+  source SHA restored. Wrapper for three independent faults: rc0/113s,
+  peak 1.97GiB/min17868MiB. This commit's palette fix does not depend on the
+  separate reference-property or model candidates.
+
+The changed declaration covers 4/4 exact-source regions, including Zero and
+Gradient. Initial full-function captures are 920/963 palette and 333/405
+multi-group writer regions; those larger bodies contain untested allocation,
+serializer and candidate-selection exits. They are not claimed fully covered.
+The initial patched-caller gap is closed by the nonempty dictionary control.
+Normal library, unchanged byte locks/drift, minimal runtime, doctests, no-std
+and strict workspace/focused lint pass. The first broad command stops on new
+CLI test lint, then the corrected lint/format chain passes. No existing byte
+expectation, threshold or ignore is migrated.

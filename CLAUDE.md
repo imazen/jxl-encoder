@@ -6709,3 +6709,24 @@ and 8/8; the remaining defensive array-bound path is excluded by earlier
 metadata validation. Normal broad/minimal/optional/lint checks pass with all
 existing expectations unchanged. Remote CI is separate.
 [Evidence, portable-source correction and limits](docs/JPEG_COLOR_SIGNAL_CONTRACT.md).
+
+
+### RESOLVED issue 144 E6: selected delta-palette predictor declaration
+
+A recorded winning implicit delta at (2,1) distinguishes Gradient 132 from
+Select 136. The old declaration 4 produces different quantized pixels in both
+decoders. Changing only the declaration to 5 changes one bit, preserving the
+indices and quantized result, and makes every decoded target sample exact.
+The writer now declares its existing Gradient quantizer accurately. Unmodified
+v0.12 selects Average4 for its own candidate; full native palette quantization
+parity is not claimed.
+
+Selected policy/entropy/legacy/request/stride/writer/streaming/animation and
+actual CLI spellings pass complete primary/native target checks. Integer
+RGB/RGBA 8/16 controls preserve exact alpha. A nonempty patch dictionary exercises
+the single-group patched writer; multi-group patched frames are observed to
+bypass this optional palette and reproduce the original lossless samples.
+Exact changed-declaration regions 4/4 cover both Gradient and Zero. Unrelated
+allocator/serializer exits remain outside the selected region evidence.
+Existing byte expectations and ignores are unchanged. Full source, fault,
+mode/caller and feature evidence is in CONDITIONAL_MODULAR_CONTRACT.md.

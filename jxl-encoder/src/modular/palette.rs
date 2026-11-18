@@ -1357,7 +1357,11 @@ pub(crate) fn apply_lossy_palette_with_budget(
     }
 
     // If no deltas were actually used, set predictor to Zero
-    let predictor = if delta_used { 4u8 } else { 0u8 }; // 4 = ClampedGradient (matching libjxl)
+    let predictor = if delta_used {
+        super::predictor::Predictor::Gradient as u8
+    } else {
+        super::predictor::Predictor::Zero as u8
+    };
 
     // Replace channels with palette + index
     let mut new_channels: Vec<Channel> = Vec::new();
@@ -1373,6 +1377,16 @@ pub(crate) fn apply_lossy_palette_with_budget(
         new_channels.push(ch.clone());
     }
     image.channels = new_channels;
+
+    #[cfg(all(test, feature = "__expert", feature = "std"))]
+    let predictor = super::delta_palette_contract::record(
+        &quant_out,
+        &image.channels[begin_c + 1],
+        width,
+        height,
+        nb_deltas,
+        predictor,
+    );
 
     Some(LossyPaletteResult {
         nb_colors,

@@ -2879,3 +2879,10 @@ Remaining layout inventory is tracked separately in the progressive contract.
 |---|---|---|---|
 | `jpeg::detect_ycbcr_color_transform` | Require the JFIF identifier for APP0 precedence; unrelated APP0 retains Adobe/identifier interpretation. | Unmodified v0.12 treats any APP0 as JFIF in the selected controls. Independent libjpeg-turbo source samples remain RGB. | Shared reference discrepancy; candidate correction is unconditional across offered JPEG policy bindings. See JPEG_COLOR_SIGNAL_CONTRACT.md for actual before streams, positive precedence and caller evidence. No registry gate/value change. |
 | `jpeg::encode_jpeg_to_jxl_inner` RGB sampling admission | Reject any non-unit component factor when a three-component frame has no YCbCr transform. | F.2 does not carry JPEG sampling fields for an RGB frame. | Covers relative and equal absolute RGB factors through raw/parsed/bare/recompression/gain-map/CLI callers. Unit RGB remains supported. Native admission observations and coverage limits are recorded in JPEG_COLOR_SIGNAL_CONTRACT.md. |
+
+
+### Issue 144 E6 selected delta-palette predictor
+
+| Site | Encoder | libjxl v0.12 / independent control | Status |
+| --- | --- | --- | --- |
+| `modular::palette::apply_lossy_palette_with_budget` | Declare Gradient (5) when a delta wins, Zero otherwise, matching the actual quantization predictor. | Native palette prediction follows its selected predictor (v0.12 production selects Average4); our quantizer uses Gradient. A declaration-only 4-to-5 control preserves our full payload and makes both complete decoder outputs equal the observed quantized values. | Reproduced at 32×32 and 259×17, including an actual distinguishing winning implicit delta. Unconditional correction; no registry gate or policy-value change. Integer API/CLI, entropy, alpha and patched-writer controls pass; see CONDITIONAL_MODULAR_CONTRACT.md. |

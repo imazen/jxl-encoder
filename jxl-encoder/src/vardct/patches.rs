@@ -3703,6 +3703,34 @@ pub(crate) fn encode_reference_frame(
     Ok(())
 }
 
+#[cfg(all(test, feature = "__expert", feature = "std"))]
+pub(crate) fn palette_contract_reference() -> PatchesData {
+    PatchesData {
+        positions: vec![
+            PatchPosition {
+                x: 3,
+                y: 4,
+                ref_pos_idx: 0,
+            },
+            PatchPosition {
+                x: 7,
+                y: 9,
+                ref_pos_idx: 0,
+            },
+        ],
+        ref_positions: vec![PatchReferencePosition {
+            ref_id: PATCH_FRAME_REFERENCE_ID,
+            x0: 0,
+            y0: 0,
+            xsize: 1,
+            ysize: 1,
+        }],
+        ref_image: [vec![10.0 / 255.0], vec![20.0 / 255.0], vec![30.0 / 255.0]],
+        ref_width: 1,
+        ref_height: 1,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -472,6 +472,13 @@ jobs:
           --test modular_width_level_contract --test animation_contract
           --test jpeg_sampling_contract
           -- --test-threads=1
+      - name: Selected delta palette contracts
+        env:
+          JXL_ENCODER_OUTPUT_DIR: ${{ runner.temp }}/issue144-contracts
+        run: >-
+          cargo test --locked -p jxl-encoder --release
+          --features "__expert,parallel,parallel-tree-learning" --lib
+          -- delta_palette_contract --include-ignored --test-threads=1
       - name: Test JPEG reconstruction CLI routes
         env:
           JXL_ENCODER_OUTPUT_DIR: ${{ runner.temp }}/issue144-contracts
