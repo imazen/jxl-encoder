@@ -3303,3 +3303,7 @@ request-controller-dictionary-check manifest:
     cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,rate-control,corpus-tests --test request_rate_control_patch_contract -- -D warnings
     cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,__expert,rate-control,corpus-tests --test request_rate_control_patch_contract -- -D warnings
     cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+
+# Compare only complete named dictionary matrices and preserve individual hashes.
+request-dictionary-replay-identity baseline candidate output:
+    python3 scripts/compare_request_dictionary_replays.py {{quote(baseline)}} {{quote(candidate)}} {{quote(output)}}

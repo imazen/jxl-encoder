@@ -294,8 +294,7 @@ primary image is checked with unchanged bounds. Runtime ELF
 profile`a54f7346b6308938de3499a02a9d1a21d564cb09b0d058bab6f8fe39e5801aec`
 are retained in`request-patch-q54-runtime-v2`. The enclosing run subsequently
 fails strict lint on its new unused observation helper; v3 records that level
-in the existing observation JSON and passes default/minimal lint. Minimal
-runtime remains pending. No assertion, encoder arithmetic or quality bound
+in the existing observation JSON and passes default/minimal lint. The minimal runtime and byte-identity follow-up is recorded below. No assertion, encoder arithmetic or quality bound
 changes in that observation-only correction.
 
 ## Primary border-fix dependency integration
@@ -316,3 +315,23 @@ remains nonzero. The exact-source q68 continuation passes unchanged normal/
 strict byte locks and divergence drift, strict broad library lint and scoped
 formatting. Both source overlays are restored exactly; their individual
 verdicts remain retained. This is the q66/q68 evidence union, not a green q66.
+
+## Minimal dictionary replay and feature byte identity
+
+The minimal std/expert/rate-control/corpus feature build completes the same
+seventeen policy bindings, RGB/RGBA, controller caps 0/2 and LF off/on with
+all original dictionary, pixel, alpha and stride assertions intact. Exact
+encoded bytes agree with the completed full-feature q54 matrix in every named
+cell. The comparison checks both journals for unique complete cells and all
+policy/layout/controller/LF combinations before comparing stream SHA256s.
+It establishes byte identity on this matrix, without inferring input-space or
+whole-encoder coverage.
+
+`request-dictionary-minimal-q67-isolated-v1` passes runtime, strict selected
+test lint and formatting. Retained uninstrumented ELF:
+`b4caf94390698255df9b20c102356390819371b8c3da39faab1c1bc7dc5409e9`.
+Its source identity binds the unchanged encoder bodies and primary f9d86075
+dependency selection. `request-dictionary-minimal-q67-runtime-v1/byte-identity.json`
+retains every baseline/candidate stream hash; no new production region claim
+is made from this uninstrumented run. Reproduce the journal/stream comparison
+with `just request-dictionary-replay-identity <baseline-run> <candidate-run> <new-report>`.
