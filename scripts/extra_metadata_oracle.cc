@@ -3,6 +3,7 @@
 // Observe unmodified v0.12 bundle writing separately from public setter admission.
 #include <iomanip>
 #include <iostream>
+#include <string>
 #include "jxl/encode.h"
 #include "lib/jxl/enc_aux_out.h"
 #include "lib/jxl/enc_bit_writer.h"
@@ -10,10 +11,28 @@
 #include "lib/jxl/image_metadata.h"
 #include "lib/jxl/memory_manager_internal.h"
 
-int main() {
+int main(int argc, char** argv) {
   if (JxlEncoderVersion() != 12000) return 2;
   JxlMemoryManager memory;
   if (!jxl::MemoryManagerInit(&memory, nullptr)) return 3;
+  if (argc == 2 && std::string(argv[1]) == "--counts") {
+    for (uint32_t count : {0u, 1u, 17u, 18u, 255u, 256u, 257u, 4095u, 4096u, 4097u}) {
+      jxl::ImageMetadata metadata;
+      metadata.num_extra_channels = count;
+      metadata.extra_channel_info.resize(count);
+      jxl::BitWriter writer(&memory);
+      const bool written = !!jxl::Bundle::Write(metadata, &writer, jxl::LayerType::Header, nullptr);
+      JxlEncoder* encoder = JxlEncoderCreate(nullptr);
+      if (JxlEncoderSetCodestreamLevel(encoder, 10) != JXL_ENC_SUCCESS) return 6;
+      JxlBasicInfo info; JxlEncoderInitBasicInfo(&info);
+      info.xsize = 1; info.ysize = 1; info.num_extra_channels = count;
+      const bool accepted = JxlEncoderSetBasicInfo(encoder, &info) == JXL_ENC_SUCCESS;
+      std::cout << "count\t" << count << "\tmetadata_written\t" << written
+                << "\tbits\t" << writer.BitsWritten() << "\tapi_admitted\t" << accepted << '\n';
+      JxlEncoderDestroy(encoder);
+    }
+    return 0;
+  }
   struct Case { const char* name; JxlExtraChannelType type; uint32_t shift, cfa; float solidity; };
   for (const auto& c : {
       Case{"depth0", JXL_CHANNEL_DEPTH, 0, 0, 0},

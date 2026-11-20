@@ -428,7 +428,7 @@ image = "0.25.10"
 # jxl-rs (github.com/lilith/jxl-rs) is the PRIMARY decoder for roundtrip tests
 jxl = "0.4.0"
 # ICC regressions include 4 MB profiles, beyond the old decoder's fixed cap.
-jxl-current = { package = "jxl", version = "0.8.0", git = "https://github.com/imazen/jxl-rs-v08", rev = "3d48825cd10d0a5c325a683136723198fb69859a" }
+jxl-current = { package = "jxl", version = "0.8.0", git = "https://github.com/imazen/jxl-rs-v08", rev = "f9d860756843e813663d51335e8ac11f83d07c09" }
 jxl_transforms = "0.4.0"
 # jxl-oxide is secondary — always test jxl-rs first
 jxl-oxide = "0.12.6"

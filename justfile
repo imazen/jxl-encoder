@@ -3291,3 +3291,65 @@ container-policy-boxes-supplement-check manifest artifacts coverage_env:
 
 container-policy-minimal-check manifest:
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert --test container_policy_contract -- --test-threads=1
+
+# Retain selected members without downloading a multi-gigabyte CI ZIP.
+ci-artifact-members repository artifact output pattern:
+    python3 scripts/extract_ci_artifact_members.py {{quote(repository)}} {{quote(artifact)}} {{quote(output)}} --member {{quote(pattern)}}
+
+# Caller provides CODEC_CORPUS_DIR and guarded v0.12 tools; run through run-heavy.
+request-controller-dictionary-check manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,rate-control,corpus-tests --test request_rate_control_patch_contract -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,__expert,rate-control,corpus-tests --test request_rate_control_patch_contract -- --test-threads=1
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,rate-control,corpus-tests --test request_rate_control_patch_contract -- -D warnings
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,__expert,rate-control,corpus-tests --test request_rate_control_patch_contract -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+
+# Compare only complete named dictionary matrices and preserve individual hashes.
+request-dictionary-replay-identity baseline candidate output:
+    python3 scripts/compare_request_dictionary_replays.py {{quote(baseline)}} {{quote(candidate)}} {{quote(output)}}
+
+# Caller provides guarded v0.12 tools and uses run-heavy for local execution.
+alpha-large-multiplier-check manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --test alpha_squeeze_matrix high_precision_alpha_large_quantizers -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel,rate-control --test alpha_large_multiplier_contract -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert,rate-control --test alpha_squeeze_matrix high_precision_alpha_large_quantizers -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert,rate-control --test alpha_large_multiplier_contract -- --test-threads=1
+
+alpha-tree-regions output llvm +archives:
+    python3 scripts/color_admission_coverage.py {{quote(llvm)}} {{quote(output)}} {{archives}} --alpha-tree
+
+# Requires the caller-selected guarded v0.12 original-profile observer.
+animation-alpha-options-check manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --test animation_alpha_contract --test animation_alpha_layers_contract -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert --test animation_alpha_contract --test animation_alpha_layers_contract -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,parallel --test animation_contract --test it -- animation hash_lock strategy_libjxl_byte_lock divergence_table_drift --test-threads=1
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --lib --test animation_alpha_contract --test animation_alpha_layers_contract -- -D warnings
+    cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert --lib --test animation_alpha_contract --test animation_alpha_layers_contract -- -D warnings
+    cargo fmt --manifest-path {{quote(manifest)}} -p jxl-encoder --check
+
+alpha-coding-faults manifest output coverage_env:
+    bash -c 'set -e; source "$1"; python3 scripts/test_alpha_coding_mutations.py "$2" "$3"' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+animation-alpha-forward-regions output llvm +archives:
+    python3 scripts/color_admission_coverage.py {{quote(llvm)}} {{quote(output)}} {{archives}} --animation-alpha-forward
+
+animation-alpha-compatibility-check manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --test progressive_ac_contract animation_ -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert --test progressive_ac_contract animation_ -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,parallel --test cmyk_animation_layers_contract -- --test-threads=1
+
+# Native syntax range and Level 10 input admission are separate observations.
+extra-count-native source build output:
+    just extra-metadata-native {{quote(source)}} {{quote(build)}} {{quote(output)}}
+    {{quote(output)}} --counts
+
+extra-count-check manifest:
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel,rate-control --test extra_metadata_contract -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features std,convenience,__expert,__internals,__pre_quantized,rate-control --test extra_metadata_contract -- --test-threads=1
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --lib extra_channel_count_wire_bound_precedes_header_writes
+
+extra-count-faults manifest output coverage_env:
+    bash -c 'set -e; source "$1"; shift; exec python3 scripts/test_extra_count_mutations.py "$@"' _ {{quote(coverage_env)}} {{quote(manifest)}} {{quote(output)}}
+
+extra-count-regions output llvm +archives:
+    python3 scripts/color_admission_coverage.py {{quote(llvm)}} {{quote(output)}} {{archives}} --extra-count

@@ -360,6 +360,69 @@ fn extra_metadata_prepared_entries_validate_before_working_pixels() {
                 "{mode:?} entry {entry}: {error}"
             );
         }
+        for count in [257, 4097] {
+            let excess = vec![ExtraChannel::depth(&[]); count];
+            for entry in 0..3 {
+                let result = match entry {
+                    0 => encoder
+                        .encode_with_extras(16, 17, &[], &excess)
+                        .map(|v| v.data),
+                    1 => encoder.encode_from_precomputed_with_extras(&pre, &[], &excess),
+                    _ => encoder.encode_from_pre_quantized_ac_with_extras(
+                        &pre,
+                        &[],
+                        &Default::default(),
+                        &Default::default(),
+                        &Default::default(),
+                        &Default::default(),
+                        &excess,
+                    ),
+                };
+                let error = result.unwrap_err();
+                assert!(
+                    error.to_string().contains("extra channel count"),
+                    "{policy} raw{entry} {count}: {error}"
+                );
+            }
+        }
+        let planes: Vec<_> = (0..256)
+            .map(|index| vec![(index % 251) as u8; 16 * 17])
+            .collect();
+        let extras: Vec<_> = planes
+            .iter()
+            .map(|data| ExtraChannel::depth(data))
+            .collect();
+        for (entry, result) in [
+            (
+                "direct",
+                encoder
+                    .encode_with_extras(16, 17, &linear, &extras)
+                    .map(|v| v.data),
+            ),
+            (
+                "prepared",
+                encoder.encode_from_precomputed_with_extras(&pre, &qf, &extras),
+            ),
+            (
+                "prequantized",
+                encoder.encode_from_pre_quantized_ac_with_extras(
+                    &pre,
+                    &qf,
+                    &transform.quant_dc,
+                    &transform.quant_ac,
+                    &transform.nzeros,
+                    &transform.raw_nzeros,
+                    &extras,
+                ),
+            ),
+        ] {
+            check_count_planes(
+                &out.join(format!("{policy}-{entry}-count256")),
+                &count_raw_container(&result.unwrap()),
+                0,
+                (16, 17),
+            );
+        }
     }
 }
 
@@ -395,4 +458,411 @@ fn extra_metadata_public_admission_precedes_memory_preflight() {
             );
         }
     }
+}
+
+#[test]
+fn extra_metadata_count_exceeds_wire_limit_without_panicking() {
+    let out = directory();
+    let plane = [7_u8];
+    let extras = vec![ExtraChannel::depth(&plane); 4097];
+    let lossless = LosslessConfig::new()
+        .with_effort(1)
+        .with_threads(1)
+        .with_strategy(jxl_encoder::api::EncoderStrategy::Libjxl);
+    let lossy = LossyConfig::new(1.0)
+        .with_effort(3)
+        .with_threads(1)
+        .with_strategy(jxl_encoder::api::EncoderStrategy::Libjxl);
+    let mut failures = Vec::new();
+    for is_lossless in [true, false] {
+        for writer in [false, true] {
+            let request = if is_lossless {
+                lossless.encode_request(1, 1, PixelLayout::Rgb8)
+            } else {
+                lossy.encode_request(1, 1, PixelLayout::Rgb8)
+            }
+            .with_extra_channels(&extras);
+            let mut destination = b"existing destination".to_vec();
+            let before = destination.clone();
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                if writer {
+                    request
+                        .encode_to(&[0, 0, 0], &mut destination)
+                        .map(|_| Vec::new())
+                } else {
+                    request.encode(&[0, 0, 0])
+                }
+            }));
+            match result {
+                Ok(Err(error)) if error.to_string().contains("extra channel count") => {}
+                other => {
+                    failures.push(format!("lossless={is_lossless},writer={writer}: {other:?}"))
+                }
+            }
+            assert_eq!(destination, before);
+        }
+    }
+    std::fs::write(out.join("count-failures.txt"), failures.join("\n")).unwrap();
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+fn count_cmyk_profile() -> Vec<u8> {
+    include_str!("fixtures/ps_cmyk.hex")
+        .split_whitespace()
+        .flat_map(|line| {
+            (0..line.len())
+                .step_by(2)
+                .map(move |index| u8::from_str_radix(&line[index..index + 2], 16).unwrap())
+        })
+        .collect()
+}
+
+#[test]
+fn extra_metadata_count_admission_accounts_for_layout_channels() {
+    let plane = [7_u8];
+    let profile = count_cmyk_profile();
+    let metadata = jxl_encoder::ImageMetadata::default().with_icc_profile(&profile);
+    for (name, strategy, mode) in encoder_policies::policies() {
+        for layout in [PixelLayout::Rgb8, PixelLayout::Rgba8, PixelLayout::Cmyk8] {
+            let implicit = usize::from(layout.has_alpha()) + usize::from(layout.is_cmyk());
+            for count in [257 - implicit, 4097] {
+                let extras = vec![ExtraChannel::depth(&plane); count];
+                let pixels = if layout.is_cmyk() {
+                    vec![255; 4]
+                } else if layout.has_alpha() {
+                    vec![0, 0, 0, 255]
+                } else {
+                    vec![0; 3]
+                };
+                for lossless in [true, false] {
+                    let lc = LosslessConfig::new()
+                        .with_effort(1)
+                        .with_threads(1)
+                        .with_strategy(strategy.clone())
+                        .with_mode(mode);
+                    let dc = LossyConfig::new(1.0)
+                        .with_effort(3)
+                        .with_threads(1)
+                        .with_strategy(strategy.clone())
+                        .with_mode(mode);
+                    for entry in ["bytes", "into", "writer", "stride"] {
+                        let request = if lossless {
+                            lc.encode_request(1, 1, layout)
+                        } else {
+                            dc.encode_request(1, 1, layout)
+                        }
+                        .with_extra_channels(&extras);
+                        let request = if layout.is_cmyk() {
+                            request.with_metadata(&metadata)
+                        } else {
+                            request
+                        };
+                        let mut destination = b"retained destination".to_vec();
+                        let before = destination.clone();
+                        let result = match entry {
+                            "into" => request.encode_into(&pixels, &mut destination).map(|_| ()),
+                            "writer" => request.encode_to(&pixels, &mut destination).map(|_| ()),
+                            "stride" => {
+                                let mut padded = pixels.clone();
+                                padded.extend_from_slice(&[0xA5; 5]);
+                                request
+                                    .with_row_stride(padded.len())
+                                    .encode(&padded)
+                                    .map(|_| ())
+                            }
+                            _ => request.encode(&pixels).map(|_| ()),
+                        };
+                        let error = result.unwrap_err();
+                        assert!(
+                            error.to_string().contains("extra channel count"),
+                            "{name} {layout:?} {count} {lossless} {entry}: {error}"
+                        );
+                        assert_eq!(destination, before);
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn extra_metadata_count_legal_level_boundary_keeps_auxiliary_samples() {
+    let root = directory();
+    let profile = count_cmyk_profile();
+    let metadata = jxl_encoder::ImageMetadata::default().with_icc_profile(&profile);
+    for (name, strategy, mode) in encoder_policies::policies() {
+        for layout in [PixelLayout::Rgb8, PixelLayout::Rgba8, PixelLayout::Cmyk8] {
+            let implicit = usize::from(layout.has_alpha()) + usize::from(layout.is_cmyk());
+            let planes: Vec<_> = (0..256 - implicit)
+                .map(|index| [(index % 251) as u8])
+                .collect();
+            let extras: Vec<_> = planes
+                .iter()
+                .map(|data| ExtraChannel::depth(data))
+                .collect();
+            let pixels = if layout.is_cmyk() {
+                vec![255; 4]
+            } else if layout.has_alpha() {
+                vec![0, 0, 0, 255]
+            } else {
+                vec![0; 3]
+            };
+            for lossless in [true, false] {
+                let lc = LosslessConfig::new()
+                    .with_effort(1)
+                    .with_threads(1)
+                    .with_strategy(strategy.clone())
+                    .with_mode(mode);
+                let dc = LossyConfig::new(1.0)
+                    .with_effort(3)
+                    .with_threads(1)
+                    .with_strategy(strategy.clone())
+                    .with_mode(mode);
+                let request = if lossless {
+                    lc.encode_request(1, 1, layout)
+                } else {
+                    dc.encode_request(1, 1, layout)
+                }
+                .with_extra_channels(&extras);
+                let request = if layout.is_cmyk() {
+                    request.with_metadata(&metadata)
+                } else {
+                    request
+                };
+                let bytes = request.encode(&pixels).unwrap();
+                let label = format!("{name}-{layout:?}-{lossless}");
+                check_count_planes(&root.join(label), &bytes, implicit, (1, 1));
+            }
+        }
+    }
+}
+
+fn check_count_planes(out: &std::path::Path, bytes: &[u8], implicit: usize, dims: (usize, usize)) {
+    std::fs::create_dir(out).unwrap();
+    std::fs::write(out.join("input.jxl"), bytes).unwrap();
+    let (color, extras) = decoded_extras::decode_current_planes(bytes, "channel-count boundary");
+    assert!(!color.is_empty());
+    assert_eq!(extras.len(), 256);
+    let result = std::process::Command::new(jxl_encoder::test_helpers::djxl_path())
+        .arg(out.join("input.jxl"))
+        .arg(out.join("native.pfm"))
+        .args(["--num_threads=1", "--output_extra_channels"])
+        .output()
+        .unwrap();
+    std::fs::write(out.join("native.log"), &result.stderr).unwrap();
+    assert!(result.status.success(), "native full render: {out:?}");
+    let native = pfm::read_pfm_samples(&out.join("native.pfm"), dims);
+    assert_eq!(native.len(), color.len());
+    for (index, primary) in extras.iter().enumerate() {
+        let native = pfm::read_pfm_samples(
+            &out.join(format!("native.pfm-ec{:03}.pfm", index + 1)),
+            dims,
+        );
+        let expected = if index < implicit {
+            255
+        } else {
+            ((index - implicit) % 251) as i64
+        };
+        for samples in [primary, &native] {
+            assert_eq!(samples.len(), dims.0 * dims.1);
+            for &sample in samples {
+                assert_eq!(
+                    (sample * 255.0).round() as i64,
+                    expected,
+                    "{out:?} extra{index}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn extra_metadata_count_canonicalization_can_remove_layout_alpha() {
+    let root = directory();
+    let planes: Vec<_> = (0..256).map(|index| [(index % 251) as u8]).collect();
+    let extras: Vec<_> = planes
+        .iter()
+        .map(|data| ExtraChannel::depth(data))
+        .collect();
+    for (name, strategy, mode) in encoder_policies::policies() {
+        let config = LossyConfig::new(1.0)
+            .with_effort(3)
+            .with_threads(1)
+            .with_strategy(strategy)
+            .with_mode(mode)
+            .with_canonicalize_input(true);
+        let bytes = config
+            .encode_request(1, 1, PixelLayout::Rgba8)
+            .with_extra_channels(&extras)
+            .encode(&[0, 0, 0, 255])
+            .unwrap();
+        check_count_planes(&root.join(format!("{name}-ordinary")), &bytes, 0, (1, 1));
+        #[cfg(feature = "rate-control")]
+        {
+            let bytes = config
+                .encode_request(1, 1, PixelLayout::Rgba8)
+                .with_extra_channels(&extras)
+                .with_rate_control(jxl_encoder::vardct::RateControlConfig {
+                    max_iterations: 0,
+                    ..Default::default()
+                })
+                .encode(&[0, 0, 0, 255])
+                .unwrap();
+            check_count_planes(&root.join(format!("{name}-controller")), &bytes, 0, (1, 1));
+        }
+    }
+}
+
+#[cfg(feature = "rate-control")]
+#[test]
+fn extra_metadata_count_request_controller_keeps_boundary_and_refusal() {
+    let root = directory();
+    for (name, strategy, mode) in encoder_policies::policies() {
+        for layout in [PixelLayout::Rgb8, PixelLayout::Rgba8] {
+            for total in [256, 257] {
+                let implicit = usize::from(layout.has_alpha());
+                let planes: Vec<_> = (0..total - implicit)
+                    .map(|index| [(index % 251) as u8])
+                    .collect();
+                let extras: Vec<_> = planes
+                    .iter()
+                    .map(|data| ExtraChannel::depth(data))
+                    .collect();
+                let pixels = if implicit == 0 {
+                    vec![0; 3]
+                } else {
+                    vec![0, 0, 0, 255]
+                };
+                let config = LossyConfig::new(1.0)
+                    .with_effort(3)
+                    .with_threads(1)
+                    .with_strategy(strategy.clone())
+                    .with_mode(mode);
+                let result = config
+                    .encode_request(1, 1, layout)
+                    .with_extra_channels(&extras)
+                    .with_rate_control(jxl_encoder::vardct::RateControlConfig {
+                        max_iterations: 0,
+                        ..Default::default()
+                    })
+                    .encode(&pixels);
+                if total == 257 {
+                    assert!(
+                        result
+                            .unwrap_err()
+                            .to_string()
+                            .contains("extra channel count")
+                    );
+                } else {
+                    check_count_planes(
+                        &root.join(format!("{name}-{layout:?}")),
+                        &result.unwrap(),
+                        implicit,
+                        (1, 1),
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[cfg(all(feature = "__internals", feature = "__pre_quantized"))]
+#[path = "support/jxl_signature.rs"]
+mod raw_count_signature;
+
+#[cfg(all(feature = "__internals", feature = "__pre_quantized"))]
+fn count_raw_container(codestream: &[u8]) -> Vec<u8> {
+    // The raw API returns a codestream. This caller supplies its required level.
+    let mut bytes = jxl_encoder::wrap_in_container(codestream, None, None);
+    assert_eq!(&bytes[..32], &raw_count_signature::LEVEL_TEN_PREFIX[..32]);
+    bytes.splice(
+        32..32,
+        raw_count_signature::LEVEL_TEN_PREFIX[32..].iter().copied(),
+    );
+    raw_count_signature::assert_signature(&bytes);
+    bytes
+}
+
+#[test]
+fn extra_metadata_count_admission_precedes_budget_and_invalid_planes() {
+    let limits = jxl_encoder::Limits::default().with_max_memory_bytes(1);
+    let profile = count_cmyk_profile();
+    let metadata = jxl_encoder::ImageMetadata::default().with_icc_profile(&profile);
+    for (name, strategy, mode) in encoder_policies::policies() {
+        for layout in [PixelLayout::Rgb8, PixelLayout::Rgba8, PixelLayout::Cmyk8] {
+            let count = 257 - usize::from(layout.has_alpha()) - usize::from(layout.is_cmyk());
+            let extras = vec![ExtraChannel::depth(&[]); count];
+            let pixels = if layout.is_cmyk() {
+                vec![255; 4]
+            } else if layout.has_alpha() {
+                vec![0, 0, 0, 255]
+            } else {
+                vec![0; 3]
+            };
+            let lc = LosslessConfig::new()
+                .with_effort(1)
+                .with_threads(1)
+                .with_strategy(strategy.clone())
+                .with_mode(mode);
+            let dc = LossyConfig::new(1.0)
+                .with_effort(3)
+                .with_threads(1)
+                .with_strategy(strategy.clone())
+                .with_mode(mode);
+            for lossless in [true, false] {
+                let request = if lossless {
+                    lc.encode_request(1, 1, layout)
+                } else {
+                    dc.encode_request(1, 1, layout)
+                }
+                .with_extra_channels(&extras)
+                .with_limits(&limits);
+                let request = if layout.is_cmyk() {
+                    request.with_metadata(&metadata)
+                } else {
+                    request
+                };
+                let error = request.encode(&pixels).unwrap_err();
+                assert!(
+                    error.to_string().contains("extra channel count"),
+                    "{name} {layout:?} {lossless}: {error}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn extra_metadata_count_canonicalized_admission_precedes_budget() {
+    let plane = [7];
+    let extras = vec![ExtraChannel::depth(&plane); 257];
+    let config = LossyConfig::new(1.0)
+        .with_effort(3)
+        .with_canonicalize_input(true);
+    let limits = jxl_encoder::Limits::default().with_max_memory_bytes(1);
+    let error = config
+        .encode_request(1, 1, PixelLayout::Rgba8)
+        .with_extra_channels(&extras)
+        .with_limits(&limits)
+        .encode(&[32, 64, 96, 255])
+        .unwrap_err();
+    assert!(error.to_string().contains("extra channel count"), "{error}");
+}
+
+#[test]
+fn extra_metadata_count_canonicalization_retains_nonopaque_alpha_in_count() {
+    let plane = [127];
+    let mut extras = vec![ExtraChannel::depth(&plane); 255];
+    // A duplicate alpha plane errors later in lossy pixel preparation if
+    // the prepared-layout count check is missing.
+    extras.push(ExtraChannel::from_alpha_buf(&plane, false));
+    let config = LossyConfig::new(1.0)
+        .with_effort(3)
+        .with_canonicalize_input(true);
+    let error = config
+        .encode_request(1, 1, PixelLayout::Rgba8)
+        .with_extra_channels(&extras)
+        .encode(&[32, 64, 96, 127])
+        .unwrap_err();
+    assert!(error.to_string().contains("extra channel count"), "{error}");
 }

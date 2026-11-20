@@ -103,3 +103,100 @@ minimum available 19,620 MiB). Its seven passing, exact-body archives observe:
 Bodies, declaration spans, object/source/profile hashes and exact missing
 regions are retained in `extra-metadata-regions-final/regions.json`. Test totals
 are not used to establish these scopes or input completeness.
+
+## Extra-channel count follow-up
+
+A later public strict probe at 1x1 with 4097 supplied Depth channels panics in
+both lossless/lossy byte-return and writer routes. The count reached a debug
+assertion in `FileHeader::write_image_metadata`. Retained q78 runtime exits 101,
+ELF `971d5d58b0504d9a573fc0c75c3b9e8b42248b59daa686683ff1f57d41f0f747`,
+profile `e210e30294d393159272557a6f938cbe933a32cc9fa1a95145c17f8c73872925`.
+Exact destination preservation is separate from avoiding that panic.
+
+The pinned unmodified v0.12 `--counts` observer distinguishes two limits:
+
+| Count | Metadata `Bundle::Write` | Level 10 `SetBasicInfo` |
+|---|---|---|
+|256|accept|accept|
+|257|accept|refuse|
+|4096|accept|refuse|
+|4097|refuse before bits|refuse|
+
+Zero, one, seventeen/eighteen and 255 are additional native controls. This
+observes metadata serialization and public admission, not a complete native
+encoded image. It agrees with the [v0.12 metadata visitor](https://github.com/libjxl/libjxl/blob/v0.12.0/lib/jxl/image_metadata.cc)
+and Part 1 D.3/Annex M's separate grammar/profile constraints.
+
+The repair shares the existing 256 Level 10 cap between container
+classification, request admission and all three public raw VarDCT extras
+boundaries. Requests count supplied channels before preflight. Known implicit
+alpha/Black participate then too, except potentially removable alpha under
+canonicalization. The prepared layout is checked again after canonicalization.
+This preserves an opaque-alpha reduction that leaves 256 caller extras.
+The file-header writer independently refuses more than 4096 before writing
+any bits, matching the native metadata grammar. Neither cap changes.
+No public API, registry gate, preset or channel quantizer is added.
+
+The boundary tests use distinct per-channel codes, fully decoded by primary
+Rust and pinned djxl. Selected request entries include RGB/RGBA/CMYK, both
+pixel coding modes, all seventeen audit policy bindings, immutable writer/into
+refusals and declared-alpha/Black accounting. Cap-zero request control and
+canonicalized opaque alpha have separate controls. Raw direct/precomputed/
+prequantized positive codestreams receive their caller-owned Level 10 wrapper;
+invalid counts must precede missing sample/working inputs. Header unit controls
+separately retain the 4096 grammar boundary and an untouched seeded writer on
+4097 rejection. These are selected interactions, not every layout/shape/type
+combination or a whole-input-space proof.
+
+The first new positive fixture assumed unpadded djxl EC filenames and an
+implicit Level 10 declaration for raw codestreams. Its retained q80-v1 fails
+those assumptions; it does not establish wrong boundary pixels. q80-v2 fails
+compilation because the new fixture tried to call a private wrapper. The
+corrected fixture uses the existing public wrapper and shared signature
+constant, preserving every sample assertion.
+
+The final q80-v3 controls pass in the standard and minimal builds. They check
+the existing metadata contracts alongside the new count, caller and pixel
+boundaries. The selected header unit test, normal and strict byte locks,
+divergence checks, strict Clippy and formatting pass. The retained
+instrumented object and profile are
+`033e040d49bcdb0d103b40e35e6f15c735a9b44a997976a5a6f9a829c77df539` and
+`fdd162ead1523f57ac45d2cc5c0498cfbeb74b89c1828031dbac66880fd7ae6e`.
+The wrapper exits zero after 496 seconds with build and test peak RSS of
+1.84 GiB and minimum available memory of 17103 MiB.
+
+The sensitivity runs remove or bypass each count check independently. The
+shared cap, wire check, supplied-count check, implicit alpha and Black
+counts, canonicalization order, and three raw VarDCT entry checks each
+produce a runtime test failure. The final prepared-layout check also fails
+when removed. The discriminating input has nonopaque layout alpha and one
+caller-provided alpha plane, so a later duplicate-plane error cannot
+satisfy the required count refusal. Each replay verifies exact source
+restoration. The first run exits zero in 400 seconds with peak RSS of
+1.89 GiB. The prepared-layout continuation exits zero in 124 seconds with
+peak RSS of 1.88 GiB. These measurements cover the qualification processes.
+
+The checksum-bound region union uses the passing integration object, the
+seeded-writer unit check and the passing canonicalized request controls.
+
+| Selected code scope | Executed / mapped |
+|---|---:|
+| Request count admission and adjacent limit check | 27 / 28 |
+| Prepared-layout count check | 13 / 13 |
+| Request error adapter | 5 / 5 |
+| Shared Level 10 count validator | 6 / 6 |
+| File-header wire limit | 4 / 4 |
+| Raw direct VarDCT entry | 9 / 9 |
+| Tracked precomputed VarDCT entry | 6 / 6 |
+| Prequantized VarDCT entry | 6 / 6 |
+
+The unobserved request region is the adjacent `self.check_limits()?`
+error return. The report measures these selected code regions. The
+fixture families and measurements above establish the scope of the pixel
+comparisons.
+
+Reproduce the functional checks with `just extra-count-check <manifest>`
+against a pinned source export. Use `just extra-count-native <libjxl-source>
+<libjxl-build> <new-observer>` for the native count table, and
+`just extra-count-faults <manifest> <new-output> <coverage-env>` in an owned
+mutable export for the sensitivity replays.

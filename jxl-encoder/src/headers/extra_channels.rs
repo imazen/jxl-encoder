@@ -135,6 +135,17 @@ impl Default for ExtraChannelInfo {
 }
 
 impl ExtraChannelInfo {
+    /// Bound supported image channels independently of their sample buffers.
+    pub(crate) fn validate_supported_count(count: usize) -> Result<()> {
+        if count > crate::container::MAX_EXTRA_CHANNELS_LEVEL10 as usize {
+            return Err(crate::error::Error::InvalidInput(alloc::format!(
+                "extra channel count {count} exceeds the supported Level 10 maximum {}",
+                crate::container::MAX_EXTRA_CHANNELS_LEVEL10
+            )));
+        }
+        Ok(())
+    }
+
     /// Check semantic limits before serializing any part of the bundle.
     pub(crate) fn validate(&self) -> Result<()> {
         let invalid = |message: &str| crate::error::Error::InvalidInput(message.into());

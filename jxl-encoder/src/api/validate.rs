@@ -5,6 +5,12 @@
 
 use super::*;
 
+/// Refuse unsupported channel counts before materializing their sample planes.
+pub(crate) fn validate_extra_channel_count(count: usize) -> Result<()> {
+    crate::headers::extra_channels::ExtraChannelInfo::validate_supported_count(count)
+        .map_err(at_from)
+}
+
 /// Validate source operations independently of fields omitted by ICC output.
 pub(crate) fn validate_lossy_source_encoding(
     layout: PixelLayout,

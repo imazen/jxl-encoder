@@ -9,10 +9,9 @@ with controls in `93b7fbd0`. Their verified scope is described below. The later
 elongated group-admission follow-up remains under final validation.
 
 Progressive pass placement (V2) has its own verified routing controls below.
-Animation currently
-does not forward `alpha_distance` or `alpha_squeeze` to its frame encoder; it
-therefore does not exercise this writer. The optional subsampled RGB8 writer
-also does not use it. Neither route is counted as tested squeeze production.
+The later [animation caller repair](ANIMATION_ALPHA_OPTIONS.md) forwards
+`alpha_distance` and `alpha_squeeze`, with its own native planes and explicit
+caller scope. The optional subsampled RGB8 writer does not use this writer.
 
 ## Reproductions and correction
 
@@ -295,3 +294,62 @@ All six input archives record exit zero; exact function bodies and original
 object/profile checksums are compared. The separate failed-run coverage export
 retains its nonzero verdict explicitly. Coverage extraction has no mapping
 diagnostics. Animation alpha-setting forwarding remains an open task.
+
+
+## November 19: retained native/primary CI disagreement
+
+[PR146 expert run44577850969](https://github.com/imazen/jxl-encoder/actions/runs/44577850969)
+fails the unchanged exact-alpha comparison at2049x2048, alpha distance25,
+coordinate(2044,2040). Native v0.12 decodes both our stream and its independently
+encoded reference to code154; the primary0.8 decoder reports155. All five
+buffering choices and three progressive variants report that same first split.
+The artifact's native planes therefore distinguish this from an observed
+encoder mismatch; the decoder/check-path root cause remains under investigation.
+
+Selected artifact members retain their ZIP CRC checks and SHA256 identities in
+`pr146-alpha-ci-failure-v1` and `pr146-alpha-ci-own-native-v1`. The full original
+artifact remains on GitHub. `just ci-artifact-members` retains explicitly named
+members by HTTP range, without requiring a local copy of the complete7GB ZIP.
+The isolated primary decoder has a complete-plane scalar/SIMD replay prepared.
+No expectation or tolerance is relaxed, and this failed job is not counted as a
+passing platform verdict.
+
+## Primary decoder border attribution
+
+The CI disagreement above is localized to the primary decoder's packed
+next-average border view. When an inverse squeeze output grid is finer than
+its input grid, the view omitted the perpendicular tile offset. Both the
+encoder stream and the independently encoded native reference have sixteen
+wrong primary alpha codes in the retained four-square edge region. SIMD and
+scalar output agree on that failure; forcing wide storage retains it.
+
+The isolated primary fix is50c65e45, with permanent transposed native fixtures,
+I16/I32 storage, regular/simple pipeline and whole/chunked input controls.
+Restoring either offset fault fails runtime assertions. Exact retained mapping
+observes20/20 helper and6/6 call-window regions, not whole-decoder coverage.
+The source-pinned candidate isf9d86075. Its required CI44591633712 passes all
+eight jobs, including Windows ARM, macOS ARM and i686. Extended stress jobs
+are still running; encoder dependency integration has its own pending verdict.
+Existing live decoder checkouts and all pixel expectations remain unchanged.
+
+The encoder library and CLI now selectf9d86075 for the primary0.8 test
+decoder. The locked q66 qualification includes the unchanged complete alpha
+matrix, progressive boundaries, squeeze geometry, optional library baseline
+and byte locks. No encoder pixel algorithm, expectation or tolerance changes
+with this pin. The dedicated decoder CI verdict remains distinct from the
+encoder's fresh platform CI.
+
+## High-precision alpha tree alphabets
+
+Shared repairc9331a68 bounds specialized lossy-tree alphabets with existing
+HybridUint coding, preserving quantizers and sample choices. The32x17
+RGBA16 distance10 still fails both decoders before repair; the independently
+encoded native reference remains valid. [Complete trigger, native sample
+checks, caller inventory and mapped/error gaps](ALPHA_TREE_CODING.md).
+
+The existing matrix runner now includes large-multiplier policy, precision,
+progressive, geometry and output-entry controls. Native-platform CI explicitly
+selects the small still regression in default/minimal builds; the expert job
+also selects request-controller and minimal high-precision controls. Local
+qualification is separate from each new remote platform verdict. Animation
+alpha-distance/squeeze forwarding remains a separately qualified caller fix.

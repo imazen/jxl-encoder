@@ -12,7 +12,47 @@ use crate::bit_writer::BitWriter;
 use crate::entropy_coding::huffman_tree::{
     build_and_store_huffman_tree, convert_bit_depths_to_symbols, create_huffman_tree,
 };
+use crate::entropy_coding::hybrid_uint::HybridUintConfig;
 use crate::error::Result;
+
+/// Keep established raw tree bytes when their prefix alphabet fits. Larger
+/// multiplier/split values use the same HybridUint config as `write_tree`.
+fn lossy_tree_config(max_raw: u32) -> HybridUintConfig {
+    if max_raw < (1 << 15) - 1 {
+        HybridUintConfig::new(15, 0, 0)
+    } else {
+        HybridUintConfig::new(4, 2, 0)
+    }
+}
+
+fn channel_tree_max_raw(quantizers: &[u32]) -> u32 {
+    debug_assert!(quantizers.len() >= 2);
+    quantizers
+        .iter()
+        .fold(5.max((2 * (quantizers.len() - 2)) as u32), |maximum, &q| {
+            let (log, bits) = decompose_multiplier_pub(q);
+            maximum.max(log).max(bits)
+        })
+}
+
+fn write_lossy_tree_symbol(
+    writer: &mut BitWriter,
+    depths: &[u8],
+    codes: &[u16],
+    config: &HybridUintConfig,
+    value: u32,
+) -> Result<()> {
+    let (symbol, extra, num_extra) = config.encode(value);
+    let depth = depths.get(symbol as usize).copied().unwrap_or(0);
+    let code = codes.get(symbol as usize).copied().unwrap_or(0);
+    if depth > 0 {
+        writer.write(depth as usize, code as u64)?;
+    }
+    if num_extra > 0 {
+        writer.write(num_extra as usize, extra as u64)?;
+    }
+    Ok(())
+}
 
 /// Write a complete single-leaf Zero predictor tree (histogram + tokens).
 /// All tokens are 0, so alphabet size = 1 and no Huffman coding is needed.
@@ -107,13 +147,13 @@ pub(crate) fn write_tree_histogram_for_gradient_lossy(
     // symbol 0 / 5). At extreme alpha distances `mul_bits` can be much
     // larger than 5 (e.g. q=39 → mul_log=0, mul_bits=38), so size the
     // histogram by max(mul_log, mul_bits, 5).
-    let max_symbol = mul_log.max(mul_bits).max(5) as u16;
+    let config = lossy_tree_config(mul_log.max(mul_bits).max(5));
+    let max_symbol = config.encode(mul_log.max(mul_bits).max(5)).0 as u16;
     let used = (max_symbol as usize) + 1;
     let mut tree_histogram = vec![0u32; used];
-    tree_histogram[0] += 2; // property + offset
-    tree_histogram[5] += 1; // predictor = 5 (Gradient)
-    tree_histogram[mul_log as usize] += 1;
-    tree_histogram[mul_bits as usize] += 1;
+    for value in [0, 5, 0, mul_log, mul_bits] {
+        tree_histogram[config.encode(value).0 as usize] += 1;
+    }
     let tree_histogram = &tree_histogram[..];
 
     // lz77.enabled = 0
@@ -128,9 +168,9 @@ pub(crate) fn write_tree_histogram_for_gradient_lossy(
     write_integer_config(
         writer,
         LOG_ALPHABET_SIZE_PREFIX,
-        LOG_ALPHABET_SIZE_PREFIX,
-        0,
-        0,
+        config.split_exponent,
+        config.msb_in_token,
+        config.lsb_in_token,
     )?;
     write_varlen_u16(writer, max_symbol)?;
 
@@ -156,12 +196,9 @@ pub(crate) fn write_gradient_tree_tokens_lossy(
 ) -> Result<()> {
     // Tokens: property=0, predictor=5, offset=0, mul_log, mul_bits
     let tokens = [0u32, 5, 0, mul_log, mul_bits];
+    let config = lossy_tree_config(mul_log.max(mul_bits).max(5));
     for &token in &tokens {
-        let depth = depths.get(token as usize).copied().unwrap_or(0);
-        let code = codes.get(token as usize).copied().unwrap_or(0);
-        if depth > 0 {
-            writer.write(depth as usize, code as u64)?;
-        }
+        write_lossy_tree_symbol(writer, depths, codes, &config, token)?;
     }
     Ok(())
 }
@@ -224,31 +261,9 @@ pub(crate) fn write_tree_histogram_for_channel_split_lossy(
     // decoder reads (`dec_ma.cc:89-118`) — for raw symbol encoding
     // the value IS the histogram index.
     let n = quantizers.len();
-    let mut max_symbol: u32 = 0;
-    let mut count = |s: u32| {
-        if s > max_symbol {
-            max_symbol = s;
-        }
-    };
-    // Decisions: N-1 entries. Each emits prop1=1 and splitval=k
-    // packed-signed (k >= 0 → packed = 2k).
-    count(1); // prop1 (first decision)
-    count(0); // splitval = 0 packed (= 2*0)
-    for k in 1..(n - 1) {
-        count(1); // prop1 for every decision
-        count((2 * k) as u32); // splitval = k packed (= 2k)
-    }
-    // Leaves: N entries. Each emits prop1=0, predictor=5, offset=0
-    // (packed_signed=0), mul_log, mul_bits.
-    for &q in quantizers.iter() {
-        let q = q.max(1);
-        let (mul_log, mul_bits) = decompose_multiplier_pub(q);
-        count(0); // prop1 = 0 (leaf marker)
-        count(5); // predictor = 5 (Gradient)
-        count(0); // offset = 0 (packed)
-        count(mul_log);
-        count(mul_bits);
-    }
+    let max_raw = channel_tree_max_raw(quantizers);
+    let config = lossy_tree_config(max_raw);
+    let max_symbol = config.encode(max_raw).0;
 
     // Rebuild the histogram now that we know the alphabet size. Use
     // the same counting helper so a refactor that adds a token also
@@ -256,7 +271,7 @@ pub(crate) fn write_tree_histogram_for_channel_split_lossy(
     let used = (max_symbol as usize) + 1;
     let mut tree_histogram = vec![0u32; used];
     let mut bump = |s: u32| {
-        tree_histogram[s as usize] += 1;
+        tree_histogram[config.encode(s).0 as usize] += 1;
     };
     bump(1);
     bump(0);
@@ -284,9 +299,9 @@ pub(crate) fn write_tree_histogram_for_channel_split_lossy(
     write_integer_config(
         writer,
         LOG_ALPHABET_SIZE_PREFIX,
-        LOG_ALPHABET_SIZE_PREFIX,
-        0,
-        0,
+        config.split_exponent,
+        config.msb_in_token,
+        config.lsb_in_token,
     )?;
     write_varlen_u16(writer, max_symbol as u16)?;
 
@@ -320,15 +335,11 @@ pub(crate) fn write_channel_split_tree_tokens(
 ) -> Result<()> {
     debug_assert!(quantizers.len() >= 2);
     let n = quantizers.len();
+    let config = lossy_tree_config(channel_tree_max_raw(quantizers));
 
     // Helper to write one raw symbol via the prefix-code table.
     let write_sym = |writer: &mut BitWriter, sym: u32| -> Result<()> {
-        let d = depths.get(sym as usize).copied().unwrap_or(0);
-        let c = codes.get(sym as usize).copied().unwrap_or(0);
-        if d > 0 {
-            writer.write(d as usize, c as u64)?;
-        }
-        Ok(())
+        write_lossy_tree_symbol(writer, depths, codes, &config, sym)
     };
 
     // Decoder reads one node, then queues 2 children for internals.

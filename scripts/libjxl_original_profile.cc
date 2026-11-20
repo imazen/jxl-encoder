@@ -30,9 +30,11 @@ int main(int argc, char **argv) {
               << "\n";
     return JxlDecoderVersion() == 12000 ? 0 : 2;
   }
-  const bool source_float = argc == 4 && std::string(argv[3]) == "--source-fields-float";
-  const bool source_fields = source_float || (argc == 4 && std::string(argv[3]) == "--source-fields");
-  if ((argc != 3 && !source_fields) || JxlDecoderVersion() != 12000)
+  const bool original_float = argc == 4 && std::string(argv[3]) == "--original-profile-float";
+  const bool source_fields_float = argc == 4 && std::string(argv[3]) == "--source-fields-float";
+  const bool source_float = source_fields_float || original_float;
+  const bool source_fields = source_fields_float || (argc == 4 && std::string(argv[3]) == "--source-fields");
+  if ((argc != 3 && !source_fields && !original_float) || JxlDecoderVersion() != 12000)
     return 2;
   std::ifstream in(argv[1], std::ios::binary);
   if (!in)

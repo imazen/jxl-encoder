@@ -228,3 +228,32 @@ The original E4 wide-reference arithmetic finding is independent and remains
 unrepaired in the released-0.8-derived primary. That decoder is not the E4
 acceptance oracle. Encoder integration qualification has its own verdict in
 [the controller contract](RATE_CONTROL_CONTRACT.md).
+
+## November 19: primary inverse-squeeze next-border offset
+
+Primary0.8 revision3d48825c omits the perpendicular output-tile offset when
+reading a packed next-average border from a coarser input grid. Native v0.12
+recovers alpha154 at(2044,2040) from both the encoder's2049x2048 stream and
+an independently encoded native control; primary SIMD and scalar return155.
+Each full plane has sixteen mismatches. Selecting I32 storage leaves those
+mismatches unchanged. The reduced native horizontal/vertical fixtures have
+SHA256`fc328f5061ba6ac2885e88e4f5ac56514c3f538ad3f330587bb8b99c446af010`/
+`fb9b647764156a878a8ae544ece1d5e54f932a81e9edfb8b9345300ed3d32fb7`.
+
+Isolated fix[50c65e45](https://github.com/imazen/jxl-rs-v08/commit/50c65e4554d4439420880c310faed97e10492cda)
+slices horizontal border rows and vertical border columns at the output tile's
+existing offset. No reconstruction arithmetic or public API changes. Candidate
+f9d86075 contains permanent native delivered-plane fixtures, fault replays and
+explicit native CI selection. Its required run44591633712 passes all eight
+jobs; extended stress and encoder pin integration remain separate.
+
+The zen0.4 implementation already selects per-tile next-average rectangles in
+its existing transform dispatcher; no additional zen0.4 repair is made for
+this finding. This is a source inventory statement, not a new zen runtime
+comparison. No external report was posted.
+
+The encoder library/CLI primary aliases now both pin
+[`f9d86075`](https://github.com/imazen/jxl-rs-v08/commit/f9d860756843e813663d51335e8ac11f83d07c09).
+Frozen q66 integration preserves the existing source graph and all asserted
+alpha codes; only four Git-source lock identities change. Native0.4 remains
+at74eba39b. These pins are development-oracle identities, not published releases.

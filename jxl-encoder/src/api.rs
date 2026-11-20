@@ -1754,6 +1754,8 @@ impl LosslessConfig {
             limits: self.limits.as_ref(),
             stop: None,
             loop_trace: None,
+            #[cfg(feature = "rate-control")]
+            rate_control: None,
             #[cfg(feature = "__external_metric")]
             external_metric: None,
             source_gamma: None,
@@ -4168,9 +4170,10 @@ impl LossyConfig {
     /// request with additional extras is rejected; shifted VarDCT extras also
     /// remain unsupported.
     ///
-    /// The streaming pixel API uses the same request pipeline. The current
-    /// animation builder does not forward alpha-distance or alpha-squeeze;
-    /// that separate caller gap is tracked in issue 144.
+    /// The streaming pixel API uses the same request pipeline. Animation
+    /// forwards both alpha controls to its per-frame writer; positive alpha
+    /// distance uses integer alpha coding for float layouts as it does for
+    /// still images. Lossless alpha retains its exact representation.
     ///
     /// See [`Self::with_alpha_distance`] for the distance selection.
     pub fn with_alpha_squeeze(mut self, on: bool) -> Self {
@@ -5495,6 +5498,8 @@ impl LossyConfig {
             limits: None,
             stop: None,
             loop_trace: None,
+            #[cfg(feature = "rate-control")]
+            rate_control: None,
             #[cfg(feature = "__external_metric")]
             external_metric: None,
             source_gamma: None,
@@ -5752,6 +5757,9 @@ pub struct EncodeRequest<'a> {
     stop: Option<&'a dyn Stop>,
     /// Per-iteration perceptual-loop record ([`Self::with_loop_trace`]).
     loop_trace: Option<crate::LoopTrace>,
+    /// Optional encode/decode controller selected by the request.
+    #[cfg(feature = "rate-control")]
+    rate_control: Option<crate::vardct::RateControlConfig>,
     /// Loop metric replacing butteraugli ([`Self::with_external_metric`]).
     #[cfg(feature = "__external_metric")]
     external_metric: Option<crate::ExternalMetric>,
@@ -6174,6 +6182,69 @@ impl<'a> EncodeRequest<'a> {
         }
     }
 
+    /// Select the optional encode/decode Butteraugli controller.
+    ///
+    /// Unset preserves ordinary encoding. This request path accepts lossy
+    /// Full444 single-frame input at effective intensity 255 nits and spatial
+    /// resampling factor one. Unsupported animation, subsampling, loop traces
+    /// and external scorer combinations return an invalid-configuration error.
+    /// Source layouts, stride, ICC conversion and metadata, extra channels,
+    /// limits and cancellation retain the normal request pipeline. The
+    /// iteration cap does not promise convergence or perceptual improvement.
+    #[cfg(feature = "rate-control")]
+    pub fn with_rate_control(mut self, config: crate::vardct::RateControlConfig) -> Self {
+        self.rate_control = Some(config);
+        self
+    }
+
+    #[cfg(feature = "rate-control")]
+    fn validate_rate_control(&self) -> Result<()> {
+        let Some(config) = &self.rate_control else {
+            return Ok(());
+        };
+        let ConfigRef::Lossy(lossy) = self.config else {
+            return Err(at!(EncodeError::InvalidConfig {
+                message: "rate control requires lossy input".into()
+            }));
+        };
+        let cap = self.limits.map_or(
+            Limits::DEFAULT_MAX_QUANT_LOOP_ITERS,
+            Limits::effective_max_quant_loop_iters,
+        );
+        if config.max_iterations > cap as usize
+            || !config.tolerance.is_finite()
+            || config.tolerance < 0.0
+            || config.qf_min == 0
+            || config.qf_min > config.qf_max
+        {
+            return Err(at!(EncodeError::InvalidConfig {
+                message: "invalid rate-control iterations, tolerance or quantizer bounds".into()
+            }));
+        }
+        if !lossy.chroma_subsampling.is_full() {
+            return Err(at!(EncodeError::InvalidConfig {
+                message: "request rate control does not support chroma subsampling".into()
+            }));
+        }
+        // Prepared XYB currently uses the 255-nit scale. Refuse paths whose
+        // source units or spatial prefilter require a different preparation.
+        if self.resolved_intensity_target() != 255.0 || lossy.effective_resampling() != 1 {
+            return Err(at!(EncodeError::InvalidConfig { message: "request rate control requires 255-nit intensity and spatial resampling factor one".into() }));
+        }
+        if self.loop_trace.is_some() {
+            return Err(at!(EncodeError::InvalidConfig {
+                message: "request rate control does not support perceptual-loop traces".into()
+            }));
+        }
+        #[cfg(feature = "__external_metric")]
+        if self.external_metric.is_some() {
+            return Err(at!(EncodeError::InvalidConfig {
+                message: "request rate control uses its own Butteraugli scorer".into()
+            }));
+        }
+        Ok(())
+    }
+
     // CMYK source interpretation comes from its required ICC, including
     // separate CMY/Black buffers. Omitted simple-selector fields cannot choose
     // a source transfer function or perceptual-loop domain.
@@ -6250,6 +6321,12 @@ impl<'a> EncodeRequest<'a> {
         frames: &[AnimationFrame<'_>],
     ) -> Result<Vec<u8>> {
         crate::error::check_stop(self.stop).map_err(at_from)?;
+        #[cfg(feature = "rate-control")]
+        if self.rate_control.is_some() {
+            return Err(at!(EncodeError::InvalidConfig {
+                message: "request rate control is not implemented for animation".into()
+            }));
+        }
         if let ConfigRef::Lossy(config) = self.config
             && !config.chroma_subsampling.is_full()
         {
@@ -6710,7 +6787,22 @@ impl<'a> EncodeRequest<'a> {
             stop.check().map_err(|_| at!(EncodeError::Cancelled))?;
         }
         self.validate_pixels(pixels)?;
+        validate::validate_extra_channel_count(self.extra_channels.len())?;
+        // Delay a potentially removable alpha until canonicalization resolves
+        // the prepared layout. Other implicit channels are known at admission.
+        let may_remove_alpha = self.layout.has_alpha()
+            && matches!(self.config, ConfigRef::Lossy(cfg) if cfg.canonicalize_input);
+        if !may_remove_alpha {
+            validate::validate_extra_channel_count(
+                self.extra_channels
+                    .len()
+                    .saturating_add(usize::from(self.layout.has_alpha()))
+                    .saturating_add(usize::from(self.layout.is_cmyk())),
+            )?;
+        }
         self.check_limits()?;
+        #[cfg(feature = "rate-control")]
+        self.validate_rate_control()?;
         // Run the full config validator (distance, effort, iter
         // counts, mutual exclusivity, etc.). This was previously
         // opt-in via `cfg.validate()`; auto-calling it on the encode
@@ -6867,6 +6959,14 @@ impl<'a> EncodeRequest<'a> {
     }
 
     fn encode_prepared(&self, pixels: &[u8], preflight: EncodePreflight) -> Result<EncodeResult> {
+        // Canonicalization can remove layout alpha. Count implicit channels
+        // on the prepared layout, while retaining every caller-supplied extra.
+        validate::validate_extra_channel_count(
+            self.extra_channels
+                .len()
+                .saturating_add(usize::from(self.layout.has_alpha()))
+                .saturating_add(usize::from(self.layout.is_cmyk())),
+        )?;
         let EncodePreflight {
             budget,
             threads,
@@ -9310,8 +9410,24 @@ impl<'a> EncodeRequest<'a> {
         if std::env::var_os("__JXL_ENC_PHASE_TIMING").is_some() {
             eprintln!("encode_lossy: conv+setup={:?}", _t_conv.elapsed());
         }
-        let tracked = enc
-            .encode_with_extras_stop_src(
+        #[cfg(feature = "rate-control")]
+        let rate_tracked = self
+            .rate_control
+            .as_ref()
+            .map(|config| {
+                enc.encode_request_rate_control(
+                    encode_w,
+                    encode_h,
+                    &encode_rgb,
+                    &extras_vec,
+                    config,
+                    self.stop,
+                )
+            })
+            .transpose()
+            .map_err(EncodeError::from)?;
+        let ordinary = || {
+            enc.encode_with_extras_stop_src(
                 encode_w,
                 encode_h,
                 // Ownership lets the encoder free the linear buffer after
@@ -9321,7 +9437,15 @@ impl<'a> EncodeRequest<'a> {
                 &extras_vec,
                 self.stop,
             )
-            .map_err(EncodeError::from)?;
+            .map_err(EncodeError::from)
+        };
+        #[cfg(feature = "rate-control")]
+        let tracked = match rate_tracked {
+            Some(output) => output,
+            None => ordinary()?,
+        };
+        #[cfg(not(feature = "rate-control"))]
+        let tracked = ordinary()?;
 
         let output = tracked.output;
         #[cfg(feature = "__env_var_diagnostics")]
@@ -9329,7 +9453,18 @@ impl<'a> EncodeRequest<'a> {
             eprintln!("encode_lossy: inner-call={:?}", _t_pre.elapsed());
         }
         #[cfg(feature = "butteraugli-loop")]
-        let butteraugli_iters_actual = cfg.butteraugli_iters();
+        let butteraugli_iters_actual = {
+            #[cfg(feature = "rate-control")]
+            if self.rate_control.is_some() {
+                0
+            } else {
+                cfg.butteraugli_iters()
+            }
+            #[cfg(not(feature = "rate-control"))]
+            {
+                cfg.butteraugli_iters()
+            }
+        };
         #[cfg(not(feature = "butteraugli-loop"))]
         let butteraugli_iters_actual = 0u32;
 
@@ -11519,6 +11654,12 @@ use ingest::*;
 pub(crate) use ingest::{
     apply_hlg_forward_ootf, hlg_ootf_gamma, hlg_ootf_luminances, hlg_to_linear_f,
 };
+#[cfg(all(
+    feature = "std",
+    feature = "chroma-subsampling",
+    feature = "jpeg-reencoding"
+))]
+mod cms;
 
 // ── Tests ───────────────────────────────────────────────────────────────────
 
@@ -11665,12 +11806,9 @@ mod planar_admission_tests_95 {
     }
 }
 
-#[cfg(all(
-    feature = "std",
-    feature = "chroma-subsampling",
-    feature = "jpeg-reencoding"
-))]
-mod cms;
-
 #[cfg(feature = "std")]
 mod cmyk;
+
+#[cfg(all(test, feature = "rate-control"))]
+#[path = "api/rate_control_contract.rs"]
+mod rate_control_contract;

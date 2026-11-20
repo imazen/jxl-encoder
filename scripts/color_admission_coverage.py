@@ -17,11 +17,14 @@ p.add_argument('llvm', type=Path)
 p.add_argument('output', type=Path)
 p.add_argument('archives', nargs='+', type=Path)
 p.add_argument('--extra-metadata', action='store_true')
+p.add_argument('--extra-count', action='store_true')
 p.add_argument('--jpeg-metadata', action='store_true')
 p.add_argument('--jpeg-dht', action='store_true')
 p.add_argument('--gain-map', action='store_true')
 p.add_argument('--request-limits', action='store_true')
 p.add_argument('--container-policy', action='store_true')
+p.add_argument('--alpha-tree', action='store_true')
+p.add_argument('--animation-alpha-forward', action='store_true')
 p.add_argument('--rate-control-metric', action='store_true')
 p.add_argument('--jpeg-scan-grid', action='store_true')
 p.add_argument('--jpeg-color', action='store_true')
@@ -111,6 +114,23 @@ def observe(relative, name, occurrence=0, window=False):
                      inputs=inputs, excluded_different_body=excluded, covered=sum(v > 0 for v in counts.values()), total=len(counts),
                      missing_relative_regions=[k for k, v in sorted(counts.items()) if not v]))
     print(json.dumps(rows[-1]))
+
+if a.alpha_tree:
+    for name in ['lossy_tree_config', 'channel_tree_max_raw', 'write_lossy_tree_symbol',
+                 'write_tree_histogram_for_gradient_lossy', 'write_gradient_tree_tokens_lossy',
+                 'write_tree_histogram_for_channel_split_lossy', 'write_channel_split_tree_tokens']:
+        observe('jxl-encoder/src/modular/encode_tree.rs', name)
+    (a.output / 'regions.json').write_text(json.dumps(dict(inputs=identities, functions=rows,
+        note='Exact shared lossy-tree function bodies and runtime identities; mapped execution regions only, not input-space coverage.'), indent=2))
+    sys.exit(0)
+
+if a.animation_alpha_forward:
+    observe('jxl-encoder/src/api/animate.rs', 'encode_animation_lossy')
+    observe('jxl-encoder/src/api/animate.rs', 'encode_animation_lossy', window=('let float_alpha_coding =', 9))
+    observe('jxl-encoder/src/api.rs', 'choose', 0)
+    (a.output / 'regions.json').write_text(json.dumps(dict(inputs=identities, functions=rows,
+        note='Animation caller and common float-alpha representation choice. Straight-line config assignments have no independent branch counter; restored faults retain their own runtime evidence.'), indent=2))
+    sys.exit(0)
 
 if a.container_policy:
     observe('jxl-encoder/src/api/ingest.rs', 'wrap_output')
@@ -413,6 +433,24 @@ if a.display_extents:
     observe('jxl-encoder/src/api.rs', 'encode_lossy', window=('enc.display_dims = Some(self.display_dimensions()?);', 1))
     observe('jxl-encoder/src/headers/file_header.rs', 'validate_display_dimensions')
     observe('jxl-encoder/src/headers/file_header.rs', 'write', occurrence=1, window=('Self::validate_display_dimensions(self.width, self.height)?;', 1))
+    (a.output / 'regions.json').write_text(json.dumps(dict(inputs=identities, functions=rows,
+        source_comparison='Exact function bodies; code-region keys relative to each declaration'), indent=2))
+    raise SystemExit(0)
+
+if a.extra_count:
+    api = 'jxl-encoder/src/api.rs'
+    observe(api, 'encode_inner_with_stop',
+            window=('validate::validate_extra_channel_count(self.extra_channels.len())?;', 14))
+    observe(api, 'encode_prepared',
+            window=('validate::validate_extra_channel_count(', 8))
+    observe('jxl-encoder/src/api/validate.rs', 'validate_extra_channel_count')
+    observe('jxl-encoder/src/headers/extra_channels.rs', 'validate_supported_count')
+    observe('jxl-encoder/src/headers/file_header.rs', 'write', occurrence=1,
+            window=('if meta.extra_channels.len() > 4096 {', 6))
+    for name in ['encode_with_extras_stop_impl', 'encode_from_precomputed_tracked',
+                 'encode_from_pre_quantized_ac_with_extras']:
+        observe('jxl-encoder/src/vardct/encoder.rs', name,
+                window=('validate_supported_count(extras.len())?;', 2))
     (a.output / 'regions.json').write_text(json.dumps(dict(inputs=identities, functions=rows,
         source_comparison='Exact function bodies; code-region keys relative to each declaration'), indent=2))
     raise SystemExit(0)

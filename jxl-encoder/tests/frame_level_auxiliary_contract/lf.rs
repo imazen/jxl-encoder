@@ -1,6 +1,11 @@
 //! LF frames count on their own reconstructed grid, alongside the main canvas.
 use super::*;
-fn check_lf((policy, strategy, mode): FramePolicy) {
+fn check_lf(policy: FramePolicy) {
+    check_lf_impl(policy, false);
+}
+fn check_lf_impl((policy, strategy, mode): FramePolicy, controller: bool) {
+    #[cfg(not(feature = "rate-control"))]
+    assert!(!controller, "caller must enable the selected controller");
     let root = directory();
     std::fs::write(root.join("policy.txt"), &policy).unwrap();
     let source =
@@ -22,7 +27,14 @@ fn check_lf((policy, strategy, mode): FramePolicy) {
     let mut journal = std::fs::File::create(root.join("levels.tsv")).unwrap();
     let mut failures = Vec::new();
     let mut lf_baseline = None;
-    for (lf, streaming) in [(false, false), (true, false), (true, true)] {
+    let paths = if controller {
+        &[(false, false), (true, false)][..]
+    } else {
+        &[(false, false), (true, false), (true, true)][..]
+    };
+    // The request controller has no row-streaming constructor. Ordinary
+    // streaming equality remains an independent gate above this surface.
+    for &(lf, streaming) in paths {
         let out = root.join(format!("lf-{lf}-streaming-{streaming}"));
         std::fs::create_dir(&out).unwrap();
         let config = LossyConfig::new(1.0)
@@ -51,11 +63,19 @@ fn check_lf((policy, strategy, mode): FramePolicy) {
             }
             encoder.finish().unwrap()
         } else {
-            config
+            let request = config
                 .encode_request(width, height, PixelLayout::Rgb8)
-                .with_limits(&limits)
-                .encode(&pixels)
-                .unwrap()
+                .with_limits(&limits);
+            #[cfg(feature = "rate-control")]
+            let request = if controller {
+                request.with_rate_control(jxl_encoder::vardct::RateControlConfig {
+                    max_iterations: 0,
+                    ..Default::default()
+                })
+            } else {
+                request
+            };
+            request.encode(&pixels).unwrap()
         };
         if lf {
             if let Some(previous) = &lf_baseline {
@@ -165,5 +185,14 @@ fn strict_lf_frame_counts_the_main_and_lf_grids() {
 fn all_offered_lf_frame_levels() {
     for policy in encoder_policies::policies() {
         check_lf(policy);
+    }
+}
+
+#[cfg(feature = "rate-control")]
+#[test]
+#[ignore = "large resource probe; select the exact request-controller runtime explicitly"]
+fn all_offered_request_rate_control_lf_frame_levels() {
+    for policy in encoder_policies::policies() {
+        check_lf_impl(policy, true);
     }
 }

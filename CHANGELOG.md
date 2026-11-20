@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+- Reject unsupported extra-channel counts before pixel work or header writes.
+- Forward lossy animation alpha distance/squeeze settings and select matching float-alpha header coding.
+- Bound specialized lossy alpha tree alphabets with HybridUint for large multipliers, preserving quantizers and alpha sample choices.
+
+- Pin the primary test decoder border-view repair for native squeezed-alpha edge controls; encoder pixel algorithms and expectations are unchanged.
+
+- Route optional CLI rate control through pixel requests, preserving input
+  precision, source/ICC interpretation, alpha, LF data and container metadata;
+  reject unsupported animation, JPEG-domain and lossless combinations before
+  replacing an existing destination (`f2c0ebe6`).
+
+- Add the default-off `EncodeRequest::with_rate_control` adapter using the
+  existing configuration type, preserving the ordinary request pipeline
+  (`efebdb40`).
+
 - Honor configured Always/Never container policies in pixel requests,
   streaming and animation; reject unframed Level 10 output and retain
   codestream ICC when dropping container-only metadata.

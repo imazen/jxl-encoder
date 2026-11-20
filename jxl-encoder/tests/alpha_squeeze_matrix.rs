@@ -588,6 +588,77 @@ fn alpha_layouts_match_native_quantized_samples() {
     }
     run(cells);
 }
+
+#[test]
+fn high_precision_alpha_large_quantizers_keep_native_planes() {
+    let mut cells = Vec::new();
+    for (policy, strategy, mode) in encoder_policies::policies() {
+        for layout in [
+            PixelLayout::Rgba16,
+            PixelLayout::GrayAlpha16,
+            PixelLayout::RgbaLinearF32,
+        ] {
+            cells.push(Cell {
+                policy: policy.clone(),
+                strategy: strategy.clone(),
+                mode,
+                layout,
+                distance: 10.0,
+                ..strict(32, 17)
+            });
+        }
+    }
+    for (width, height) in [
+        (1, 1025),
+        (1025, 1),
+        (257, 257),
+        (1025, 17),
+        (17, 1025),
+        (2049, 2048),
+    ] {
+        for entry in ["request", "strided", "writer", "legacy", "stream"] {
+            cells.push(Cell {
+                layout: PixelLayout::Rgba16,
+                distance: 25.0,
+                entry,
+                ..strict(width, height)
+            });
+        }
+    }
+    for distance in [4.0, 8.0, 8.1, 10.0, 25.0] {
+        for ans in [false, true] {
+            cells.push(Cell {
+                layout: PixelLayout::GrayAlpha16,
+                distance,
+                ans: Some(ans),
+                ..strict(257, 17)
+            });
+        }
+    }
+    let labels: std::collections::BTreeSet<_> = cells
+        .iter()
+        .flat_map(|cell| {
+            [
+                ProgressiveMode::Single,
+                ProgressiveMode::QuantizedAcFullAc,
+                ProgressiveMode::DcVlfLfAc,
+            ]
+            .map(|progressive| {
+                Cell {
+                    progressive,
+                    ..cell.clone()
+                }
+                .label()
+            })
+        })
+        .collect();
+    assert_eq!(
+        labels.len(),
+        cells.len() * 3,
+        "every expanded caller case must be unique"
+    );
+    run(cells);
+}
 #[test]
 fn policies_and_public_entries_keep_alpha_band_samples() {
     let mut cells = Vec::new();

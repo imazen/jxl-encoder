@@ -551,3 +551,34 @@ destination and wide-geometry assertions. The native Linux ARM64, macOS ARM64
 and Windows ARM jobs now select the default and minimal matrix explicitly.
 These workflow commands have local runtime evidence; their fresh platform
 verdicts remain separate. No threshold, ignored test or production choice changes.
+
+
+### Request-controller and CLI owner follow-up
+
+The approved request adapter carries selected emitted-frame requirements with
+the bytes through ordinary container finalization. Raw prepared methods retain
+their codestream contract. The CLI now uses the request adapter and preserves
+layout, precision, alpha, source gamma, ICC/EXIF/XMP, container policy, LF data
+and the iteration selector. Incompatible APNG, JPEG-domain and lossless routes
+refuse the controller before replacing a destination. Each refusal class has
+an actual failing-before control; forced JPEG shares the transcode guard and
+is checked separately after that guard.
+
+All six CLI strategy spellings in both encoder modes pass the selected actual
+source/metadata/precision/LF/iteration and refusal families with JPEG and Brotli
+compiled together. Native v0.12 and the primary render every accepted output;
+JPEG controls reconstruct their original bytes exactly in both reconstruction
+oracles. Compressed metadata is checked against the ordinary owner's exact
+box bytes. The default-cap16384-square CLI refusal is measured under every
+spelling/mode and LF on/off; its22332571648-byte minimum estimate exceeds
+4294967296bytes and all destinations remain unchanged.
+
+The large trusted-limit request family is explicitly selected through
+`all_offered_request_rate_control_lf_frame_levels`. Its threshold controls
+use actual main/LF area268435456/272629760, an observed2048-square LF grid,
+and full primary/native rendering. Its exact ELF is
+`cafba22bf9bb13644f03b553fc45acc282d21d9b85d819ffda63daae247e6afb`.
+Until its final runtime identity and every policy journal are complete, the
+active replay supplies partial evidence only. Verified freezer intermissions
+serialize local checks; its elapsed wall is not encoder latency. Current
+qualification and remaining exception regions: [RATE_CONTROL_CONTRACT.md](RATE_CONTROL_CONTRACT.md).

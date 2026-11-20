@@ -3678,6 +3678,7 @@ impl VarDctEncoder {
     ) -> Result<TrackedVarDctOutput> {
         // Materialize the internal `VardctExtra` views, validating
         // dimensions + bit depth + dim_shift up-front before any work.
+        crate::headers::extra_channels::ExtraChannelInfo::validate_supported_count(extras.len())?;
         let mut views: Vec<super::extras::VardctExtra<'_>> = Vec::with_capacity(extras.len());
         for (idx, ec) in extras.iter().enumerate() {
             ec.info().validate()?;
@@ -3858,17 +3859,6 @@ impl VarDctEncoder {
         Ok(Some(pipeline))
     }
 
-    /// LF geometry is derived from the full display canvas. Raw callers
-    /// supply DC for the coded grid, which cannot describe a resampled LF.
-    fn check_lf_upsampling(&self) -> Result<()> {
-        if self.use_lf_frame && self.upsampling > 1 {
-            return Err(Error::InvalidInput(
-                "LF frames require spatial upsampling factor one".into(),
-            ));
-        }
-        Ok(())
-    }
-
     /// Classify emitted frames on the same display canvas as the file header.
     pub(crate) fn output_frame_level(
         &self,
@@ -3878,6 +3868,17 @@ impl VarDctEncoder {
     ) -> Result<u8> {
         let header = self.build_file_header(width, height, &[]);
         writer.frame_level(header.width, header.height, None)
+    }
+
+    /// LF geometry is derived from the full display canvas. Raw callers
+    /// supply DC for the coded grid, which cannot describe a resampled LF.
+    fn check_lf_upsampling(&self) -> Result<()> {
+        if self.use_lf_frame && self.upsampling > 1 {
+            return Err(Error::InvalidInput(
+                "LF frames require spatial upsampling factor one".into(),
+            ));
+        }
+        Ok(())
     }
 
     /// Shared implementation backing both [`Self::encode`] and
@@ -7136,6 +7137,53 @@ impl VarDctEncoder {
         linear_rgb: &[f32],
         config: &super::rate_control::RateControlConfig,
     ) -> Result<(Vec<u8>, usize)> {
+        self.encode_with_rate_control_config_and_level_impl(width, height, linear_rgb, config)
+            .map(|(data, iterations, _level)| (data, iterations))
+    }
+
+    /// Preserve the level of the selected iteration for container-owning callers.
+    #[cfg(feature = "rate-control")]
+    fn encode_with_rate_control_config_and_level_impl(
+        &self,
+        width: usize,
+        height: usize,
+        linear_rgb: &[f32],
+        config: &super::rate_control::RateControlConfig,
+    ) -> Result<(Vec<u8>, usize, u8)> {
+        let precomputed = self.compute_rate_control_precomputed(width, height, linear_rgb)?;
+
+        // Run rate control loop
+        let (encoded, iterations) =
+            super::rate_control::encode_with_rate_control_tracked(self, &precomputed, config)?;
+        // Use the header the prepared writer actually serializes. The frame
+        // tracker covers sequence area; dimensions, ICC and modular width are
+        // independent Annex M constraints.
+        let header = self.build_file_header(width, height, &[]);
+        let basic_level = crate::container::compute_codestream_level(
+            header.width,
+            header.height,
+            0,
+            false,
+            self.icc_profile
+                .as_ref()
+                .map_or(0, |profile| profile.len() as u64),
+            header.metadata.modular_16bit_buffer_sufficient(),
+        )
+        .ok_or_else(|| Error::InvalidInput("rate-control output exceeds Level 10 limits".into()))?;
+        Ok((
+            encoded.data,
+            iterations,
+            basic_level.max(encoded.frame_level),
+        ))
+    }
+
+    #[cfg(feature = "rate-control")]
+    fn compute_rate_control_precomputed(
+        &self,
+        width: usize,
+        height: usize,
+        linear_rgb: &[f32],
+    ) -> Result<super::precomputed::EncoderPrecomputed> {
         if let Some(ce) = &self.color_encoding {
             super::xyb::validate_color_encoding(ce)?;
         }
@@ -7200,9 +7248,42 @@ impl VarDctEncoder {
                 routed_buffering,
                 self.pixel_loss_dispatch,
             )?;
+        Ok(precomputed)
+    }
 
-        // Run rate control loop
-        super::rate_control::encode_with_rate_control(self, &precomputed, config)
+    /// Request adapter: retain normal ingestion, policy, metadata and extras.
+    #[cfg(feature = "rate-control")]
+    pub(crate) fn encode_request_rate_control(
+        &self,
+        width: usize,
+        height: usize,
+        linear_rgb: &[f32],
+        extras: &[crate::api::ExtraChannel<'_>],
+        config: &super::rate_control::RateControlConfig,
+        stop: Option<&dyn Stop>,
+    ) -> Result<TrackedVarDctOutput> {
+        crate::error::check_stop(stop)?;
+        let precomputed = self.compute_rate_control_precomputed(width, height, linear_rgb)?;
+        let (encoded, _) = super::rate_control::encode_with_rate_control_extras_tracked(
+            self,
+            &precomputed,
+            config,
+            extras,
+            stop,
+        )?;
+        let views: Vec<_> = extras
+            .iter()
+            .map(super::extras::VardctExtra::from_api)
+            .collect();
+        crate::error::check_stop(stop)?;
+        Ok(TrackedVarDctOutput {
+            frame_level: encoded.frame_level,
+            output: VarDctOutput {
+                data: encoded.data,
+                strategy_counts: precomputed.ac_strategy.strategy_histogram(),
+                needs_modular_32bit: self.output_needs_modular_32bit(width, height, &views),
+            },
+        })
     }
 
     /// Encode from precomputed state with a specific quant field.
@@ -7269,6 +7350,18 @@ impl VarDctEncoder {
         quant_field: &[u8],
         extras: &[crate::api::ExtraChannel<'_>],
     ) -> Result<Vec<u8>> {
+        self.encode_from_precomputed_tracked(precomputed, quant_field, extras, None)
+            .map(|encoded| encoded.data)
+    }
+
+    #[cfg(any(feature = "rate-control", feature = "__pre_quantized"))]
+    pub(crate) fn encode_from_precomputed_tracked(
+        &self,
+        precomputed: &super::precomputed::EncoderPrecomputed,
+        quant_field: &[u8],
+        extras: &[crate::api::ExtraChannel<'_>],
+        stop: Option<&dyn Stop>,
+    ) -> Result<FrameBytes> {
         if let Some(splines) = &self.splines {
             super::splines::validate_splines(splines)?;
             if !splines.is_empty() {
@@ -7289,6 +7382,7 @@ impl VarDctEncoder {
         // call below, so build them here once and reuse.
         let width = precomputed.width;
         let height = precomputed.height;
+        crate::headers::extra_channels::ExtraChannelInfo::validate_supported_count(extras.len())?;
         let mut extras_views: Vec<super::extras::VardctExtra<'_>> =
             Vec::with_capacity(extras.len());
         for (idx, ec) in extras.iter().enumerate() {
@@ -7314,7 +7408,7 @@ impl VarDctEncoder {
             extras_views.push(super::extras::VardctExtra::from_api(ec));
         }
         self.check_alpha_squeeze_supported(&extras_views, Some((width, height)))?;
-        self.encode_from_precomputed_inner(precomputed, quant_field, &extras_views)
+        self.encode_from_precomputed_inner(precomputed, quant_field, &extras_views, stop)
     }
 
     /// Shared body for [`Self::encode_from_precomputed`] and
@@ -7326,7 +7420,9 @@ impl VarDctEncoder {
         precomputed: &super::precomputed::EncoderPrecomputed,
         quant_field: &[u8],
         extras: &[super::extras::VardctExtra<'_>],
-    ) -> Result<Vec<u8>> {
+        stop: Option<&dyn Stop>,
+    ) -> Result<FrameBytes> {
+        crate::error::check_stop(stop)?;
         self.check_lf_upsampling()?;
         let width = precomputed.width;
         let height = precomputed.height;
@@ -7734,7 +7830,7 @@ impl VarDctEncoder {
             patches_data.as_ref(),
             None,                          // splines
             Some(&transform_out.float_dc), // LF payload uses unquantized DC.
-            None,
+            stop,
         );
         let _ms_two = _t_two.elapsed().as_secs_f64() * 1000.0;
         if cfg!(feature = "__env_var_diagnostics")
@@ -7744,7 +7840,7 @@ impl VarDctEncoder {
                 "encode_from_precomputed: patches={_ms_patches:.1} ms, cfl={_ms_cfl:.1} ms, transform_and_quantize={_ms_xform:.1} ms, sharpness={_ms_sharp:.1} ms, encode_two_pass={_ms_two:.1} ms",
             );
         }
-        res.map(|tracked| tracked.data)
+        res
     }
 
     /// Pre-quantized AC entry point. Skips `transform_and_quantize`
@@ -7865,6 +7961,7 @@ impl VarDctEncoder {
         // Mirrors `encode_from_precomputed_with_extras` so error
         // messages and behavior stay consistent across the two
         // pre-quantized entry points.
+        crate::headers::extra_channels::ExtraChannelInfo::validate_supported_count(extras.len())?;
         let mut extras_views: Vec<super::extras::VardctExtra<'_>> =
             Vec::with_capacity(extras.len());
         for (idx, ec) in extras.iter().enumerate() {
@@ -7932,8 +8029,6 @@ impl VarDctEncoder {
             );
         }
 
-        // Final DC coefficients are supplied by this caller rather than the
-        // transform path that normally records the modular buffer requirement.
         Self::note_dc_modular_width(&self.force_modular_32bit, quant_dc);
         self.encode_two_pass(
             width,
@@ -9709,3 +9804,7 @@ mod tests {
         assert_eq!(W44_169_NARROW_MAX_DISTANCE, 5.0);
     }
 }
+
+#[cfg(all(test, feature = "rate-control"))]
+#[path = "encoder_frame_level_tests.rs"]
+mod frame_level_tests;

@@ -1788,6 +1788,75 @@ separate queue items. Broad/coverage/remote verdicts must be read independently.
 
 ## Known Bugs (ACTIVE)
 
+### RESOLVED 2026-11-19: extra-channel count admission and header guard
+
+A 1x1 request with 4097 Depth channels panics in the header count assertion
+through both lossless/lossy byte-return and writer routes. Pinned v0.12
+metadata writing accepts 4096/refuses 4097; its Level 10 public API accepts 256/
+refuses 257. The shared 256-channel request/raw admission and independent 4096 grammar
+guard pass with implicit alpha/Black, canonicalized alpha reduction and exact
+native boundary planes in both feature builds.
+[Before identity and current scope](docs/EXTRA_METADATA_CONTRACT.md).
+
+
+### RESOLVED 2026-11-19: lossy animation alpha settings omitted
+
+The animation builder now forwards alpha distance/squeeze and chooses the
+common integer float-alpha representation for positive distance. Pinned v0.12
+before controls expose alpha 0 versus 27 for RGBA8 and 0 versus signed -2533 for
+linear-f32 at 32x17. The new complete-plane comparisons cover all offered audit
+policies, alpha layouts, progressive brackets and selected group boundaries,
+plus crop/delta/reference/metadata/limits/association callers in default and
+minimal builds. Existing precision and zero-distance contracts remain.
+[Exact identities, caller scope and remaining evidence](docs/ANIMATION_ALPHA_OPTIONS.md)
+separate this repair from the shared prefix-alphabet fix below. Counts do not
+establish input-space or whole-encoder coverage.
+
+
+### RESOLVED 2026-11-19: high-precision alpha tree prefix alphabet overflow
+
+A32x17 RGBA16 squeeze/alpha-distance10 still emits a40527-symbol raw
+prefix alphabet; both primary Rust and native v0.12 reject it. The specialized
+lossy-tree histogram/token pairs now use existing HybridUint(4,2,0) when
+max_raw>=32767, retaining raw(15,0,0) below. Quantizers and quantized alpha
+values are unchanged. Selected default/minimal native pixel, policy,
+progressive, source/caller, full-library, unchanged-lock and strict lint
+checks pass. Exact region/error gaps and before identities are recorded in
+docs/ALPHA_TREE_CODING.md. Animation alpha-setting forwarding has its own
+caller repair; this shared fix is qualified independently of it.
+
+
+### RESOLVED 2026-11-19: primary decoder squeezed-alpha border view
+
+The primary0.8 oracle dropped the perpendicular output-tile offset when its
+inverse-squeeze output grid was finer than the input grid. Native v0.12
+returns154 at(2044,2040) from both our2049x2048 stream and an independently
+encoded reference; old primary returns155. Isolated core50c65e45 fixes the
+border view, with native transposed fixtures and restored-fault controls.
+Library and CLI aliases pinf9d86075 together; the optional production
+controller decoder remains unchanged. Required decoder platform CI44591633712
+passes; encoder integration and fresh platform verdicts remain separately
+recorded in docs/ALPHA_SQUEEZE_CONTRACT.md. No tolerance is relaxed.
+
+
+### 2026-11-19: primary alpha decoder agreement at an LF-group edge
+
+PR146 run44577850969's expert alpha matrix reports primary code155 where the
+unchanged pinned-v0.12 reference expects154, at2049x2048, alpha distance25,
+coordinate(2044,2040). The artifact's native decode of our stream also returns154;
+its independent native reference agrees. This localizes the observed split to
+the primary decoding/check path, without establishing an inverse-transform root
+cause yet. The five buffering selections and three progressive modes reproduce
+the same first mismatch. The assertion remains unchanged. Exact source streams,
+full alpha planes and per-member CRC/SHA evidence are retained under
+`pr146-alpha-ci-failure-v1` and `pr146-alpha-ci-own-native-v1`. The isolated
+primary decoder's scalar/SIMD replay is pending; this is not a passing CI result.
+
+The same run's Windows ARM reference setup fails in `djxl --version` with
+exit-2147483644 after `cjxl v0.12.0` verification. It supplies no encoder or pixel
+verdict. A fresh PR head has its own platform run.
+
+
 ### RESOLVED 2026-11-19: optional rate-control quantizer feedback
 
 The old controller coarsens unmet tiles by dividing the integer AC quantizer,
@@ -2393,9 +2462,9 @@ histogram adapter 33/40; un-injected serializer errors and unreachable branches
 are itemized in [the owning contract](docs/ALPHA_SQUEEZE_CONTRACT.md). These
 fractions do not prove full encoder coverage. Progressive placement remains V2.
 
-The animation builder does not forward either alpha-distance or alpha-squeeze
-configuration. This source-audit gap is separate from actual squeeze-writer
-coverage; no runtime animation alpha-knob verdict is claimed yet.
+The later [animation caller repair](docs/ANIMATION_ALPHA_OPTIONS.md) forwards
+both settings, with independent failing-before and native-plane caller evidence.
+Its newer coverage is separate from the original squeeze-writer fractions.
 
 
 ### RESOLVED dependency: global squeeze intermediates — 2026-11-17
@@ -7012,3 +7081,18 @@ locks/lint pass; destination-wrapper/region checks and the approved controller
 CLI integration remain separately in progress. Native CLI container0 is
 automatic; our documented Never is deliberately stricter.
 [Evidence and current limits](docs/FRAME_LEVEL_CONTRACT.md).
+
+
+### 2026-11-19: request controller and early CLI branches
+
+The approved default-off request setter preserves ordinary ingestion and output
+finalization. The CLI uses that adapter instead of the former RGB-only bypass.
+Actual before probes retain APNG, automatic JPEG transcode, JPEG coarsening and
+lossless selection silently accepting the controller flag; each now refuses
+its unsupported combination before writing the destination. The feature-disabled
+fallback remains separate. Source/layout/precision/metadata/native/primary and
+restored-fault controls pass. The full existing CLI continuation and trusted-limit
+large-area runtime retain separate verdicts and must not be inferred from those
+selected passes. Current evidence and remaining exception regions live in
+[the controller contract](docs/RATE_CONTROL_CONTRACT.md). This API goes through
+its assigned review PR; no release is authorized by this change.

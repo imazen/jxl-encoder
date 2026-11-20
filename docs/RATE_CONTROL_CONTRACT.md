@@ -159,3 +159,201 @@ resource observation, not encoder latency. Runtime profile SHA256 is
 `f00a42a54feb8451165adb25dcc57e2a59d07c3a6b4619e73a7e55f0c8bd5016`.
 No byte-lock migration, public signature, registry gate or default encoding
 policy changes here. The public request/CLI API is still separately qualified.
+
+
+## November 19: approved request controller adapter
+
+The additive `EncodeRequest::with_rate_control(self, RateControlConfig) -> Self`
+uses the existing public configuration type behind the existing rate-control
+feature. Unset requests keep ordinary encoding. The adapter reuses source
+conversion, stride handling, metadata, extra channels, limits, cancellation and
+container finalization. It supports lossy Full444 single-frame input at effective
+255-nit intensity and spatial factor one. Lossless, animation, subsampling,
+external scorer and loop-trace combinations return configuration errors.
+Default HDR peaks are refused; explicitly selecting255nits retains the ordinary
+PQ/HLG source conversion. Profile conversion keeps its existing std requirement.
+No controller streaming constructor is introduced.
+
+The raw public prepared controller retains its codestream contract. Private
+iteration records carry each selected stream's emitted-frame requirement through
+the same input and output owners. Alpha and additional channels travel with each
+iteration, while Stop checks cover preparation, individual encodes and final
+return. The source precomputation is shared with the existing raw wrapper;
+quantization arithmetic and the historical final-cap/decoder-failure policy are
+unchanged by this adapter. There is no convergence, universal quality-improvement
+or whole-controller process-RSS guarantee.
+
+`request-cli-queue41-library-gates-v3` and `request-callers-q47-runtime-v6`
+retain complete native v0.12/primary source, precision, profile, metadata,
+extra-channel, canonicalization and resource controls under all seventeen
+inventoried audit policies. Every observed cancellation checkpoint is injected
+on the retained input; destinations remain unchanged and a subsequent successful
+encode retains its bytes. A one-byte precompute budget produces a real refusal.
+`request-faults-q44-runtime-v4` separately restores controller dispatch,
+canonical-controller propagation and extra-channel faults: all fail at runtime,
+and each exact fixed source is restored.
+
+`request-feature-q47-isolated-v7` passes the full library baseline, minimal
+std/convenience request controls, progressive CLI controls, unchanged normal and
+strict byte locks, divergence checks, strict broad optional library/CLI lint,
+no-default compilation and scoped formatting. The separate unset-feature
+profile retains ordinary encoding choices with the optional feature compiled.
+Existing ignores, hash expectations and quality bounds remain unchanged.
+
+The remaining mapped gaps precede the observed fractions: animation/error
+location regions and the surrounding controller's decoder/error/final-tail
+paths remain unobserved in this union. The inclusive loop returns at its cap,
+so its post-loop fallback has no caller witness. Allocation failure is not
+injected and a private helper's accounting does not bound the whole controller.
+`request-cancellation-regions-q48-v1` binds exact function bodies: setter4/4,
+validator40/40, validation window3/3, canonical copy9/9, request dispatch21/21,
+adapter37/37 and surrounding controller106/118. These are mapped execution
+regions, not input-space coverage or a complete controller qualification.
+
+The paired CLI repair has retained actual-file controls for all six strategy
+spellings in both modes. It preserves input layouts, exact integer alpha,
+gamma, ICC/EXIF/XMP, container policy, LF payloads and the iteration selector.
+The original-profile native observer explicitly selects signal or linear output;
+fixed sRGB ICC tests map the primary's documented linear fallback to their known
+signal domain without changing the0.001 agreement or0.01 source bounds.
+The APNG, automatic JPEG, coarsening and distance-zero before failures are
+retained separately. Normal JPEG controls fully render and reconstruct exact
+original bytes before refusal checks. Forced JPEG shares the transcode guard
+and has a positive/refusal control after that guard; it is not a separate
+observed failing-before claim.
+
+`request-complete-cli-q50-runtime-v11/runtime` passes all selected source,
+metadata, precision, LF, iteration and unsupported-route families with the
+JPEG and Brotli features compiled together. The subsequent complete existing
+CLI suite passes its delta-palette, gamma, ICC, JPEG, modular-width and
+progressive checks, then stops before Gaborish input on disk exhaustion.
+The separate `request-cli-continuation-q52-isolated-v11` run passes the
+remaining Gaborish, shifted-alpha, strategy and streaming CLI targets, strict
+selected-test lint and scoped formatting. Root-std-disabled and std-enabled
+rate-control library compilation both pass; the former retains nineteen
+warnings. The complete existing CLI suite therefore has positive evidence
+across the exact-source q50/q52 union; the disk-interrupted q50 command remains
+nonzero. Both old Cargo caches were archived and verified before reclamation,
+preserving every test artifact. The completed trusted-limit large LF-area runtime is recorded below; its
+elapsed wall includes freezer intermissions and is not a latency result.
+
+
+## November 19: actual winning dictionaries through requests
+
+`request-patch-q54-runtime-v2` passes complete primary/native rendering for a
+real imac screenshot tile repeated across a2048x512 canvas, under all seventeen
+audit policy bindings. Each case requires an actual ReferenceOnly dictionary
+and a following displayed frame. LF-on adds the separate LF frame; LF-off is
+the source-error baseline. RGB/RGBA, controller caps zero/two, exact alpha137
+and packed/strided byte equality are checked. The retained source-MAE0.01,
+cross-decoder0.001 and existing LF-relative bounds remain unchanged. This is
+conditional-path evidence, not full input-space or all-profile quality coverage.
+
+Runtime ELF SHA256 is
+`f4cf9a664083e89853f3d71ead8a0e747ed7cbbf79b5bd841960618d42a16ffe`;
+profile SHA256 is
+`a54f7346b6308938de3499a02a9d1a21d564cb09b0d058bab6f8fe39e5801aec`.
+The enclosing q54 command subsequently fails strict lint on an unused test
+helper. The final source records the existing level observer in its JSON
+diagnostics; assertions and production bodies are unchanged.
+`request-patch-q56-lint-v3` passes default/minimal strict test lint and scoped
+formatting. The minimal dictionary runtime remains separately selected in CI;
+its compile result alone is not a rendering verdict.
+
+`just request-controller-dictionary-check <pinned-manifest>` runs default and
+minimal dictionary checks with an explicit caller-provisioned codec corpus and
+guarded v0.12 tools. Expert CI provisions and verifies the screenshot's fixed
+SHA256 before both commands. The surrounding controller's error/decoder-fallback
+and allocation gaps remain as documented above.
+
+## Completed large-area and dictionary caller controls
+
+The trusted-limit request-controller LF replay has completed all seventeen
+audit policy bindings at16384x16384. Main-only area268435456 declares Level5;
+the2048x2048 LF frame raises cumulative area to272629760 and declares Level10.
+Every stream completely renders through the pinned primary and v0.12 native
+decoder, with the existing0.001 clamped-primary/native16 agreement bound.
+The controller cap is zero, effort1, distance1, filters and patches disabled;
+this proves frame-area transport through that entry, not controller convergence.
+
+Retained runtime identity: ELF
+`cafba22bf9bb13644f03b553fc45acc282d21d9b85d819ffda63daae247e6afb`,
+completed profile
+`981450a602d973f3e46cd405a77a6c8d3ccc7e17d3727677e9fb013d93ad7bb5`.
+The runtime returns zero; the enclosing q47 queue remains nonzero because it
+also contains intentionally failing before controls. Its4875.17-second runtime
+includes verified freezer intermissions and supplies no isolated latency claim.
+This executable uses primary revision3d48825c; qualification of its replacement
+remains separate.
+
+The real imac dictionary witness also completes all seventeen bindings with
+RGB/RGBA, controller caps0/2, LF off/on, actual ReferenceOnly payloads and
+packed/strided byte equality. Every delivered alpha sample and complete native/
+primary image is checked with unchanged bounds. Runtime ELF
+`f4cf9a664083e89853f3d71ead8a0e747ed7cbbf79b5bd841960618d42a16ffe` and
+profile`a54f7346b6308938de3499a02a9d1a21d564cb09b0d058bab6f8fe39e5801aec`
+are retained in`request-patch-q54-runtime-v2`. The enclosing run subsequently
+fails strict lint on its new unused observation helper; v3 records that level
+in the existing observation JSON and passes default/minimal lint. The minimal runtime and byte-identity follow-up is recorded below. No assertion, encoder arithmetic or quality bound
+changes in that observation-only correction.
+
+## Primary border-fix dependency integration
+
+The library and CLI development decoder aliases now pinf9d86075 together;
+the lock changes only the four matching Git source revisions. The optional
+production controller retains its separately pinned zen0.4 decoder. Frozen
+locked qualification`request-decoder-border-pin-q66-isolated-v2` checks the
+unchanged alpha/layout/policy/entry and progressive/group geometry contracts,
+full optional-feature library, normal/strict byte locks, divergence drift,
+strict library lint and formatting. Actual verdict and retained objects are
+recorded beside that qualification; the preceding mixed-alias q65 failure
+occurs before compilation and supplies no pixel verdict.
+
+The q66 alpha, progressive, geometry and broad-library stages pass. Its later
+lock command fails Cargo argument parsing before those checks execute, so q66
+remains nonzero. The exact-source q68 continuation passes unchanged normal/
+strict byte locks and divergence drift, strict broad library lint and scoped
+formatting. Both source overlays are restored exactly; their individual
+verdicts remain retained. This is the q66/q68 evidence union, not a green q66.
+
+## Minimal dictionary replay and feature byte identity
+
+The minimal std/expert/rate-control/corpus feature build completes the same
+seventeen policy bindings, RGB/RGBA, controller caps 0/2 and LF off/on with
+all original dictionary, pixel, alpha and stride assertions intact. Exact
+encoded bytes agree with the completed full-feature q54 matrix in every named
+cell. The comparison checks both journals for unique complete cells and all
+policy/layout/controller/LF combinations before comparing stream SHA256s.
+It establishes byte identity on this matrix, without inferring input-space or
+whole-encoder coverage.
+
+`request-dictionary-minimal-q67-isolated-v1` passes runtime, strict selected
+test lint and formatting. Retained uninstrumented ELF:
+`b4caf94390698255df9b20c102356390819371b8c3da39faab1c1bc7dc5409e9`.
+Its source identity binds the unchanged encoder bodies and primary f9d86075
+dependency selection. `request-dictionary-minimal-q67-runtime-v1/byte-identity.json`
+retains every baseline/candidate stream hash; no new production region claim
+is made from this uninstrumented run. Reproduce the journal/stream comparison
+with `just request-dictionary-replay-identity <baseline-run> <candidate-run> <new-report>`.
+
+The native Linux ARM and Windows ARM jobs in run 44611150758 reached the
+JPEG reconstruction control and failed at the djxl invocation. Their
+reference builds report that CMake could not find JPEG. Pinned v0.12 only
+registers `--reconstruct_jpeg` in builds with a JPEG pixel encoder. Its
+`.jpg` output path attempts JPEG reconstruction first in either build.
+The test uses that path and requires exact equality to the original JPEG,
+with stderr included on failure. The local pinned replay passes automatic,
+forced and coarsening controls across all CLI policies, including destination
+preservation on controller refusal. Its retained ELF is
+`6b04550accbfdee6b3ac08dcd989a4e654c338f7de9549db18792fe5bf73990f`.
+
+A fresh a7a9c78 reference build with CMake's JPEG package disabled and
+`JPEGXL_ENABLE_TRANSCODE_JPEG=ON` reproduces the old invocation's
+`Unknown argument: --reconstruct_jpeg` diagnostic. Automatic `.jpg` output
+rebuilds all 2983 fixture bytes, SHA256
+`37420ea8f86ac752377c31d000eca2840b1b92b99ce0f6e8519044db8129c203`.
+The complete repaired JPEG route test passes with that lean decoder across
+all CLI policy bindings. The decoder executable SHA256 is
+`c43273619e4ec1a97f9d6fd5a062cb65ae0df6efca4608019bd15c130130d3c3`.
+The build and replay wrapper exits zero after 89 seconds, with peak RSS of
+0.84 GiB and minimum available memory of 17254 MiB.

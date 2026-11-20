@@ -2967,3 +2967,50 @@ Remaining layout inventory is tracked separately in the progressive contract.
 | Site | Encoder policy | Pinned v0.12 / format control | Status |
 |---|---|---|---|
 | `api/ingest::{wrap_output,wrap_metadata_container,finish_animation_output}` and `container::wrap_encoded` | Consume the existing policy at pixel output owners. Always forces framing; Auto preserves existing output; Never drops box metadata, preserves codestream ICC and rejects Level10. No strategy gate. | v0.12 container1 forces framing; native container0 is automatic and can frame Level10. The existing Never API explicitly promises a stricter refusal. | Shared correctness repair, November19; no default byte movement or gate-registry value change. Implementation `75ae6c9b`; destination-wrapper byte/error controls pass. Region gaps remain explicitly recorded in FRAME_LEVEL_CONTRACT.md. |
+
+
+### Issue 144: optional request-controller integration
+
+| Site | Request contract | Reference distinction | Qualification |
+|---|---|---|---|
+| `EncodeRequest::with_rate_control` and private prepared adapter | Explicit default-off Butteraugli controller reuses normal source/stride/metadata/extras/limits/Stop and container finalization; only lossy Full444,255nits, factorone, single-frame input | Source conversion follows the existing pinned-v0.12 controls. This optional encode/decode controller is not the complete libjxl quantizer search. | Owner-approved additive signature. Default library, selected minimal request controls, unchanged byte locks, native/primary controls and restored faults pass. CLI and large-area continuation and remaining exception regions are recorded in RATE_CONTROL_CONTRACT.md. No registry gate or preset value changes. |
+
+### Issue 144: primary inverse-squeeze border oracle
+
+| Site | Encoder/test choice | Independent control | Status |
+|---|---|---|---|
+| Library and CLI primary0.8 dev decoder | Pinf9d86075, preserving perpendicular output-tile offsets when reading packed next-average borders | Unmodified v0.12 native independently encoded horizontal/vertical streams and complete delivered alpha planes | Dependency-only repair for the unchanged alpha tests. Core50c65e45; no encoder arithmetic, registry gate, constant or preset choice changes. Exact integration verdict is retained in RATE_CONTROL_CONTRACT.md. |
+
+### Issue 144: bounded lossy alpha tree alphabets
+
+| Site | Encoder selection | Pinned/native control | Status |
+|---|---|---|---|
+| `modular::encode_tree` lossy Gradient/channel-split histogram and token pairs | Keep HybridUint(15,0,0) when `max_raw < 32767`; otherwise use the existing general-tree HybridUint(4,2,0), including extra bits | Part 1 C.2/C.3 permits the representation. Native v0.12 rejects the old40527-entry raw alphabet and recovers every selected repaired alpha code | Shared serialization repair; quantizers and samples unchanged. Default/minimal still/controller, policy/progressive/entry and geometry controls, unchanged locks/drift and strict lint pass. Exact bodies and error/unreachable region gaps: [ALPHA_TREE_CODING.md](ALPHA_TREE_CODING.md). No registry gate, preset or macro metadata changes. |
+
+
+### Issue 144: animation alpha distance and squeeze forwarding
+
+`api/animate.rs::encode_animation_lossy` now forwards the existing
+`cfg.alpha_distance` and `cfg.alpha_squeeze` to its shared frame encoder.
+The common float-alpha header selection passes
+`matches!(cfg.alpha_distance, Some(distance) if distance > 0.0)` to
+`AlphaCoding::choose`, matching the still-image integer lossy-alpha choice.
+Unset/zero keeps exact-float selection across all supplied frames. Pinned
+v0.12 independently encoded alpha planes supply the sample oracle. This is
+a shared caller repair, with no new registry gate or preset selection.
+[Before observations and caller evidence](ANIMATION_ALPHA_OPTIONS.md) distinguish
+it from the separate high-precision tree-prefix correction. Full libjxl
+entropy-byte identity and arbitrary float/whole-encoder coverage are not claimed.
+
+
+### Issue 144: extra-channel count admission
+
+The count repair keeps the existing Level 10 maximum 256 as one private
+constant, shared with request and raw direct/precomputed/prequantized admission.
+Supplied extras are bounded before preflight; layout alpha/Black are included,
+with removable alpha resolved after canonicalization and a final prepared-layout
+check. `FileHeader::write` independently refuses counts above 4096 before bits,
+matching the pinned v0.12 metadata visitor's 12-bit offset range. Native public
+Level 10 admission separately refuses 257. Part 1 D.3/Annex M distinguish those
+limits. No count value, registry permission, named policy or quantizer changes.
+[Actual before/reference and qualification evidence](EXTRA_METADATA_CONTRACT.md).

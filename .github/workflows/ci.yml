@@ -249,6 +249,19 @@ jobs:
           cargo test --locked -p jxl-encoder --release --no-default-features --features std,rate-control,__expert --lib vardct::rate_control::direction_tests:: -- --test-threads=1
           cargo test --locked -p jxl-encoder --release --features __expert,parallel,rate-control --lib vardct::rate_control::direction_tests:: -- --test-threads=1
 
+      - name: Check request controller with the root std feature disabled
+        run: >-
+          cargo check --locked -p jxl-encoder --no-default-features
+          --features rate-control --lib
+
+      - name: Test request rate-control source and destination contracts
+        env:
+          JXL_ENCODER_OUTPUT_DIR: ${{ runner.temp }}/issue144-contracts
+        run: |
+          cargo test --locked --release -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel,rate-control,jpeg-reencoding,chroma-subsampling,__external_metric --lib request_rate_control_ -- --test-threads=1
+          cargo test --locked --release -p jxl-encoder --no-default-features --features std,convenience,__expert,rate-control --lib request_rate_control_ -- --test-threads=1
+          cargo test --locked --release -p jxl-encoder-cli --features rate-control,jpeg-reencoding,brotli-metadata --test rate_control_request -- --test-threads=1
+
       - name: Test rate-control metric peak and reservation lifetimes
         run: >-
           cargo test --locked -p jxl-encoder --release
@@ -272,6 +285,20 @@ jobs:
           cargo test --locked --release -p jxl-encoder
           --features __expert,__internals,__pre_quantized,parallel
           --test lf_caller_contract -- --test-threads=1
+
+      - name: Test high-precision alpha tree coding in both feature builds
+        env:
+          JXL_ENCODER_OUTPUT_DIR: ${{ runner.temp }}/issue144-contracts
+        run: |
+          cargo test --locked --release -p jxl-encoder --features __expert,parallel --test alpha_large_multiplier_contract alpha_large_multiplier_still_writer -- --test-threads=1
+          cargo test --locked --release -p jxl-encoder --no-default-features --features std,convenience,__expert --test alpha_large_multiplier_contract alpha_large_multiplier_still_writer -- --test-threads=1
+
+      - name: Test animation alpha settings and layer callers in both feature builds
+        env:
+          JXL_ENCODER_OUTPUT_DIR: ${{ runner.temp }}/issue144-contracts
+        run: |
+          cargo test --locked --release -p jxl-encoder --features __expert,parallel --test animation_alpha_contract --test animation_alpha_layers_contract -- --test-threads=1
+          cargo test --locked --release -p jxl-encoder --no-default-features --features std,convenience,__expert --test animation_alpha_contract --test animation_alpha_layers_contract -- --test-threads=1
 
       - name: Test configured pixel container policies
         env:
@@ -383,6 +410,15 @@ jobs:
         env:
           CROSS_CONTAINER_OPTS: --security-opt seccomp=unconfined
         run: cross test --locked --workspace --exclude zenjxl-tuning-runner --release --no-default-features --features "std" --lib --target ${{ matrix.target }}
+
+      - name: High-precision alpha prefix coding (cross/i686)
+        if: matrix.run_tests
+        env:
+          CROSS_CONTAINER_OPTS: --security-opt seccomp=unconfined
+        run: >-
+          cross test --locked -p jxl-encoder --release --no-default-features
+          --features std,convenience,__expert --test alpha_large_multiplier_contract
+          --target ${{ matrix.target }} alpha_large_multiplier_still_writer -- --test-threads=1
 
       - name: Optional ICC rows and default-disabled feature graph (cross/i686)
         if: matrix.run_tests
@@ -540,6 +576,14 @@ jobs:
           --test modular_width_level_contract --test animation_contract
           --test jpeg_sampling_contract
           -- --test-threads=1
+      - name: Test large alpha multipliers through request control and minimal features
+        env:
+          JXL_ENCODER_OUTPUT_DIR: ${{ runner.temp }}/issue144-contracts
+        run: |
+          cargo test --locked --release -p jxl-encoder --features __expert,parallel,rate-control --test alpha_large_multiplier_contract -- --test-threads=1
+          cargo test --locked --release -p jxl-encoder --no-default-features --features std,convenience,__expert,rate-control --test alpha_squeeze_matrix high_precision_alpha_large_quantizers -- --test-threads=1
+          cargo test --locked --release -p jxl-encoder --no-default-features --features std,convenience,__expert,rate-control --test alpha_large_multiplier_contract -- --test-threads=1
+
       - name: Selected modular and decoder reconstruction contracts
         env:
           JXL_ENCODER_OUTPUT_DIR: ${{ runner.temp }}/issue144-contracts
@@ -586,6 +630,8 @@ jobs:
           export CODEC_CORPUS_DIR="$(cat "$RUNNER_TEMP/prepared-corpus-root")"
           cargo test --locked --release -p jxl-encoder --features __expert,__internals,__pre_quantized,parallel,corpus-tests --test lf_caller_contract -- --test-threads=1
           cargo test --locked --release -p jxl-encoder --no-default-features --features std,__expert,__internals,__pre_quantized,corpus-tests --test lf_caller_contract -- --test-threads=1
+          cargo test --locked --release -p jxl-encoder --features __expert,parallel,rate-control,corpus-tests --test request_rate_control_patch_contract -- --test-threads=1
+          cargo test --locked --release -p jxl-encoder --no-default-features --features std,__expert,rate-control,corpus-tests --test request_rate_control_patch_contract -- --test-threads=1
       - name: Test HDR pair gamut, alpha and absolute-light contract
         env:
           JXL_ENCODER_OUTPUT_DIR: ${{ runner.temp }}/issue144-contracts
@@ -625,6 +671,13 @@ jobs:
           cargo test --locked -p jxl-encoder --release
           --features "__expert,__internals,__pre_quantized,parallel"
           --test extra_metadata_contract extra_metadata_prepared -- --test-threads=1
+      - name: Test extra-channel count boundaries through request rate control
+        env:
+          JXL_ENCODER_OUTPUT_DIR: ${{ runner.temp }}/issue144-contracts
+        run: >-
+          cargo test --locked -p jxl-encoder --release
+          --features "__expert,__pre_quantized,parallel,rate-control"
+          --test extra_metadata_contract extra_metadata_count_request_controller -- --test-threads=1
       - name: Test progressive AC rate-control callers
         env:
           JXL_ENCODER_OUTPUT_DIR: ${{ runner.temp }}/issue144-contracts
