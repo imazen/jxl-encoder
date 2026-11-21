@@ -65,9 +65,9 @@ zenflate = { git = "https://github.com/imazen/zenflate", rev = "a0ea03637a2cc9a1
 # Shared metadata types come from the same pinned sibling as direct path users.
 zencodec = { path = "../zencodec" }
 zenmeta = { path = "../zencodec/zenmeta" }
-ultrahdr-core = { git = "https://github.com/imazen/ultrahdr", rev = "7e9d296c9e037e626234c9f0e8673d48278f83f0" }
-zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "f23ac7535be1144a22d0dc6b71f866a08b151f34" }
-zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "f23ac7535be1144a22d0dc6b71f866a08b151f34" }
+ultrahdr-core = { git = "https://github.com/imazen/ultrahdr", rev = "ade3c857f5541aaff3828e0c7fad073bfe109fd9" }
+zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "18afc75f1fd40c7feafeef6deae4df8e97e5e1b9" }
+zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "18afc75f1fd40c7feafeef6deae4df8e97e5e1b9" }
 jxl-oxide = { git = "https://github.com/imazen/jxl-oxide.git", rev = "08395e61c1789f70bd1890fb29682e5aca274efa" }
 jxl-color = { git = "https://github.com/imazen/jxl-oxide.git", rev = "08395e61c1789f70bd1890fb29682e5aca274efa" }
 jxl-image = { git = "https://github.com/imazen/jxl-oxide.git", rev = "08395e61c1789f70bd1890fb29682e5aca274efa" }

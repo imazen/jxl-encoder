@@ -197,9 +197,9 @@ checksum = "3bc62ac97cc33321f50863d514c3bc38a453947a8f9e781137e47c7401020aed"
 
 [[package]]
 name = "archmage"
-version = "0.9.30"
+version = "0.9.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "15785ee3576fbd41276a25f063b1e6b5bf323af9b4924632e25a8de6a3065f06"
+checksum = "a92f0e72adfba3f34ee8726e42cffed7384571e95411265060c638ece0f00ff2"
 dependencies = [
  "archmage-macros",
  "safe_unaligned_simd",
@@ -208,9 +208,9 @@ dependencies = [
 
 [[package]]
 name = "archmage-macros"
-version = "0.9.30"
+version = "0.9.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce7707714970d5cf476caccbae2d282000c6c14ca5aada878e722a10d8e1c153"
+checksum = "3d4e76b4cdc9779ac80e4b04cbc6c15fdb5b714116a7047eea481fb2f45017d2"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2572,24 +2572,17 @@ dependencies = [
 
 [[package]]
 name = "lz4_flex"
-version = "0.11.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "373f5eceeeab7925e0c1098212f2fbc4d416adec9d35051a6ab251e824c1854a"
-
-[[package]]
-name = "lz4_flex"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ecbdfe44b1bd960b68170b417450a628c43f7cf56bb3c5317e61cb230ee7f226"
 
 [[package]]
 name = "magetypes"
-version = "0.9.30"
+version = "0.9.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5726fd3335b1d2814036c420a5c8d105abcc0e0b43eebb477e48f8c725fc8fb2"
+checksum = "4a4bf97ae47bb9993221b6e00114dd4ef0920c11e72d39bc550d46ecd50c257c"
 dependencies = [
  "archmage",
- "libm",
  "rustversion",
 ]
 
@@ -4060,7 +4053,7 @@ checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
 [[package]]
 name = "ultrahdr-core"
 version = "0.6.0"
-source = "git+https://github.com/imazen/ultrahdr?rev=7e9d296c9e037e626234c9f0e8673d48278f83f0#7e9d296c9e037e626234c9f0e8673d48278f83f0"
+source = "git+https://github.com/imazen/ultrahdr?rev=ade3c857f5541aaff3828e0c7fad073bfe109fd9#ade3c857f5541aaff3828e0c7fad073bfe109fd9"
 dependencies = [
  "archmage",
  "bytemuck",
@@ -5360,7 +5353,7 @@ dependencies = [
 [[package]]
 name = "zenpixels"
 version = "0.3.1"
-source = "git+https://github.com/imazen/zenpixels?rev=f23ac7535be1144a22d0dc6b71f866a08b151f34#f23ac7535be1144a22d0dc6b71f866a08b151f34"
+source = "git+https://github.com/imazen/zenpixels?rev=18afc75f1fd40c7feafeef6deae4df8e97e5e1b9#18afc75f1fd40c7feafeef6deae4df8e97e5e1b9"
 dependencies = [
  "bytemuck",
  "imgref",
@@ -5371,14 +5364,14 @@ dependencies = [
 [[package]]
 name = "zenpixels-convert"
 version = "0.3.1"
-source = "git+https://github.com/imazen/zenpixels?rev=f23ac7535be1144a22d0dc6b71f866a08b151f34#f23ac7535be1144a22d0dc6b71f866a08b151f34"
+source = "git+https://github.com/imazen/zenpixels?rev=18afc75f1fd40c7feafeef6deae4df8e97e5e1b9#18afc75f1fd40c7feafeef6deae4df8e97e5e1b9"
 dependencies = [
  "archmage",
  "bytemuck",
  "garb",
  "libm",
  "linear-srgb",
- "lz4_flex 0.14.0",
+ "lz4_flex",
  "magetypes",
  "moxcms 0.8.1",
  "once_cell",
@@ -5415,12 +5408,12 @@ dependencies = [
 [[package]]
 name = "zenpredict"
 version = "0.2.0"
-source = "git+https://github.com/imazen/zenanalyze?rev=f0903489300aea240ffae2e3f1359f8f2b9a0ba4#f0903489300aea240ffae2e3f1359f8f2b9a0ba4"
+source = "git+https://github.com/imazen/zenanalyze?rev=8bf61bc96ab05a7a88d2fa93c00cf0613eb24ae3#8bf61bc96ab05a7a88d2fa93c00cf0613eb24ae3"
 dependencies = [
  "archmage",
  "bytemuck",
  "libm",
- "lz4_flex 0.11.6",
+ "lz4_flex",
 ]
 
 [[package]]
@@ -5445,6 +5438,7 @@ name = "zensim"
 version = "0.3.0"
 dependencies = [
  "archmage",
+ "archmage-macros",
  "bytemuck",
  "enough",
  "imgref",
