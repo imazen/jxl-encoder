@@ -783,3 +783,39 @@ takes 96 s at 0.58 GiB peak RSS under `run-heavy` on i270.
 [Per-file bytes and hashes](faster_decode_imazen26_balanced_128_rct_2026-11-22.tsv).
 Raw commands and all streams are under
 `imazen26-lossless/balanced-128-predictors-rct`.
+
+### Tree thresholds and properties at 128 px
+
+The next i270 run varies the lossless split threshold, property count,
+bucket count and non-weighted predictors at effort 7. Every candidate
+uses local MA trees at 128 px, with tier 1 and patch selection available.
+The terminal keeps its 4,096-color palette cap. The four-photo and
+three-graphics panels each use native imazen-26 inputs.
+
+| Panel | Setting | Median growth vs tier 0 | p90 growth |
+|---|---|---:|---:|
+| Photos | Stock tier 1 | 6.99% | 9.39% |
+| Photos | Gradient, 12 properties, 192 buckets, base split threshold 75 | 5.74% | 7.19% |
+| Graphics | Stock tier 1 | 16.84% | 35.47% |
+| Graphics | All non-weighted predictors | 10.41% | 21.41% |
+| Graphics | All non-weighted predictors, base split threshold 50 | 10.46% | 16.08% |
+
+The photo combination passes its rate limits and uses the same Gradient
+predictor as stock. Its extra properties and finer bucket resolution
+allow more candidate thresholds. On the plot the photo combination still
+grows by 31.84%. Allowing other non-weighted predictors produces the
+two graphics rate candidates. One knob alone leaves the photo median
+above 6%. This grid qualifies rate and exactness for the timing replay.
+
+All seven stock streams reproduce their earlier hashes. Across 91
+encodes, all 89 distinct per-input outputs reproduce exact source RGB8
+through Zen at 1/4/8 workers, jxl-rs and djxl v0.12. The build adds
+experiment controls to the encoder at
+[d399d407](https://github.com/imazen/jxl-encoder/commit/d399d4075ec01e0f019f96455c6c3af24bfea6ed)
+and uses the same [Zen decoder](https://github.com/imazen/zenjxl-decoder/commit/05042e1b5b46151a507da3f116eadee805117599)
+as the direct Modular RGB8 qualification. Its binary SHA256 is
+`1277aae5d5a90518617bdda8ba8ccb96ea648e7a0d663e52edcca0464e883cd6`.
+Encoding and readback take 186 s at 0.58 GiB peak RSS.
+[Per-file rates and hashes](faster_decode_imazen26_balanced_128_tree_shape_2026-11-22.tsv).
+The binary, full commands, raw streams and manifest are under
+`imazen26-lossless/balanced-128-tree-shape` on i270.
