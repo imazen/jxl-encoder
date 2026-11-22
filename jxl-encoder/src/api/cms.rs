@@ -6,7 +6,8 @@ use crate::EncodeError;
 use crate::budget::{BudgetGuard, MemoryBudget};
 use alloc::{sync::Arc, vec::Vec};
 use zenpixels_convert::{
-    ColorPrimaries, ColorProfileSource, PixelFormat, PluggableCms, TransferFunction,
+    CmsRequest, CmsSupport, ColorPrimaries, ColorProfileSource, ConvertOptions, GamutPolicy,
+    PixelFormat, PluggableCms, TransferFunction,
 };
 
 pub(super) struct RgbRows<'a> {
@@ -14,6 +15,7 @@ pub(super) struct RgbRows<'a> {
     pub width: usize,
     pub rows: usize,
     pub stride: usize,
+    pub source_hdr: bool,
     pub source_matrix: Option<[[f32; 3]; 3]>,
 }
 
@@ -44,28 +46,44 @@ pub(super) fn rgb_to_icc(
         return Err(invalid("ICC input rows are incomplete"));
     }
     let width = u32::try_from(input.width).map_err(|_| invalid("ICC row width exceeds u32"))?;
-    let mut transform = zenpixels_convert::MoxCms
-        .build_source_transform(
-            ColorProfileSource::PrimariesTransferPair {
-                primaries: ColorPrimaries::Bt709,
-                transfer: TransferFunction::Linear,
-            },
-            ColorProfileSource::Icc(profile),
-            PixelFormat::RgbF32,
-            PixelFormat::RgbF32,
-            &zenpixels_convert::policy::ConvertOptions::permissive().with_clip_out_of_gamut(false),
-        )
-        .ok_or_else(|| EncodeError::InvalidConfig {
-            message: "requested source-to-ICC conversion is unavailable".into(),
-        })?
-        .map_err(|error| EncodeError::InvalidConfig {
+    #[cfg(feature = "cms-lcms")]
+    let sdr_backend: &dyn PluggableCms = &zenpixels_convert::Lcms;
+    #[cfg(not(feature = "cms-lcms"))]
+    let sdr_backend: &dyn PluggableCms = &zenpixels_convert::MoxCms;
+    // The established HDR path detects overflow in extended linear-light
+    // values. Little CMS can return a finite result for the same input.
+    let backend = if input.source_hdr {
+        &zenpixels_convert::MoxCms
+    } else {
+        sdr_backend
+    };
+
+    let format = PixelFormat::RgbF32.descriptor();
+    let request = CmsRequest::new(
+        ColorProfileSource::PrimariesTransferPair {
+            primaries: ColorPrimaries::Bt709,
+            transfer: TransferFunction::Linear,
+        },
+        ColorProfileSource::Icc(profile),
+        format,
+        format,
+        ConvertOptions::retain_channels().with_gamut_policy(GamutPolicy::PreserveExtended),
+    );
+    let config_error =
+        |error: whereat::At<zenpixels_convert::CmsPluginError>| EncodeError::InvalidConfig {
             message: format!("source-to-ICC conversion: {error}"),
-        })?;
-    transform
-        .prepare(width)
-        .map_err(|error| EncodeError::InvalidConfig {
-            message: format!("source-to-ICC conversion: {error}"),
-        })?;
+        };
+    let mut transform = backend.build(&request).map_err(config_error)?;
+    match &mut transform {
+        CmsSupport::Declined => {
+            return Err(EncodeError::InvalidConfig {
+                message: "requested source-to-ICC conversion is unavailable".into(),
+            });
+        }
+        CmsSupport::Owned(worker) => worker.prepare(width),
+        CmsSupport::Shared(worker) => worker.prepare(width),
+    }
+    .map_err(config_error)?;
     let output_guard =
         MemoryBudget::reserve_opt(Some(budget), length as u64).map_err(EncodeError::from)?;
     let mut output = crate::budget::vec_with_capacity_fallible::<u8>(fallible, length)
@@ -114,15 +132,16 @@ pub(super) fn rgb_to_icc(
                 "source-to-ICC conversion needs finite source samples",
             ));
         }
-        transform
-            .try_transform_row(
-                bytemuck::cast_slice(source),
-                bytemuck::cast_slice_mut(&mut converted),
-                width,
-            )
-            .map_err(|error| EncodeError::InvalidInput {
-                message: format!("source-to-ICC row conversion: {error}"),
-            })?;
+        let src = bytemuck::cast_slice(source);
+        let dst = bytemuck::cast_slice_mut(&mut converted);
+        match &mut transform {
+            CmsSupport::Owned(worker) => worker.try_transform_row(src, dst, width),
+            CmsSupport::Shared(worker) => worker.try_transform_row(src, dst, width),
+            CmsSupport::Declined => unreachable!(),
+        }
+        .map_err(|error| EncodeError::InvalidInput {
+            message: format!("source-to-ICC row conversion: {error}"),
+        })?;
         for (destination, &sample) in output[y * row_len..][..row_len].iter_mut().zip(&converted) {
             if !sample.is_finite() {
                 return Err(invalid(
@@ -155,6 +174,7 @@ mod tests {
                     width: 2,
                     rows: 2,
                     stride: 6,
+                    source_hdr: false,
                     source_matrix: matrix,
                 },
                 zenpixels_convert::icc_profiles::DISPLAY_P3_V4,
@@ -174,6 +194,7 @@ mod tests {
                     width: 2,
                     rows: 2,
                     stride: 9,
+                    source_hdr: false,
                     source_matrix: matrix,
                 },
                 zenpixels_convert::icc_profiles::DISPLAY_P3_V4,
@@ -223,6 +244,7 @@ mod tests {
                     width: 2,
                     rows: 2,
                     stride: if case == "short-row" { 5 } else { 6 },
+                    source_hdr: false,
                     source_matrix: matrix,
                 },
                 zenpixels_convert::icc_profiles::DISPLAY_P3_V4,
@@ -252,6 +274,7 @@ mod tests {
                 width: 1,
                 rows: 2,
                 stride: 6,
+                source_hdr: false,
                 source_matrix: None,
             },
             zenpixels_convert::icc_profiles::DISPLAY_P3_V4,
@@ -283,6 +306,7 @@ mod tests {
                     width,
                     rows,
                     stride,
+                    source_hdr: false,
                     source_matrix: None,
                 },
                 zenpixels_convert::icc_profiles::DISPLAY_P3_V4,
@@ -305,6 +329,7 @@ mod tests {
                     width: 2,
                     rows: 2,
                     stride: 6,
+                    source_hdr: false,
                     source_matrix: matrix,
                 },
                 zenpixels_convert::icc_profiles::DISPLAY_P3_V4,
@@ -438,6 +463,7 @@ mod tests {
                 width: 1,
                 rows: 1,
                 stride: 3,
+                source_hdr: false,
                 source_matrix: None,
             },
             &profile,

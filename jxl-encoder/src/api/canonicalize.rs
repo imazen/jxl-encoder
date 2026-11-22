@@ -86,7 +86,7 @@ pub(super) fn prepare(
     if let Some(icc) = icc {
         view = view.with_color_context(Arc::new(ColorContext::from_icc(icc)));
     }
-    let Some(buffer) = view.try_reduce_to_load_bearing_format() else {
+    let Ok(Some(buffer)) = view.reduce_to_load_bearing_format() else {
         return Ok(None);
     };
     let layout = match buffer.descriptor().format {
@@ -199,7 +199,7 @@ mod tests {
         .unwrap();
         assert_eq!(layout, PixelLayout::Rgb8);
         assert_eq!(
-            buffer.as_slice().color_context().unwrap().icc.as_deref(),
+            buffer.as_slice().color_context().unwrap().icc(),
             Some(profile.as_slice())
         );
     }

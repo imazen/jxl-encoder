@@ -6941,7 +6941,7 @@ impl<'a> EncodeRequest<'a> {
             if let Some((buffer, layout, _guard)) = canonical {
                 let view = buffer.as_slice();
                 let mut metadata = self.metadata.cloned().unwrap_or_default();
-                metadata.icc_profile = view.color_context().and_then(|c| c.icc.as_deref());
+                metadata.icc_profile = view.color_context().and_then(|context| context.icc());
                 let bits_per_sample = if self.layout.is_16bit() && !layout.is_16bit() {
                     None
                 } else {
@@ -9530,6 +9530,12 @@ impl<'a> EncodeRequest<'a> {
                 width,
                 rows,
                 stride: width * 3,
+                source_hdr: self.color_encoding.as_ref().is_some_and(|color| {
+                    matches!(
+                        color.transfer_function,
+                        crate::TransferFunction::Pq | crate::TransferFunction::Hlg
+                    )
+                }),
                 source_matrix: matrix,
             },
             profile,

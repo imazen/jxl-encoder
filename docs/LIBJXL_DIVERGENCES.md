@@ -490,6 +490,16 @@ VarDCT stream learner. See [lossless tracking](LIBJXL_PARITY_TRACKING.md).
 
 ## E. Per-API behavior divergences (opt-in)
 
+### Explicit RGB8 ICC conversion backend (2026-11-22)
+
+For the optional subsampled RGB8 coefficient path, the `cms-lcms` feature
+selects Rust Little CMS for sources without an explicit PQ or HLG transfer.
+MoxCMS handles explicit PQ and HLG in both builds so the established
+extended-range overflow refusal applies. The native v0.12 reference uses
+its own CMS connection and supplies the sample oracle, including
+quality-100 JPEG coefficient controls. See
+[the source conversion contract](SOURCE_COLOR_CONVERSION.md#zenpixels-04-and-rgb-icc-backend-selection).
+
 ### Guarded photo decode profiles (2026-11-22)
 
 The standalone `scripts/fast-decode/encode_photo.py` uses the existing Zen

@@ -1696,6 +1696,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "garb"
+version = "0.2.9"
+source = "git+https://github.com/imazen/garb?rev=457ff8b9153e9d675a39dc098052b2ffeb6206fa#457ff8b9153e9d675a39dc098052b2ffeb6206fa"
+dependencies = [
+ "archmage",
+ "magetypes",
+]
+
+[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2201,7 +2210,7 @@ dependencies = [
  "jxl-threadpool",
  "jxl-vardct",
  "jxl_transforms 0.4.3",
- "linear-srgb",
+ "linear-srgb 0.6.12",
  "moxcms 0.9.0",
  "once_cell",
  "postcard",
@@ -2221,7 +2230,7 @@ dependencies = [
  "zenjpeg",
  "zenjxl-decoder 0.3.10",
  "zenjxl-decoder 0.4.0",
- "zenpixels-convert",
+ "zenpixels-convert 0.4.0",
  "zenpng",
  "zenpredict",
  "zensim",
@@ -2466,6 +2475,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e2db585e1d738fc771bf08a151420d3ed193d9d895a36df7f6f8a9456b911ddc"
 
 [[package]]
+name = "lcms"
+version = "0.0.0"
+source = "git+https://github.com/imazen/lcms?rev=55b59476cf64920345e9ca32eb3a4678bf0bbece#55b59476cf64920345e9ca32eb3a4678bf0bbece"
+dependencies = [
+ "bytemuck",
+]
+
+[[package]]
 name = "lebe"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2535,6 +2552,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "linear-srgb"
+version = "0.6.13"
+source = "git+https://github.com/imazen/linear-srgb?rev=ae83f19426737635fee3dd16f228681019f52585#ae83f19426737635fee3dd16f228681019f52585"
+dependencies = [
+ "archmage",
+ "bytemuck",
+ "magemath",
+ "magetypes",
+ "num-traits",
+]
+
+[[package]]
 name = "linux-raw-sys"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2575,6 +2604,16 @@ name = "lz4_flex"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ecbdfe44b1bd960b68170b417450a628c43f7cf56bb3c5317e61cb230ee7f226"
+
+[[package]]
+name = "magemath"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "62f25cb4021b6804927a86171a7263361f19bfce90440967c712c042ce444780"
+dependencies = [
+ "archmage",
+ "magetypes",
+]
 
 [[package]]
 name = "magetypes"
@@ -2642,6 +2681,16 @@ dependencies = [
 name = "moxcms"
 version = "0.9.0"
 source = "git+https://github.com/imazen/moxcms?rev=0425eb09570496c439462a334f116666cb9f39c9#0425eb09570496c439462a334f116666cb9f39c9"
+dependencies = [
+ "num-traits",
+ "pxfm",
+]
+
+[[package]]
+name = "moxcms"
+version = "0.9.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "561875e11b3d8618524f974f85e4bbd05a64a112b8f7541ffcc236b5166c0564"
 dependencies = [
  "num-traits",
  "pxfm",
@@ -4059,14 +4108,14 @@ dependencies = [
  "bytemuck",
  "enough",
  "half",
- "linear-srgb",
+ "linear-srgb 0.6.12",
  "magetypes",
  "thiserror 2.0.21",
  "whereat",
  "zencodec",
  "zenmeta",
- "zenpixels",
- "zenpixels-convert",
+ "zenpixels 0.3.1",
+ "zenpixels-convert 0.3.1",
  "zentone",
 ]
 
@@ -4847,11 +4896,11 @@ name = "zenanalyze"
 version = "0.2.0"
 dependencies = [
  "archmage",
- "garb",
- "linear-srgb",
+ "garb 0.2.8",
+ "linear-srgb 0.6.12",
  "magetypes",
- "zenpixels",
- "zenpixels-convert",
+ "zenpixels 0.3.1",
+ "zenpixels-convert 0.3.1",
 ]
 
 [[package]]
@@ -4897,7 +4946,7 @@ dependencies = [
  "how-far",
  "spin 0.12.3",
  "whereat",
- "zenpixels",
+ "zenpixels 0.3.1",
 ]
 
 [[package]]
@@ -5199,6 +5248,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "zenhash"
+version = "0.1.0"
+source = "git+https://github.com/imazen/zenhash?rev=98c385a4e54a#98c385a4e54a1d41870610e13a614295c538275c"
+dependencies = [
+ "archmage",
+ "whereat",
+]
+
+[[package]]
 name = "zenjpeg"
 version = "0.9.0"
 dependencies = [
@@ -5206,10 +5264,10 @@ dependencies = [
  "archmage",
  "bytemuck",
  "enough",
- "garb",
+ "garb 0.2.8",
  "how-far",
  "imgref",
- "linear-srgb",
+ "linear-srgb 0.6.12",
  "magetypes",
  "memchr",
  "rayon",
@@ -5221,7 +5279,7 @@ dependencies = [
  "whereat",
  "zencodec",
  "zenmeta",
- "zenpixels",
+ "zenpixels 0.3.1",
  "zenyuv 0.1.3",
 ]
 
@@ -5340,7 +5398,7 @@ name = "zenmeta"
 version = "0.1.0"
 dependencies = [
  "zencodec",
- "zenpixels",
+ "zenpixels 0.3.1",
 ]
 
 [[package]]
@@ -5362,23 +5420,54 @@ dependencies = [
 ]
 
 [[package]]
+name = "zenpixels"
+version = "0.4.0"
+source = "git+https://github.com/imazen/zenpixels?rev=2099470337b8f2089a49f208d6b6bbacd2f8e485#2099470337b8f2089a49f208d6b6bbacd2f8e485"
+dependencies = [
+ "bytemuck",
+ "whereat",
+ "zenhash",
+]
+
+[[package]]
 name = "zenpixels-convert"
 version = "0.3.1"
 source = "git+https://github.com/imazen/zenpixels?rev=18afc75f1fd40c7feafeef6deae4df8e97e5e1b9#18afc75f1fd40c7feafeef6deae4df8e97e5e1b9"
 dependencies = [
  "archmage",
  "bytemuck",
- "garb",
+ "garb 0.2.8",
  "libm",
- "linear-srgb",
+ "linear-srgb 0.6.12",
  "lz4_flex",
  "magetypes",
- "moxcms 0.8.1",
  "once_cell",
  "paste",
  "rgb",
  "whereat",
- "zenpixels",
+ "zenpixels 0.3.1",
+]
+
+[[package]]
+name = "zenpixels-convert"
+version = "0.4.0"
+source = "git+https://github.com/imazen/zenpixels?rev=2099470337b8f2089a49f208d6b6bbacd2f8e485#2099470337b8f2089a49f208d6b6bbacd2f8e485"
+dependencies = [
+ "archmage",
+ "bytemuck",
+ "enough",
+ "garb 0.2.9",
+ "lcms",
+ "libm",
+ "linear-srgb 0.6.13",
+ "lz4_flex",
+ "magemath",
+ "magetypes",
+ "moxcms 0.9.2",
+ "once_cell",
+ "pastey 0.2.3",
+ "whereat",
+ "zenpixels 0.4.0",
 ]
 
 [[package]]
@@ -5389,9 +5478,9 @@ dependencies = [
  "archmage",
  "bytemuck",
  "enough",
- "garb",
+ "garb 0.2.8",
  "imgref",
- "linear-srgb",
+ "linear-srgb 0.6.12",
  "magetypes",
  "memchr",
  "rgb",
@@ -5401,8 +5490,8 @@ dependencies = [
  "whereat",
  "zencodec",
  "zenflate",
- "zenpixels",
- "zenpixels-convert",
+ "zenpixels 0.3.1",
+ "zenpixels-convert 0.3.1",
 ]
 
 [[package]]
@@ -5424,13 +5513,13 @@ dependencies = [
  "archmage",
  "imgref",
  "libm",
- "linear-srgb",
+ "linear-srgb 0.6.12",
  "magetypes",
  "rgb",
  "safe_unaligned_simd",
  "whereat",
  "zenblend",
- "zenpixels",
+ "zenpixels 0.3.1",
 ]
 
 [[package]]
@@ -5443,7 +5532,7 @@ dependencies = [
  "enough",
  "imgref",
  "libm",
- "linear-srgb",
+ "linear-srgb 0.6.12",
  "magetypes",
  "rayon",
  "rgb",
@@ -5482,7 +5571,7 @@ dependencies = [
  "imgref",
  "rgb",
  "serde",
- "zenpixels",
+ "zenpixels 0.3.1",
  "zensim",
  "zensim-experimental",
 ]
@@ -5495,7 +5584,7 @@ checksum = "9c602cc9010340287fd4ffcb2cd1ae9f6a665d37db59f0b9578352788cf8b304"
 dependencies = [
  "archmage",
  "libm",
- "linear-srgb",
+ "linear-srgb 0.6.12",
  "magetypes",
 ]
 
@@ -5506,7 +5595,7 @@ dependencies = [
  "archmage",
  "imgref",
  "libm",
- "linear-srgb",
+ "linear-srgb 0.6.12",
  "magetypes",
  "safe_unaligned_simd",
 ]
@@ -5519,7 +5608,7 @@ checksum = "6eca8f745696b57918b5529772fa7d0c112a07c86269277928bae2fd1d7aabae"
 dependencies = [
  "archmage",
  "libm",
- "linear-srgb",
+ "linear-srgb 0.6.12",
  "magetypes",
  "safe_unaligned_simd",
 ]

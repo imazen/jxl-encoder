@@ -16,6 +16,26 @@ fn reference_sha256(data: &[u8]) -> String {
     out
 }
 
+fn unhex(text: &str) -> Vec<u8> {
+    assert!(text.len().is_multiple_of(2));
+    (0..text.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&text[i..i + 2], 16).unwrap())
+        .collect()
+}
+
+fn rec2020_compat_v4() -> &'static [u8] {
+    // CC0, saucecontrol/Compact-ICC-Profiles. Freeze the exact profile used
+    // to generate the native JPEG controls, independently of CMS features.
+    static PROFILE: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
+    PROFILE.get_or_init(|| {
+        let hex = include_str!("../fixtures/rec2020_compat_v4.hex")
+            .lines()
+            .collect::<String>();
+        unhex(&hex)
+    })
+}
+
 fn native_quantization_bound(label: &str, source: [f32; 3]) -> f32 {
     static CONTROLS: std::sync::OnceLock<std::collections::BTreeMap<String, [f32; 3]>> =
         std::sync::OnceLock::new();
@@ -23,13 +43,6 @@ fn native_quantization_bound(label: &str, source: [f32; 3]) -> f32 {
         let root = directory();
         let controls: serde_json::Value =
             serde_json::from_str(include_str!("optional_icc_jpeg_controls.json")).unwrap();
-        let unhex = |text: &str| {
-            assert!(text.len().is_multiple_of(2));
-            (0..text.len())
-                .step_by(2)
-                .map(|i| u8::from_str_radix(&text[i..i + 2], 16).unwrap())
-                .collect::<Vec<_>>()
-        };
         let prefix = unhex(controls["prefix_hex"].as_str().unwrap());
         let suffix = unhex(controls["suffix_hex"].as_str().unwrap());
         let cjxl = jxl_encoder::test_helpers::cjxl_path();
@@ -51,7 +64,7 @@ fn native_quantization_bound(label: &str, source: [f32; 3]) -> f32 {
             std::fs::create_dir(&out).unwrap();
             let profile: &[u8] = match row["profile"].as_str().unwrap() {
                 "p3" => zenpixels_convert::icc_profiles::DISPLAY_P3_V4,
-                "2020" => zenpixels_convert::icc_profiles::REC2020_V4,
+                "2020" => rec2020_compat_v4(),
                 other => panic!("unknown native control profile: {other}"),
             };
             assert_eq!(
@@ -306,7 +319,7 @@ fn all_offered_subsampling_converts_explicit_source_to_icc_across_request_entrie
             for (width, height) in [(32_usize, 17_usize), (259, 17)] {
                 for (profile_name, profile) in [
                     ("p3", zenpixels_convert::icc_profiles::DISPLAY_P3_V4),
-                    ("2020", zenpixels_convert::icc_profiles::REC2020_V4),
+                    ("2020", rec2020_compat_v4()),
                 ] {
                     let out = root.join(format!("cell-{cell}"));
                     std::fs::create_dir(&out).unwrap();

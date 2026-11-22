@@ -29,9 +29,9 @@ autoexamples = false
 zenanalyze = { version = "0.2.0", optional = true }
 enough = "0.4.3"
 # CMYK conversion uses the verified private original-LUT repairs; the
-# zenpixels-convert dependency retains its existing CMS version.
+# separate RGB conversion selects its CMS through zenpixels-convert.
 moxcms = { version = "=0.9.0", git = "https://github.com/imazen/moxcms", rev = "0425eb09570496c439462a334f116666cb9f39c9", optional = true, default-features = false, features = ["options", "extended_range", "any_to_any"] }
-zenpixels-convert = { version = ">=0.2.16, <0.4.0", default-features = false }
+zenpixels-convert = { version = ">=0.4.0, <0.5.0", default-features = false }
 once_cell = { version = "1.21.4", default-features = false, features = ["race", "alloc"] }
 hashbrown = { version = "0.17.1", default-features = false, features = ["default-hasher"] }
 # W44-192: strategy_def! proc-macro for declarative gate registries.
@@ -259,7 +259,9 @@ parallel = ["std", "dep:rayon"]
 # feature together with jpeg-reencoding. zenyuv supplies chroma conversion;
 # the CMS converts explicit source color/gamma to an attached output ICC.
 # The public selector remains available without these implementation features.
-chroma-subsampling = ["dep:zenyuv", "zenpixels-convert/cms-moxcms"]
+chroma-subsampling = ["dep:zenyuv", "zenpixels-convert/cms-moxcms", "zenpixels-convert/hdr-transfers"]
+# Select the pure-Rust Little CMS worker for the RGB8 ICC conversion.
+cms-lcms = ["chroma-subsampling", "zenpixels-convert/cms-lcms", "zenpixels-convert/icc-db"]
 # Parallel tree learning for lossless modular path.
 # After dedup, splits the sample range at the root partition point and builds
 # the left+right subtrees in parallel via `rayon::join` using owned per-side
