@@ -60,3 +60,38 @@ per-decode p95. Timing used 0.16 GiB peak RSS over 309 seconds.
 The full logs, pinned binary and input hashes, streams, and reproduction
 scripts are under `/mnt/v/output/jxl-encoder/fast-decode-2026-11-22/imazen26-lossless`
 on the measured machine.
+
+## Local prefix and distance-1 RLE trial
+
+The [experiment branch](https://github.com/imazen/jxl-encoder/commit/fec813d3a3bec865f4a8f3f4e24332f1622ca6e8)
+serializes shared prefix, local prefix, and local prefix with distance-1
+RLE. Each group takes the smaller padded section and keeps its incumbent
+on a tie. It separates the singleton distance code and stops matching
+at channel boundaries. The opt-in uses the same existing fixed-Gradient
+prefix flags as the byte-identical control above.
+
+| Input | Candidate bytes / plain-prefix bytes | Candidate plus fused decoder / current plain prefix, 1 / 8 workers | Candidate plus fused decoder, MP/s at 1 / 8 workers |
+|---|---:|---:|---:|
+| 1007 native | 95.30% | 1.048× / 1.136× | 88.6 / 422.0 |
+| 1007 1024 px | 97.81% | 1.048× / 0.986× | 86.0 / 477.4 |
+| 1019 native | 74.85% | 1.168× / 1.040× | 114.0 / 453.2 |
+| 1019 1024 px | 84.10% | 1.095× / 1.103× | 109.2 / 555.1 |
+| 8457 terminal | 17.93% | 1.505× / 1.356× | 160.1 / 802.4 |
+| 7026 plot | 12.30% | 1.550× / 1.311× | 168.4 / 813.9 |
+| 8106 mixed web page | 37.18% | 1.422× / 1.305× | 145.9 / 732.3 |
+| 6824 scanned text | 98.24% | 1.110× / 1.027× | 113.9 / 457.0 |
+
+All eight files get smaller. Six readbacks per file match every original
+sample, including production zenjxl-decoder at 1, 4 and 8 workers, the
+fused prototype at 8, and independent jxl-rs and djxl. Earlier trials
+exposed missing byte padding and a context-map field on a one-context
+stream. The verified branch corrects both. Per-case timings compare
+the same candidate streams on both decoder builds and both file shapes
+on the same decoder. On the fused decoder alone the three graphics
+files still improve at 1 and 8 workers, while both photos regress at
+each size. The byte-first selector misses the photo throughput gates.
+
+[Per-cell results and stream hashes](faster_decode_imazen26_local_prefix_2026-11-22.tsv).
+The locked release build and all checks used 1.17 GiB peak RSS over
+78 seconds. Reproduction and raw block timings are in
+`imazen26-lossless/local-prefix-v3` under the run folder.
