@@ -542,3 +542,51 @@ input hashes, binaries and raw timings are in
 [Timing table](faster_decode_photo_tiers_native_timing_2026-11-22.tsv).
 [Aggregates](faster_decode_photo_tiers_native_aggregate_2026-11-22.tsv)
 and [per-image tail outliers](faster_decode_photo_tiers_native_outliers_2026-11-22.tsv).
+
+### Throughput tier DC preference near d1
+
+A paired comparison holds both restoration filters off and measures DC
+tier 0 against tier 1 at the same distance. On 1007, the tier-0 and
+tier-1 candidates reach 1.175× / 1.511× and 1.221× / 1.650× at one and
+eight workers respectively, against ordinary d1. The tier-1 file uses
+3,703,161 bytes, 0.16% fewer than the ordinary d1 reference. On 1019,
+the tier-1 file exceeds the 3% allowance and the selector retains the
+lower-rate choice. All six comparison streams render in jxl-rs and
+djxl v0.12. The run gives 18 exact same-file RGB8 comparisons, takes
+98 s and peaks at 2.59 GiB RSS.
+
+The throughput selector now prefers tier 1's simpler DC coding among
+filter-free d1 candidates when the file stays within the balanced 3%
+allowance. It evaluates the same quality guards. Replaying both distance
+bands against all retained streams changes exactly one choice, throughput
+on 1007. The user-facing command reproduces the selected stream's hash
+`d84e776041a36834847dd04027c65e4b0cf37133849fb609e79b7ed2ea25a459`.
+
+| d1 tier | Paired throughput, 1 / 4 / 8 workers | Median / p90 bytes | Fast choices |
+|---|---:|---:|---:|
+| Balanced | 1.082× / 1.079× / 1.083× | 0% / +2.73% | 3/5 |
+| Throughput | 1.217× / 1.685× / 1.646× | +2.73% / +9.08% | 4/5 |
+
+With the Display P3 fallback included, throughput clears the d1 targets
+on this cohort. All 33 exact RGB8 comparisons pass. The class p95
+latency ratios for both tiers are within the 10% control limit at all
+worker counts. The timing table retains the individual 1.154× p95
+latency of the older decoder on 1019 at four workers.
+
+The confirmation uses 1,125 paired timing observations. Replay, readback
+and the direct CLI encode took 270 s at 2.59 GiB peak RSS on i270.
+[DC comparison](faster_decode_photo_tier_d1_dc_option_2026-11-22.tsv),
+[confirmation timings](faster_decode_photo_tier_d1_confirmation_timing_2026-11-22.tsv),
+and [aggregates](faster_decode_photo_tier_d1_confirmation_aggregate_2026-11-22.tsv).
+The raw runs are under `imazen26-lossy/photo-tier-d1-dc-option` and
+`imazen26-lossy/photo-tier-d1-confirmation` on i270.
+
+The existing eight-worker phase diagnostics compare the two filter-free
+streams directly on the same decoder. With tier 1, the LF-group phase
+falls from 5.715 to 3.690 ms on 1007 and from 4.825 to 3.070 ms on 1019.
+Paired phase ratios are 0.642× and 0.640×. A/A ratios are 1.003× and
+0.995×. Each arm discards three warmups then measures eight decodes per
+block across three blocks. This shows the encoded DC policy reducing
+LF-group work. Decoder-only phase optimization remains a separate gate.
+The capture used 0.11 GiB peak RSS over five seconds.
+[Phase timings](faster_decode_photo_tier_d1_dc_phase_2026-11-22.tsv).

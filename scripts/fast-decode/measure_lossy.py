@@ -523,7 +523,9 @@ def photo_filter_cases(stage):
     ) for image_id in ("1007", "1019", "1069")]
 
 
-def photo_filter_matches(study, cases, bands, ranking, *, compare_filter_free=False, max_growth=10):
+def photo_filter_matches(
+    study, cases, bands, ranking, *, compare_filter_free=False, max_growth=10, fast_dc_growth=None,
+):
     selected = {}
     filters = {
         "tier0-epf0-gaboff": 0,
@@ -548,9 +550,16 @@ def photo_filter_matches(study, cases, bands, ranking, *, compare_filter_free=Fa
                     row["bytes"], row["file"],
                 ), default=base)
             elif ranking == "filters":
-                choice = min(feasible, key=lambda row: (
-                    filters[row["policy"]], row["bytes"], row["file"],
-                ), default=base)
+                def rank(row):
+                    fast_dc = (
+                        fast_dc_growth is not None
+                        and band == 1
+                        and row["policy"] == "tier1-epf0-gaboff"
+                        and 100 * row["bytes"] <= (100 + fast_dc_growth) * base["bytes"]
+                    )
+                    return (filters[row["policy"]], not fast_dc, row["bytes"], row["file"])
+
+                choice = min(feasible, key=rank, default=base)
             else:
                 choice = min(feasible, key=lambda row: (row["bytes"], row["file"]), default=base)
             finalists = [("base", base), ("selected", choice)]
@@ -574,7 +583,7 @@ def photo_filter_matches(study, cases, bands, ranking, *, compare_filter_free=Fa
 
 def measure_photo_tiers(study):
     # Reuse the exact search and input domain of the user-facing tool.
-    from encode_photo import BYTE_GROWTH, candidates, photo_input
+    from encode_photo import BYTE_GROWTH, candidates, photo_input, tier_choices
 
     grid = [arm for band in BANDS for arm in candidates(band)]
     cases = []
@@ -600,8 +609,8 @@ def measure_photo_tiers(study):
 
     study.measure_quality(cases, check_target=True)
     all_choices = {
-        name: photo_filter_matches(study, cases, BANDS, "filters", max_growth=limit)
-        for name, limit in BYTE_GROWTH.items()
+        name: tier_choices(study, cases, BANDS, name)
+        for name in BYTE_GROWTH
     }
     arms = {}
     for image_id in study.cohort:

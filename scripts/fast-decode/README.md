@@ -95,8 +95,10 @@ Use `encode_photo.py` to select a decode-oriented JPEG XL encode at distance
 smaller files, after checking rendered RGB8 with Zen and the pinned jxl-rs
 oracle. Both keep normal patch selection and the requested encode effort.
 The `balanced` tier allows up to 3% extra bytes per file. The `throughput`
-tier allows up to 10%. Each uses the original tier-0 stream when its quality
-and rate limits leave no eligible candidate.
+tier allows up to 10%. For filter-free d1 candidates, throughput prefers
+tier 1's simpler DC coding when it fits inside the 3% cap. Each tier uses the
+original tier-0 stream when its quality and rate limits leave no eligible
+candidate.
 
 ```sh
 python3 scripts/fast-decode/encode_photo.py photo.png output.jxl \

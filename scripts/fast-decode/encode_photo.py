@@ -74,6 +74,13 @@ def candidates(band):
     ]
 
 
+def tier_choices(study, cases, bands, name):
+    return photo_filter_matches(
+        study, cases, bands, "filters", max_growth=BYTE_GROWTH[name],
+        fast_dc_growth=BYTE_GROWTH["balanced"] if name == "throughput" else None,
+    )
+
+
 def publish(source, output):
     # Keep the named destination absent until the final, verified bytes are ready.
     with tempfile.NamedTemporaryFile(dir=output.parent, prefix=".photo-jxl-") as stream:
@@ -140,7 +147,7 @@ def main():
     else:
         cases = [("photo", "native", candidates(band))]
         study.measure_quality(cases, check_target=True)
-        matches = photo_filter_matches(study, cases, (band,), "filters", max_growth=max_growth)
+        matches = tier_choices(study, cases, (band,), args.profile)
         selected = matches["photo", "native", band][1][1].copy()
         if selected["policy"] == "base":
             selected["fallback"] = "no candidate meets rendered quality and byte limits"
