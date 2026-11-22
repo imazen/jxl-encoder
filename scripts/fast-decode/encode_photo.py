@@ -17,6 +17,12 @@ from measure_lossy import PHOTO_FILTER_POLICIES, POLICIES, Study, digest, photo_
 
 
 BYTE_GROWTH = {"balanced": 3, "throughput": 10}
+BALANCED_D1_BRACKET = (
+    ("tier0-epf0-gaboff", 0.982),
+    ("tier0-epf0-gaboff", 0.987),
+    ("tier0-epf0-gaboff", 1.003),
+    ("tier1-epf0", 1.005),
+)
 
 
 def photo_input(source):
@@ -59,13 +65,14 @@ def photo_input(source):
         return png.size, None
 
 
-def candidates(band):
+def candidates(band, profile=None):
     if band == 1:
         return [
             ("base", 1),
             *(("tier0-epf0-gaboff", d) for d in (1, 0.98, 0.95)),
             *(("tier1-epf0-gaboff", d) for d in (1, 0.98, 0.955)),
             ("tier0-epf0", 1), ("tier0-epf0", 0.98), ("tier1-epf0", 1),
+            *(BALANCED_D1_BRACKET if profile != "throughput" else ()),
         ]
     return [
         ("base", 4),
@@ -76,10 +83,19 @@ def candidates(band):
 
 
 def tier_choices(study, cases, bands, name):
-    return photo_filter_matches(
-        study, cases, bands, "filters", max_growth=BYTE_GROWTH[name],
-        fast_dc_growth=BYTE_GROWTH["balanced"] if name == "throughput" else None,
-    )
+    # Diagnostics can pass the union of both grids. The throughput tier keeps
+    # its original candidate set even when scores for the balanced bracket exist.
+    if name == "throughput":
+        cases = [(image, size, [arm for arm in arms if arm not in BALANCED_D1_BRACKET])
+                 for image, size, arms in cases]
+    selected = {}
+    for band in bands:
+        prefer_fast_dc = name == "throughput" or band == 1
+        selected.update(photo_filter_matches(
+            study, cases, (band,), "filters", max_growth=BYTE_GROWTH[name],
+            fast_dc_growth=BYTE_GROWTH["balanced"] if prefer_fast_dc else None,
+        ))
+    return selected
 
 
 def publish(source, output):
@@ -146,7 +162,7 @@ def main():
         }
         (study.out / "manifest.json").write_text(json.dumps(study.manifest, indent=2) + "\n")
     else:
-        cases = [("photo", "native", candidates(band))]
+        cases = [("photo", "native", candidates(band, args.profile))]
         study.measure_quality(cases, check_target=True)
         matches = tier_choices(study, cases, (band,), args.profile)
         selected = matches["photo", "native", band][1][1].copy()

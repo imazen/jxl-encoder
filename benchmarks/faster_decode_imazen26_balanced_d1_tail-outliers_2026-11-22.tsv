@@ -1,0 +1,18 @@
+endpoint	panel	id	workers	arm	paired_speedup	whole_system	p95_ratio
+cold	independent	2009	1	aa	0.993063	1.041007	1.202067
+cold	independent	2009	1	old	0.955674	1.000000	1.250821
+cold	prior-holdout	1427	1	aa	0.998281	1.029185	1.129385
+cold	registered	1069	1	old	0.961767	1.000000	1.141526
+cold	registered	1069	4	old	0.985466	1.000000	1.228274
+cold	registered	1069	4	previous-balanced	1.006084	1.031368	1.145448
+reused	independent	1459	4	aa	1.000670		1.232605
+reused	prior-holdout	1009	4	aa	1.001311		1.450176
+reused	registered	1007	4	aa	1.003322		1.264156
+reused	registered	1019	1	aa	0.999403		1.183206
+warm	prior-holdout	1427	1	old	0.994260	1.000000	1.106762
+warm	prior-holdout	1447	4	aa	1.007103	0.997417	1.161752
+warm	registered	1069	1	aa	0.994606	1.009053	1.168723
+warm	registered	1069	1	old	0.985683	1.000000	1.201999
+warm	registered	1069	1	previous-balanced	1.002494	1.012837	1.102339
+warm	registered	1237	8	old	0.957629	1.000000	1.166616
+warm	registered	1619	1	aa	0.996163	1.004275	1.170743

@@ -506,10 +506,12 @@ The standalone `scripts/fast-decode/encode_photo.py` uses the existing Zen
 VarDCT controls and matches rendered quality against ordinary tier 0. The
 near-d1 search includes tier 1 with EPF off and normal Gaborish policy. Near
 d4 it also tries EPF off at tier 0 with distance 3.95 and tier 1 with distance
-3.98. The throughput tier prefers the simpler tier-1 DC among equally
-filtered EPF-off candidates within 3% of the reference size. The balanced
-search keeps the smallest of its equally filtered choices. The 3% and 10%
-profile limits, quality guards and tier-0 fallback bind the tool's selection.
+3.98. The balanced search near d1 adds tier 0 with EPF and Gaborish off at
+0.982, 0.987 and 1.003, plus tier 1 with EPF off at 1.005 using the normal
+Gaborish policy. Both tiers near d1 and throughput near d4 prefer simpler
+tier-1 DC among equally filtered EPF-off candidates within 3% of the
+reference size. The 3% and 10% profile limits, quality guards and tier-0
+fallback bind the tool's selection.
 
 libjxl v0.12 exposes distance, faster decoding, EPF and Gaborish as
 caller-selected settings for each encode. The opt-in tool invokes explicit

@@ -776,3 +776,60 @@ quality scores, evidence hashes, readbacks, binary fingerprints and
 complete commands are retained under `requalified`, `requalified-cli`
 and `requalified-native-endpoints` in the native holdout directory.
 [Public command results](faster_decode_photo_tiers_expanded_cli_2026-11-22.tsv).
+
+### Balanced near d1 within the 3% per-file cap
+
+The tighter distance search adds four points at effort 7 with normal patch
+selection. It admits a candidate only when both readback oracles pass the
+existing rendered-quality checks and the file grows by at most 3%.
+Among equally filtered choices, simpler tier-1 DC takes priority within
+the same cap. Throughput near d1 and both profiles near d4 reproduce all
+earlier choices on the seven scored photos. The Display P3 input remains
+a same-file control and counts in the aggregate.
+
+The probe found filter-free choices for the cityscape, smooth
+architecture and backlit interior, plus a simpler DC choice with
+Gaborish on for the saturated fruit. The separate AC rescale trial with
+simpler DC and both filters off produced eleven points on the backlit
+interior and fruit. The smallest grew by 3.96% and none qualified.
+The two fresh test originals were selected for skin tones and soft
+gradients, and bright snow with shaded texture. Both picked a faster
+stream with 1.26% and 1.31% byte growth, respectively.
+[Portrait 2009](https://codec-corpus.r2.imazen.org/imazen-26-png-v3/2000-unsplash-people/2009_people_by-ellen-qin-l0wmb86ymi8-unsplash_2304x4096.sdr.png)
+and [snow scene 1459](https://codec-corpus.r2.imazen.org/imazen-26-png-v3/1400-lilith-nature/1459_nature_person-on-snowy-slope_colorado_s23u_iso10-f1p7_20240103-131940-0_3000x4000.sdr.png).
+
+| Photo panel | Fast choices | Cold allocating 1 / 8 workers | Warm allocating 1 / 8 workers | Warm caller-owned 1 / 8 workers |
+|---|---:|---:|---:|---:|
+| Registered, including fallback | 4/5 | 1.205× / 1.424× | 1.218× / 1.522× | 1.227× / 1.289× |
+| Earlier holdout | 3/3 | 1.255× / 1.432× | 1.252× / 1.506× | 1.277× / 1.290× |
+| Independent test | 2/2 | 1.273× / 1.342× | 1.286× / 1.422× | 1.301× / 1.315× |
+| All ten originals | 9/10 | 1.248× / 1.428× | 1.244× / 1.514× | 1.268× / 1.289× |
+
+The table gives paired median speedups versus ordinary tier 0 on the same
+decoder. All three panels clear 1.20× and 1.15× at one and eight workers.
+Across ten originals the median and p90 file growth are 1.02% and 2.55%.
+With the baseline decoder on the ordinary stream, whole-system warm
+speedups are 1.249× and 1.559×. Candidate p95 passes the 10% limit in every
+panel and per-file cell. The registered one-worker warm A/A control
+reaches 1.100793× on the first run. Its five-block repeat measures
+0.992102×, with no individual p95 ratio over 1.10×. The repeat takes
+77 s at 0.06 GiB peak RSS. The first result and every per-file outlier
+are retained.
+
+The encoder is [31c746be](https://github.com/imazen/jxl-encoder/commit/31c746beb15d943002f9d0489a39cdedbf5ed32d)
+and the current Zen decoder is
+[05042e1b](https://github.com/imazen/zenjxl-decoder/commit/05042e1b5b46151a507da3f116eadee805117599).
+Historical streams used across encoder revisions reproduce their hashes.
+The new run encodes and scores 52 additional points. djxl v0.12 fully
+renders the timed files, and 78 RGB8 readbacks match exactly between
+baseline and current Zen at 1, 4 and 8 workers. Timing uses three
+interleaved blocks of five samples per worker count on i270. The
+combined quality and timing replay uses 2.67 GiB peak RSS in 1,113 s.
+The tuning probe and independent AC check use 2.66 GiB and 2.49 GiB.
+
+[Selected streams and both quality deltas](faster_decode_imazen26_balanced_d1_choices_2026-11-22.tsv),
+[panel medians and p95](faster_decode_imazen26_balanced_d1_cohorts_2026-11-22.tsv),
+and [individual p95 outliers](faster_decode_imazen26_balanced_d1_tail-outliers_2026-11-22.tsv).
+Raw timing, input hashes, stream hashes, exact commands and readbacks
+are under `imazen26-lossy/balanced-d1-profile-confirm` on i270. The AC
+trial is under `imazen26-lossy/balanced-d1-independent-ac`.
