@@ -71,6 +71,15 @@ still stage and copy output, then time those paths on i270.
 [Zqi row-band study](https://github.com/imazen/zqi/blob/031154cd457a7b3119bba40e4a6a35cca0e738b6/docs/DECODE_SPEED_HISTORY.md#direct-row-bands-and-browser-scheduling)
 and [Zen fragment renderer](https://github.com/imazen/zenjxl-decoder/blob/de5a5ef3fda613a6d858ef7e3a76c72057e07906/zenjxl-decoder/src/frame/render.rs#L1308).
 
+The later zqi transform split holds color and entropy coding fixed while
+comparing ordinary 8×8, larger merges and small splits at matched quality.
+Larger merges improve rate on most curves in that study. The separately
+linked fixed-transform decoder measures a narrower executable and exact
+admitted output. The JPEG XL analogue is a same-stream dispatch test using
+transform types already validated by HF metadata. Measure its native decode
+phases directly before tying transform eligibility to a faster-decode tier.
+[Zqi transform split and decoder cost study](https://github.com/imazen/zqi/blob/fd8271e7aa2c/docs/V4_V5_DECODER_COSTS.md#isolated-transform-splits).
+
 ## Initial pilot
 
 The study tested existing encoder options at effort 7 with eight encode threads.

@@ -59,7 +59,11 @@ cjxl-rs photo.png photo-fast.jxl --lossless -e 7 -g 1 \
 On the same three photos, the profile reached median throughput of
 151 MP/s at one worker and 574 MP/s at eight workers on i270 with
 zenjxl-decoder. Every file was smaller than the stock `--fast-decode -g 0`
-file. [Measurements](../benchmarks/faster_decode_imazen26_lossless_2026-11-22.md#production-throughput-profile).
+file. On a separate three-photo panel, warm throughput reached 130 MP/s
+and 515 MP/s with 17.70% median byte savings. That panel fell short of
+the relative and eight-worker throughput goals.
+[Initial measurements](../benchmarks/faster_decode_imazen26_lossless_2026-11-22.md#production-throughput-profile)
+and [additional holdout](../benchmarks/faster_decode_imazen26_lossless_2026-11-22.md#three-additional-native-lossless-photo-controls).
 
 ## Optional controller on the development branch
 

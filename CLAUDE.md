@@ -1801,10 +1801,10 @@ separate queue items. Broad/coverage/remote verdicts must be read independently.
 
 ### 2026-11-22: Zensim fused attribution clears the reference color revision
 
-The aarch64 attribution smoke test fails with
-`reference cache color conversion revision differs from scorer` on both
-`53639ee4` and `240ad4f0`. Both jobs reach the same 372-class Profile B
-comparison. The guarded photo selector change touches Python and its evidence
+The attribution smoke test fails with
+`reference cache color conversion revision differs from scorer` on
+`240ad4f0` in the x64 and aarch64 jobs. The earlier aarch64 job for
+`53639ee4` reaches the same 372-class Profile B comparison and fails. The guarded photo selector change touches Python and its evidence
 files. [Earlier CI](https://github.com/imazen/jxl-encoder/actions/runs/45021818787)
 and [current CI](https://github.com/imazen/jxl-encoder/actions/runs/45023897947).
 

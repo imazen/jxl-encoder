@@ -406,3 +406,66 @@ GiB peak RSS across its 197-second wrapper, including decoder validation.
 [Final rate, throughput and p95](faster_decode_imazen26_throughput_production_2026-11-22.tsv).
 [Exact source and codestream hashes](faster_decode_imazen26_throughput_streams_2026-11-22.tsv).
 Raw measurements and binary hashes are in `imazen26-lossless/photo-production`.
+
+### Three additional native lossless photo controls
+
+The three imazen-26 test originals previously used for lossy qualification
+supply a separate lossless holdout. The aerial cityscape 1009 has repeating
+fine edges, the macro photograph 1427 has detail against defocus, and
+glacier 1447 has bright ice and narrow native geometry. The frozen SDR
+renders span 7.472 to 12 MP. The four effort-7 settings are ordinary tier 0,
+Balanced with 128 px groups, stock `--fast-decode -g 0`, and the production
+256 px throughput profile. All encodes request eight workers.
+[Source identities and hashes](faster_decode_photo_tiers_holdout_cohort_2026-11-22.tsv).
+
+The encoder binary comes from `31c746be` and the Zen decoder from
+`dda06cbe`. The encoder and decoder source and dependency closure
+diffs against the inspected main revisions are empty. All 12 streams
+reproduce the source RGB8 samples through both Zen decoder revisions
+at 1, 4 and 8 workers, and through jxl-rs and djxl v0.12. All nine
+historical tier-0, Balanced and stock-fast encodes from `f574a317`
+match the current codestream hashes. The decoder baseline is `e58a4838`.
+
+| Profile | Endpoint | Median throughput, 1 / 4 / 8 workers | Paired speedup, 1 / 4 / 8 workers |
+|---|---|---:|---:|
+| Balanced | Cold allocating | 26.76 / 87.77 / 154.56 MP/s | 2.377× / 2.175× / 2.145× |
+| Balanced | Warm allocating | 26.99 / 89.71 / 158.99 MP/s | 2.387× / 2.192× / 2.041× |
+| Balanced | Caller-owned | 27.30 / 91.91 / 163.52 MP/s | 2.391× / 2.225× / 1.998× |
+| Throughput | Cold allocating | 126.25 / 353.35 / 436.98 MP/s | 1.177× / 1.208× / 1.035× |
+| Throughput | Warm allocating | 130.14 / 383.78 / 514.82 MP/s | 1.171× / 1.146× / 1.045× |
+| Throughput | Caller-owned | 139.51 / 450.09 / 607.73 MP/s | 1.166× / 1.217× / 1.202× |
+
+Balanced meets both speed floors across the measured endpoints with
++5.28% median and +6.02% p90 bytes versus ordinary tier 0. Throughput
+reduces bytes by 17.70% at the median. The largest remaining file
+ratio is 89.14% of stock. The one-worker relative gain misses 1.25×
+in all three endpoints. Eight-worker allocating output misses both
+the relative and absolute floors. Caller-owned eight-worker output
+clears both.
+
+The aerial photo loses 7.44% one-worker warm throughput versus stock,
+while using 10.86% fewer bytes. The largest selected normalized cohort
+p95 ratio is 1.230× for cold eight-worker throughput, with A/A at
+1.030×. Glacier 1447 supplies the only selected per-image p95 above
+1.10×, at 1.333× in that endpoint. The caller-owned one-worker throughput
+cohort p95 ratio is 1.110×. All cohort A/A p95 ratios are within +10%.
+[Endpoint aggregates](faster_decode_lossless_native_holdout_aggregate_2026-11-22.tsv)
+and [individual p95 outliers](faster_decode_lossless_native_holdout_outliers_2026-11-22.tsv).
+
+On identical warm baseline files, current versus historical decoder
+speedups for tier 0 are 1.190× / 1.163× at one and eight workers.
+On stock fast they are 1.212× / 1.141×. The corresponding whole-system
+profile ratios are 2.868× / 2.384× for Balanced versus historical tier
+0 and 1.352× / 1.245× for throughput versus historical stock fast.
+Each ratio is computed from direct paired observations.
+
+The replay measures 2,970 decodes in three interleaved blocks of five
+per arm on i270. Cold decodes are first in-memory decodes in fresh
+processes. Warm allocating decodes have one warmup. The caller-owned
+runner verifies exact RGB8 equivalence between streams and against
+allocating decode. The run takes 1,040 seconds at 0.58 GiB peak RSS
+under `run-heavy`. Full commands, verifiers, binary fingerprints and
+frozen streams are under
+`/mnt/v/output/jxl-encoder/fast-decode-2026-11-22/imazen26-lossless/native-holdout-1009-1427-1447`.
+[Per-image timings](faster_decode_lossless_native_holdout_cells_2026-11-22.tsv)
+and [stream and pixel hashes](faster_decode_lossless_native_holdout_streams_2026-11-22.tsv).
