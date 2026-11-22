@@ -298,3 +298,34 @@ run and 0.02 GiB for the six-second cycle sampling.
 and [paired Hybrid timings and p95](faster_decode_imazen26_balanced_hybrid_timing_2026-11-22.tsv).
 The raw commands and profiles are in `imazen26-lossless/balanced-tree-layout`
 on i270.
+
+### Native photo group widths
+
+The balanced photo setting is the existing `--lossless --faster-decoding 1
+-g 0` at effort 7. The photo rate and throughput results above qualify
+this choice separately from the graphics controls.
+
+The separate throughput experiment uses fixed Gradient prediction and
+selects among shared plain, shared RLE and local prefix coding. Only the
+Modular group width changes between the two experiment arms. The
+comparison is `--fast-decode -g 0` on the row-span decoder
+`c266f4c7`, which uses 128 px groups. All four experiment files match
+the source in zenjxl-decoder at 1/4/8 workers, jxl-rs and djxl v0.12.
+
+| Experiment group width | Bytes vs stock, 1007 / 1019 | Photo median MP/s, 1 / 8 workers | Median paired speedup, 1 / 8 workers |
+|---|---:|---:|---:|
+| 256 px | −8.76% / −27.52% | 132.95 / 511.42 | 1.462× / 1.272× |
+| 512 px | −8.81% / −23.44% | 124.81 / 382.19 | 1.371× / 0.939× |
+
+The 256 px width meets the 120 MP/s one-worker target and both relative
+throughput targets. It is 38.58 MP/s below the 550 MP/s eight-worker
+target. Its eight-worker median improves over 512 px on both originals.
+
+The experiment encoder is [15c4b125](https://github.com/imazen/jxl-encoder/commit/15c4b1259672ca1eb3718701a9432101dbd2a658).
+The timing decoder uses frame-owned prefix lookups from
+[the decoder experiment](https://github.com/imazen/zenjxl-decoder/commit/e8af08b565ef).
+The timing binary was built from `2fd15d5a`. The experiment bookmark
+adds test-only controls. Measurements use three interleaved blocks
+of five warm allocating RGB8 decodes per arm plus A/A, on i270.
+[Per-image results, p95 and stream hashes](faster_decode_imazen26_photo_group_width_2026-11-22.tsv).
+Raw logs and readbacks are under `imazen26-lossless/photo-group-layout`.
