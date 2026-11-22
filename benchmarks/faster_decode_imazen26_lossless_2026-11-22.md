@@ -261,3 +261,40 @@ The current profile therefore depends on the decoder companion
 for the warm photo targets. All 24 stock/profile readbacks match.
 Three interleaved blocks of five samples used 0.11 GiB peak RSS,
 and the largest A/A p95 ratio was 1.086×.
+
+### Fixed 128 px groups with Hybrid trees
+
+The terminal keeps the 4,096-color palette cap. Every other encode
+uses the same tier-1, effort-7 request with patches available and stock
+palette controls. The experiment changes only the global, local or
+Hybrid MA tree policy. All 12 streams match the source across five
+readback endpoints, including jxl-rs and djxl v0.12.
+
+| Native input | Hybrid bytes vs tier 0 | Paired throughput at 1 / 8 workers |
+|---|---:|---:|
+| Terminal 8457 | −8.35% | 3.960× / 1.515× |
+| Plot 7026 | +14.70% | 0.881× / 0.967× |
+| Mixed page 8106 | +10.71% | 1.284× / 1.372× |
+| Scan 6824 | +8.22% | 2.097× / 1.925× |
+
+Hybrid meets the graphics rate limits at 128 px. The three graphics
+have median growth of 10.71% and p90 growth of 14.70%. Their throughput
+medians of 1.284× and 1.372× miss both speed gates. The plot's
+one-worker p95 increases by 13.2%, with A/A at 1.008×.
+
+AVX2 cycle sampling on the plot and mixed page puts 86.54% and
+79.50% of Hybrid user cycles in Modular NoWpTree channel decoding,
+respectively. Their tier-0 streams instead spend 84.41% and 89.02%
+in GeneralTree channel decoding. This identifies the decoder path
+to measure when isolating the tree policy's speed cost.
+
+The same row-span decoder ran both streams at each worker count,
+with five interleaved blocks of five warm allocating decodes.
+All 12 paired stock/Hybrid PNG16 checks match. Peak RSS was 0.75 GiB
+for the 16-second exact-stream grid, 0.11 GiB for the 218-second timing
+run and 0.02 GiB for the six-second cycle sampling.
+
+[Layout rates and hashes](faster_decode_imazen26_balanced_tree_layout_2026-11-22.tsv)
+and [paired Hybrid timings and p95](faster_decode_imazen26_balanced_hybrid_timing_2026-11-22.tsv).
+The raw commands and profiles are in `imazen26-lossless/balanced-tree-layout`
+on i270.
