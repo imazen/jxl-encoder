@@ -32,6 +32,10 @@ POLICIES = {
 }
 FAST_POLICIES = ("tier1-epf0", "tier1-epf1", "tier1-epf2")
 GABORISH_POLICIES = ("tier1-gaboff", "tier1-epf0-gaboff", "tier1-epf1-gaboff")
+PHOTO_FILTER_POLICIES = {
+    "tier0-epf0-gaboff": ("--epf", "0", "--no-gaborish"),
+    "tier1-epf0-adaptive": ("--faster-decoding", "1", "--epf", "0", "--adaptive-gaborish"),
+}
 QUALITY_LADDER = tuple(range(5, 100, 5)) + (99,)
 MODULAR_128 = ("--faster-decoding", "1", "-g", "0")
 MODULAR_PALETTE = {
@@ -453,6 +457,49 @@ def native_tier4_cases(refine=False):
         ]
 
 
+def photo_filter_cases(holdout):
+    if holdout:
+        return [("1237", "native", [
+            ("base", 1), ("tier0-epf0", 1),
+            ("tier0-epf0-gaboff", 0.98), ("tier0-epf0-gaboff", 1),
+            ("base", 4), ("tier1-epf0", 4.10),
+            ("tier1-epf2", 4), ("tier1-epf2", 4.08),
+        ])]
+    return [(
+        image_id, "native", [
+            ("base", 1), ("tier1-epf0", 1), ("tier1-epf0-gaboff", 1),
+            *((p, d) for p in ("tier0-epf0", "tier0-epf0-gaboff") for d in (0.98, 1, 1.02)),
+            *(("tier1-epf0-adaptive", d) for d in (1, 1.02, 1.04)),
+        ],
+    ) for image_id in ("1007", "1019", "1069")]
+
+
+def photo_filter_matches(study, cases, holdout):
+    selected = {}
+    filters = {"tier0-epf0-gaboff": 0, "tier0-epf0": 1,
+               "tier1-epf0": 1, "tier1-epf2": 3}
+    bands = BANDS if holdout else (1,)
+    for image_id, size, arms in cases:
+        for band in bands:
+            base = study.key[image_id, size, "base", band]
+            candidates = [study.key[image_id, size, policy, distance]
+                          for policy, distance in arms
+                          if policy != "base" and (distance < 2) == (band == 1)]
+            feasible = [row for row in candidates
+                        if 10 * row["bytes"] <= 11 * base["bytes"]
+                        and quality_passes(base, row) and quality_passes(base, row, "target_")]
+            if holdout:
+                # The per-file 3% preference and filter order are frozen for the holdout.
+                choice = min(feasible, key=lambda row: (
+                    100 * row["bytes"] > 103 * base["bytes"], filters[row["policy"]],
+                    row["bytes"], row["file"],
+                ), default=base)
+            else:
+                choice = min(feasible, key=lambda row: (row["bytes"], row["file"]), default=base)
+            selected[image_id, size, band] = [("base", base), ("selected", choice)]
+    return selected
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("output", "cohort", "corpus", "encoder", "decoder", "baseline_decoder", "djxl", "jxl_rs", "scorer"):
@@ -460,6 +507,7 @@ def main():
     parser.add_argument("--stage", choices=("match", "refine", "native", "ladder",
                                             "ladder-gaboff", "ladder-text", "ladder-tier4",
                                             "tier4-match", "tier4-native", "tier4-native-refine",
+                                            "d1-independent-filter", "photo-filter-holdout",
                                             "palette-grid", "verify", "confirm"),
                         default="match")
     parser.add_argument("--measured", type=Path)
@@ -469,9 +517,17 @@ def main():
         parser.error(f"--stage {args.stage} requires --measured")
     if args.blocks < 3:
         parser.error("--blocks requires at least three interleaved blocks")
+    photo_filter_stage = args.stage in ("d1-independent-filter", "photo-filter-holdout")
+    if photo_filter_stage:
+        POLICIES.update(PHOTO_FILTER_POLICIES)
     study = Study(args)
-    if args.stage in ("match", "refine", "native", "tier4-match", "tier4-native", "tier4-native-refine"):
-        if args.stage == "match":
+    if photo_filter_stage or args.stage in ("match", "refine", "native", "tier4-match", "tier4-native", "tier4-native-refine"):
+        if photo_filter_stage:
+            holdout = args.stage == "photo-filter-holdout"
+            cases = photo_filter_cases(holdout)
+            study.measure_quality(cases, check_target=True)
+            selected = photo_filter_matches(study, cases, holdout)
+        elif args.stage == "match":
             study.measure_quality(match_cases())
             selected = study.prepare_timing(BANDS, FAST_POLICIES)
         elif args.stage == "refine":

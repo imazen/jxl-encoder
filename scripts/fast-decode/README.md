@@ -38,6 +38,12 @@ python3 scripts/fast-decode/summarize_lossy.py "$OUT" "$SUMMARY"
   The results also include the best measured tier-1 filter choices.
 - `tier4-native-refine` extends the smooth photo's d4 search to measure
   how far tier 4 can reduce rate while holding quality.
+- `d1-independent-filter` tests native photos 1007, 1019 and 1069 with
+  EPF and Gaborish selected independently of the DC coding tier.
+- `photo-filter-holdout` applies the frozen d1 and d4 options to
+  backlit interior 1237. Both stages use the
+  [photo filter manifest](../../benchmarks/faster_decode_imazen26_photo_filters.tsv)
+  and match the two rendered RGB8 endpoints.
 - `palette-grid` compares exact lossless graphics streams across Modular
   group sizes, palette caps and channel compaction. It checks the source
   pixels in three decoders before timing distinct streams.

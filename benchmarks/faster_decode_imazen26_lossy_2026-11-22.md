@@ -308,3 +308,72 @@ interleaved timing method. The native bracket and retained-EPF wrappers
 ran for 187 and 143 seconds at 2.64 and 2.62 GiB peak RSS, respectively.
 [Candidate quality, costs and hashes](faster_decode_imazen26_lossy_photo_brackets_quality_2026-11-22.tsv).
 [Paired timings and fallbacks](faster_decode_imazen26_lossy_photo_brackets_timing_2026-11-22.tsv).
+
+### Independent d1 filtering and DC coding
+
+This trial holds the normal tier-0 DC coding while turning off EPF,
+with and without Gaborish. The earlier tier-1 filter choices and
+adaptive Gaborish also run on the same three native originals.
+The 36 renditions use effort 7 and preserve patch eligibility.
+The [photo filter manifest](faster_decode_imazen26_photo_filters.tsv)
+pins their SDR source bytes.
+
+The smallest quality-passing tier-0 filter choices give medians of
+1.197× at one worker and 1.182× at eight. The smooth photo then repeats
+two eligible choices with nine blocks of five observations. Its
+EPF-off rendition at d0.98 uses +1.84% bytes and sees 1.202× / 1.118×.
+At d1, switching off both filters increases bytes to +2.73% and
+reaches 1.383× / 1.720×. This repeat's A/A ratios are 1.002× / 0.991×,
+with p95 ratios 0.924× / 1.000×.
+
+| Native photo | Tier-0 filter controls | Distance | Byte change | Paired throughput, 1 / 8 workers |
+|---|---|---:|---:|---:|
+| 1007 fine detail | EPF and Gaborish off | 0.98 | −0.64% | 1.171× / 1.518× |
+| 1019 smooth sky | EPF and Gaborish off | 1.00 | +2.73% | 1.383× / 1.720× |
+| 1069 night | EPF off | 1.00 | −1 byte | 1.226× / 1.182× |
+
+These per-photo choices pass both rendered-quality guards and reach
+1.226× / 1.518× median throughput with a one-byte median reduction
+and +2.73% p90 growth. All three use faster options. The first capture
+uses three paired blocks of five. Independent jxl-rs and djxl v0.12
+render the finalists, and same-file RGB8 comparisons match across
+decoder revisions and at 1/4/8 workers. The quality and timing run
+uses 2.63 GiB peak RSS over 345 seconds.
+
+[Quality grid and hashes](faster_decode_imazen26_d1_independent_quality_2026-11-22.tsv),
+[initial paired timing](faster_decode_imazen26_d1_independent_timing_2026-11-22.tsv),
+and [smooth-photo repeat](faster_decode_imazen26_d1_independent_repeat_2026-11-22.tsv).
+Raw measurements and commands are in `imazen26-lossy/d1-independent-filter`.
+
+### Held-out backlit interior
+
+The fourth original (1237, 12 MP, test split) was chosen for backlit indoor
+texture and fine detail. Its candidate set and ranking were recorded
+before measuring. Candidates had to pass both quality guards in both RGB8
+decoders. The ranking prefers a rate increase of at most 3%, then fewer
+filter passes, then fewer bytes. Tier 0 is the fallback.
+
+| Band | Selected encode | Byte change | SSIM2 / Butteraugli delta | Paired throughput, 1 / 4 / 8 workers |
+|---|---|---:|---:|---:|
+| d1 | Tier 0, EPF off, d1 | −0.39% | −0.055 / 0.000 | 1.079× / 1.111× / 1.115× |
+| d4 | Tier 1, EPF 2, d4 | +2.51% | −0.165 / +0.004 | 1.360× / 1.194× / 1.245× |
+
+At d1, turning off both filters failed the Butteraugli guard. The
+EPF-only choice keeps the lower rate and clears both quality guards.
+Adding this holdout to the earlier per-photo choices gives 1.19865× /
+1.35013× at one and eight workers near d1, with median rate −0.20%.
+The one-worker target is 1.20×. Near d4, the four-photo medians reach
+1.446× / 1.328× at +2.63% median bytes. Each band uses a faster encode
+on all four photos. These are pooled per-photo choices from several
+trials. The held-out result above is the evaluation of the frozen
+candidate-ranking rule.
+
+The four selected and reference streams fully render in jxl-rs and djxl
+v0.12. All 12 same-stream RGB8 comparisons match across worker counts
+and decoder revisions. Across the two A/A cells and 1/4/8 workers,
+throughput ratios range from 0.997× to 1.025× and p95 latency ratios from
+0.991× to 1.016×. The complete run takes 139 seconds at 2.63 GiB peak RSS.
+[Candidate scores and hashes](faster_decode_imazen26_photo_filter_holdout_quality_2026-11-22.tsv).
+[Paired timings and p95](faster_decode_imazen26_photo_filter_holdout_timing_2026-11-22.tsv).
+Raw timings, the frozen plan and commands are in
+`imazen26-lossy/d1-d4-backlit-holdout` on i270.
