@@ -368,6 +368,30 @@ The combined replay took 102 s at 2.13 GiB peak RSS. The i270 logs, commands,
 source pins and earlier negative controls are under
 `/mnt/v/output/jxl-encoder/cms-pixel-pr-cohort-i270-2026-11-22`.
 
+### Zencodec review and companion pins
+
+The encoder exercises [Zencodec #214](https://github.com/imazen/zencodec/pull/214)
+with its ZenPixels 0.3.1 companion `fde59b96`. RGB ICC conversion continues
+through the independently pinned ZenPixels 0.4. Cargo.lock selects the
+0.3.1 carriers for Zencodec and the shared metadata code. Forcing the
+0.4 carriers into Zencodec triggers its existing 64-bit `DecodeOutput`
+size assertion. Both builds keep that assertion.
+
+[UltraHDR #44](https://github.com/imazen/ultrahdr/pull/44) handles the fallible
+pixel crop, [ZenPNG #59](https://github.com/imazen/zenpng/pull/59) provides the
+public ICC facades on stable SIMD, and
+[ZenAnalyze `1777b1a2`](https://github.com/imazen/zenanalyze/commit/1777b1a28b6e3790f13b32af826817dffa011d02)
+uses the shared scalar gamut matrix API. The analyzer's existing feature
+hashes and HDR numerical golden pass. ZenJPEG main `7628fd46` supplies
+the trailing-ZRL repair tested by the 32-case Expert reconstruction suite.
+The candidate also passes the 24 Little CMS checks and the portable library
+build on i270. Combined test wrapper peak RSS was 2.13 GiB.
+The exact final pins pass the portable library build and all 32 JPEG checks
+again. The unchanged byte-lock and divergence selection passes 81 tests with
+one existing ignore. The final wrapper took 148 s at 1.36 GiB peak RSS.
+Source pins, exact Cargo.lock, binary hashes and logs are kept with the
+[RGB ICC verification](#zenpixels-04-and-rgb-icc-backend-selection).
+
 ## H10 CMYK core corrections and remaining callers
 
 The candidate requires a CMYK ICC whenever Black is present, converts

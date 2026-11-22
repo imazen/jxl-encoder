@@ -258,6 +258,11 @@ before the CI source pin can advance. Logs, build identities,
 commands and exact reconstruction artifacts are in
 `/mnt/v/output/jxl-encoder/jpeg-expert-ci-i270-2026-11-22` on i270.
 
+The upgraded codec-family pins use producer main `7628fd46` directly.
+Its Expert reconstruction suite passes all 32 unchanged cases on i270
+with Zencodec `b0ae9ae2` and the matching ZenPixels 0.3.1 review.
+See the [codec-family evidence](SOURCE_COLOR_CONVERSION.md#zencodec-review-and-companion-pins).
+
 Retaining absolute grayscale SOF factors exposed another encoder defect.
 At 16x8 with factors 2x2, the header matches native v0.12, but relative channel
 shifts are all zero. Computing frame padding from those shifts writes a 2x1

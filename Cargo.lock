@@ -4102,7 +4102,7 @@ checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
 [[package]]
 name = "ultrahdr-core"
 version = "0.6.0"
-source = "git+https://github.com/imazen/ultrahdr?rev=ade3c857f5541aaff3828e0c7fad073bfe109fd9#ade3c857f5541aaff3828e0c7fad073bfe109fd9"
+source = "git+https://github.com/imazen/ultrahdr?rev=bade249a7b20284ac7f75ca3ac9c0c8ffe28c692#bade249a7b20284ac7f75ca3ac9c0c8ffe28c692"
 dependencies = [
  "archmage",
  "bytemuck",
@@ -4944,6 +4944,7 @@ dependencies = [
  "almost-enough",
  "enough",
  "how-far",
+ "libm",
  "spin 0.12.3",
  "whereat",
  "zenpixels 0.3.1",
@@ -5411,7 +5412,7 @@ dependencies = [
 [[package]]
 name = "zenpixels"
 version = "0.3.1"
-source = "git+https://github.com/imazen/zenpixels?rev=18afc75f1fd40c7feafeef6deae4df8e97e5e1b9#18afc75f1fd40c7feafeef6deae4df8e97e5e1b9"
+source = "git+https://github.com/imazen/zenpixels?rev=fde59b96632557592cffa9b7301acd8db96ed078#fde59b96632557592cffa9b7301acd8db96ed078"
 dependencies = [
  "bytemuck",
  "imgref",
@@ -5432,7 +5433,7 @@ dependencies = [
 [[package]]
 name = "zenpixels-convert"
 version = "0.3.1"
-source = "git+https://github.com/imazen/zenpixels?rev=18afc75f1fd40c7feafeef6deae4df8e97e5e1b9#18afc75f1fd40c7feafeef6deae4df8e97e5e1b9"
+source = "git+https://github.com/imazen/zenpixels?rev=fde59b96632557592cffa9b7301acd8db96ed078#fde59b96632557592cffa9b7301acd8db96ed078"
 dependencies = [
  "archmage",
  "bytemuck",

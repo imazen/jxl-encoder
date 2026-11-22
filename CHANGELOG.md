@@ -73,6 +73,10 @@
   (`1cc800cb`). Qualification `ca9250d1` adds selected F16/F32 native/primary controls,
   including exact alpha, caller depth and associated-alpha metadata.
 
+- Align the Zencodec, ZenPNG, UltraHDR and ZenAnalyze review pins for the
+  shared pixel carriers. Advance ZenJPEG to the producer main revision with
+  baseline trailing-ZRL reconstruction support.
+
 - Preserve distinct empty JPEG DHT segments and real zero-symbol Huffman
   table definitions, including exact original-byte reconstruction and cloned
   parsed-data consistency checks (`cc0e53a3`).
