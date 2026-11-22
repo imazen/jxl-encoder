@@ -232,6 +232,32 @@ the independent native control generator. See the companion repositories'
 JPEG reconstruction contracts for their separate coverage and remaining
 allocation/error-path gaps. No package publication is required.
 
+The later encoder CI pin `9274e380` keeps the stable SIMD manifest from
+the same producer base and omits the trailing-ZRL implementation.
+Encoder `d66ead9b`, the parent of the Zensim attribution repair,
+reproduces [the three Expert failures](https://github.com/imazen/jxl-encoder/actions/runs/45042162750/job/137268922948)
+with the same 29/32 verdict. The earliest assertion sees an empty
+`extra_zero_runs` list. The other two reproduce reconstructed JPEG
+byte mismatches and the missing metadata signal. The Zensim pin is
+inactive in the failing Expert feature set.
+
+Applying only the three runtime files from producer `00a00b0f` to
+the frozen stable producer passes all 32 unchanged Expert tests on
+encoder `22ff15a3`. Each changed file has the upstream Git blob ID.
+The run uses `cargo test --locked -p jxl-encoder --release --features
+__expert,__internals,jpeg-reencoding,parallel,parallel-tree-learning
+--test jpeg_sampling_contract -- --test-threads=1` and pinned libjxl
+v0.12.0 `a7a9c78`. The parent and overlay wrappers take 102 s at
+1.34 GiB peak RSS and 50 s at 1.28 GiB, respectively.
+
+The overlay is an attribution control. Direct producer main
+`7628fd46` stops at compilation because its ICC probe uses an
+`IccIdentification::from_icc` API absent from the encoder's
+`18afc75f` ZenPixels pin. The dependency cohort must build together
+before the CI source pin can advance. Logs, build identities,
+commands and exact reconstruction artifacts are in
+`/mnt/v/output/jxl-encoder/jpeg-expert-ci-i270-2026-11-22` on i270.
+
 Retaining absolute grayscale SOF factors exposed another encoder defect.
 At 16x8 with factors 2x2, the header matches native v0.12, but relative channel
 shifts are all zero. Computing frame padding from those shifts writes a 2x1
