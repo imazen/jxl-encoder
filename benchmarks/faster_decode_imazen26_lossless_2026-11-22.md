@@ -347,3 +347,25 @@ adds test-only controls. Measurements use three interleaved blocks
 of five warm allocating RGB8 decodes per arm plus A/A, on i270.
 [Per-image results, p95 and stream hashes](faster_decode_imazen26_photo_group_width_2026-11-22.tsv).
 Raw logs and readbacks are under `imazen26-lossless/photo-group-layout`.
+
+### Independent throughput night photo
+
+The 256 px profile was selected before timing on night photo 1069.
+It reaches 177.54 MP/s at one worker and 673.36 MP/s at eight workers.
+Its paired speedups are 1.721× and 1.338× versus the current
+`--fast-decode -g 0` stream. The file shrinks from 5,999,352 to
+3,929,829 bytes, a 34.50% reduction. Both streams reproduce all source
+samples through Zen at 1/4/8 workers, jxl-rs and djxl v0.12.
+
+The three native-photo medians are **151.12 and 562.19 MP/s**, with
+paired speedups of **1.560× and 1.284×**. Every file is smaller than
+stock. The textured original reaches 460.65 MP/s at eight workers.
+This meets the current photo median targets on warm allocating decodes
+with the experimental encoder and decoder. The balanced setting is
+available through the existing CLI. The throughput variant still needs
+the production encoder integration and decoder verification.
+
+The two decoder revisions, encoder revision, pinning and warm
+interleaved protocol are the same as in the group-width comparison.
+[Paired results, p95 and stream hashes](faster_decode_imazen26_throughput_night_2026-11-22.tsv).
+Raw commands and readbacks are in `imazen26-lossless/night-photo-throughput`.
