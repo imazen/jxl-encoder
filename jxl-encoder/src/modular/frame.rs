@@ -1662,7 +1662,10 @@ impl FrameEncoder {
             // Allow a bounded rate trade for sharing decoder tables.
             // Compare complete padded sections and TOC costs.
             let ceiling = stock_size.min(local_size + local_size / 20);
-            for use_rle in [false, true] {
+            // Smaller groups favor the shared run-length decoder. The
+            // complete section size still gates each candidate.
+            let rle_first = self.modular_group_size_shift() == 0;
+            for use_rle in [rle_first, !rle_first] {
                 let mut lf = lf_base.clone();
                 let groups = match super::prefix_rle::write_shared_prefix(
                     &group_images,

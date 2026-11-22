@@ -1563,7 +1563,7 @@ impl LosslessConfig {
                 && self.modular_predictor == Some(5)
                 && self.lz77 == Some(true)
                 && self.lz77_method == Some(Lz77Method::Rle)
-                && self.modular_group_size_shift == Some(1)
+                && matches!(self.modular_group_size_shift, Some(0 | 1))
                 && self.patches == Some(false)
                 && !self.squeeze
                 && self.faster_decoding == 0
