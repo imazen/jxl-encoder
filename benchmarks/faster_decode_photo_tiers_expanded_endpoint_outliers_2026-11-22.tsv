@@ -1,0 +1,7 @@
+endpoint	id	band	workers	profile	comparison	p95_ratio
+cold	1009	1	1	shared	aa	1.101583
+cold	1427	4	1	shared	aa	1.131332
+cold	1447	4	4	shared	aa	1.126358
+warm_reused	1009	1	4	throughput	aa	1.154057
+cold	1009	4	4	shared	old	1.214235
+cold	1447	1	4	shared	old	1.137724

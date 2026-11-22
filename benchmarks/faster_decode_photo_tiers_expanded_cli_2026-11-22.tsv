@@ -1,0 +1,9 @@
+control	profile	band	effort	encode_threads	encodes	policy	distance	bytes	fallback	sha256
+1427-throughput-d1	throughput	1	7	8	10	tier1-epf0	1	2449200		fc2a951f1e97e00714b958548802f2575dbe277779f195a26f65893df1c4acda
+1447-balanced-d4	balanced	4	7	8	8	tier0-epf0	3.95	467763		330a82c8daf21775ad8de7ba34aa463f3987a64d513cee1077809a8a1a89ff91
+1447-throughput-d4	throughput	4	7	8	8	tier1-epf0	3.98	474199		e5643d697ac899bc40a670fbb805d3b46e1a7eb466ac831f450bdaa0fecda31b
+1069-throughput-d4	throughput	4	7	8	1	base	4	251111	color encoding outside the sRGB scoring domain	66f72717d7bbd8be974c1103be0943a3c430887ee2898f87bd3342aa9ff91ded
+alpha	throughput	4	3	1	1	base	4	7343	pixel layout outside the opaque RGB8 profile	09e873b8816772e9d6953470a5a0b7e7c847eacf9cb937a5a49e98de05234173
+hdr	throughput	4	3	1	1	base	4	1063319	pixel layout outside the opaque RGB8 profile	6d7377df92623f103600cac0d5d21ae96d7eda1f6a1145c297f229472a58faf3
+tiny	throughput	4	3	1	1	base	4	86	dimensions below the metric minimum	488e3b590390f63a7cc06185a34aea2fe2c96fc2333b7d81e4eb4a34185457d9
+rgb	balanced	1	5	1	10	tier0-epf0	0.98	15842		04ee1c45c0fa269b5f66da78460f61e1bcab25527ef30fe06dbf48bb3253025b

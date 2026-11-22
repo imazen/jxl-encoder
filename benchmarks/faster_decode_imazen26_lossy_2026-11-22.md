@@ -702,3 +702,77 @@ selected streams render in djxl v0.12. The run takes 231 seconds at
 commands are in `filter-brackets` under the native holdout directory.
 [Two-renderer scores](faster_decode_photo_tiers_holdout_bracket_quality_2026-11-22.tsv)
 and [paired timing and p95](faster_decode_photo_tiers_holdout_bracket_timing_2026-11-22.tsv).
+
+### Expanded photo search
+
+The balanced and throughput selectors add the two finer EPF-off
+choices near d4. The d1 search adds simpler tier-1 DC with EPF off
+and normal Gaborish selection. At equal filter counts, throughput
+prefers EPF-off tier 1 within the 3% rate allowance. Both renderers
+still guard each selected SDR image against the ordinary reference.
+
+The qualification includes the five registered photos and the three
+native holdouts. It retains verified hashes for the earlier candidates
+and scores 21 new encodes with the same effort, workers and renderers.
+The Display P3 input is a same-file control in both bands and counts
+in the registered timing and rate medians. The new search changes
+seven profile selections. Both tiers select a quality-passing fast
+file on each of the three newer test photos near d4.
+
+| Panel | Tier | Band | Warm throughput, 1 / 4 / 8 workers | Median / p90 bytes | Fast choices / eligible |
+|---|---|---|---:|---:|---:|
+| Three newer photos | Balanced | d1 | 1.197× / 1.130× / 1.134× | 0.00% / +0.02% | 3/3 |
+| Three newer photos | Throughput | d1 | 1.252× / 1.546× / 1.510× | +1.08% / +4.91% | 3/3 |
+| Three newer photos | Balanced | d4 | 1.325× / 1.260× / 1.206× | +0.96% / +1.19% | 3/3 |
+| Three newer photos | Throughput | d4 | 1.383× / 1.333× / 1.342× | +0.96% / +1.19% | 3/3 |
+| Five registered photos | Balanced | d1 | 1.083× / 1.069× / 1.077× | 0.00% / +2.73% | 3/4 |
+| Five registered photos | Throughput | d1 | 1.217× / 1.700× / 1.653× | +2.73% / +9.08% | 4/4 |
+| Five registered photos | Balanced | d4 | 1.356× / 1.214× / 1.210× | +1.25% / +2.51% | 4/4 |
+| Five registered photos | Throughput | d4 | 1.356× / 1.188× / 1.237× | +1.67% / +2.76% | 4/4 |
+
+Warm throughput meets the speed, rate and fast-choice goals in both
+bands on both panels. Balanced meets the d4 goals and the d1 rate and
+fast-choice goals. Its d1 speed remains below both throughput floors.
+The warm ratio compares each profile with tier 0 on the same decoder.
+The aggregate records the same-file decoder and whole-system ratios
+separately. The largest warm cohort p95 ratio is 1.012× for a selected
+tier and 1.039× for A/A. Three individual warm p95 ratios exceed 1.10×,
+all on the baseline-decoder arm. All 38 selected and reference files
+fully render and all 114 exact RGB8 comparisons across Zen revisions
+and worker counts pass. The run takes 888 seconds at 2.71 GiB peak RSS
+for 21 new scores, exact readbacks and 3,600 warm timings.
+[Selections and quality deltas](faster_decode_photo_tiers_expanded_choices_2026-11-22.tsv),
+[warm aggregates](faster_decode_photo_tiers_expanded_warm_2026-11-22.tsv),
+[per-image timing and p95](faster_decode_photo_tiers_expanded_warm_cells_2026-11-22.tsv)
+and [warm tail outliers](faster_decode_photo_tiers_expanded_warm_outliers_2026-11-22.tsv).
+
+The three newer originals also complete the cold and caller-owned
+replay. The ratios use the current decoder on both encode profiles.
+
+| Tier | Band | Cold throughput, 1 / 4 / 8 workers | Caller-owned throughput, 1 / 4 / 8 workers |
+|---|---|---:|---:|
+| Balanced | d1 | 1.194× / 1.143× / 1.124× | 1.209× / 1.113× / 1.126× |
+| Throughput | d1 | 1.256× / 1.458× / 1.413× | 1.270× / 1.732× / 1.528× |
+| Balanced | d4 | 1.322× / 1.206× / 1.159× | 1.352× / 1.278× / 1.257× |
+| Throughput | d4 | 1.380× / 1.264× / 1.262× | 1.448× / 1.376× / 1.432× |
+
+Throughput meets the d1 and d4 speed floors in both additional
+endpoints. Balanced meets the d4 floors in both. The largest cold or
+reused cohort A/A p95 ratio is 1.073×. Individual p95 ratios above
+1.10× occur on four A/A cases and two baseline-decoder cases. Six
+ordinary streams reproduce the earlier encoder's bytes and RGB8 pixels
+again.
+[Endpoint aggregates](faster_decode_photo_tiers_expanded_endpoints_2026-11-22.tsv)
+and [individual tail outliers](faster_decode_photo_tiers_expanded_endpoint_outliers_2026-11-22.tsv).
+
+The public command reproduces the three newly selected macro and
+glacier profile hashes and four exact ordinary outputs for Display P3,
+alpha, 16-bit PQ and 7×9 RGB. The 259×133 RGB control applies effort 5
+and one encode worker to every candidate. Repeating the glacier command
+preserves the existing destination. The eight public controls, 1,350 cold and 1,620 caller-owned timing
+observations take 346 seconds
+at 2.65 GiB peak RSS. Both wrappers use `run-heavy` on i270. The expanded
+quality scores, evidence hashes, readbacks, binary fingerprints and
+complete commands are retained under `requalified`, `requalified-cli`
+and `requalified-native-endpoints` in the native holdout directory.
+[Public command results](faster_decode_photo_tiers_expanded_cli_2026-11-22.tsv).

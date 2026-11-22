@@ -489,6 +489,22 @@ VarDCT stream learner. See [lossless tracking](LIBJXL_PARITY_TRACKING.md).
 
 ## E. Per-API behavior divergences (opt-in)
 
+### Guarded photo decode profiles (2026-11-22)
+
+The standalone `scripts/fast-decode/encode_photo.py` uses the existing Zen
+VarDCT controls and matches rendered quality against ordinary tier 0. The
+near-d1 search includes tier 1 with EPF off and normal Gaborish policy. Near
+d4 it also tries EPF off at tier 0 with distance 3.95 and tier 1 with distance
+3.98. The throughput tier prefers the simpler tier-1 DC among equally
+filtered EPF-off candidates within 3% of the reference size. The balanced
+search keeps the smallest of its equally filtered choices. The 3% and 10%
+profile limits, quality guards and tier-0 fallback bind the tool's selection.
+
+libjxl v0.12 exposes distance, faster decoding, EPF and Gaborish as
+caller-selected settings for each encode. The opt-in tool invokes explicit
+settings through the existing CLI and verifies rendered output.
+[Measured controls](../benchmarks/faster_decode_imazen26_lossy_2026-11-22.md#filter-and-distance-follow-up-on-two-holdout-photographs).
+
 ### Fixed-Gradient prefix RLE and channel histograms (2026-11-22)
 
 The explicit 256 px group option with fixed Gradient, tier 0, Huffman,

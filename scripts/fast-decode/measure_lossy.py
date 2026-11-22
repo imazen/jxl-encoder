@@ -554,8 +554,7 @@ def photo_filter_matches(
                 def rank(row):
                     fast_dc = (
                         fast_dc_growth is not None
-                        and band == 1
-                        and row["policy"] == "tier1-epf0-gaboff"
+                        and row["policy"] in ("tier1-epf0", "tier1-epf0-gaboff")
                         and 100 * row["bytes"] <= (100 + fast_dc_growth) * base["bytes"]
                     )
                     return (filters[row["policy"]], not fast_dc, row["bytes"], row["file"])

@@ -126,3 +126,6 @@
   retained near d1. Both findings come from the two-image diagnostic, with
   quality and same-file parity independently checked.
   [Measurements](../benchmarks/faster_decode_imazen26_lossy_2026-11-22.md#filter-and-distance-follow-up-on-two-holdout-photographs).
+- The eight-photo rerun qualifies the resulting throughput choices near d1
+  and d4. The three-photo replay confirms the gain with both allocating
+  and caller-owned endpoints. [Profile qualification](../benchmarks/faster_decode_imazen26_lossy_2026-11-22.md#expanded-photo-search).

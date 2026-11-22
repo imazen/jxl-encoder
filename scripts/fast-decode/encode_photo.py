@@ -65,11 +65,12 @@ def candidates(band):
             ("base", 1),
             *(("tier0-epf0-gaboff", d) for d in (1, 0.98, 0.95)),
             *(("tier1-epf0-gaboff", d) for d in (1, 0.98, 0.955)),
-            ("tier0-epf0", 1), ("tier0-epf0", 0.98),
+            ("tier0-epf0", 1), ("tier0-epf0", 0.98), ("tier1-epf0", 1),
         ]
     return [
         ("base", 4),
-        *(("tier1-epf0", d) for d in (4.10, 4.08, 4)),
+        *(("tier1-epf0", d) for d in (4.10, 4.08, 4, 3.98)),
+        ("tier0-epf0", 3.95),
         ("tier1-epf2", 4.08), ("tier1-epf2", 4),
     ]
 
