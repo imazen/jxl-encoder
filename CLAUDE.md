@@ -1799,6 +1799,21 @@ separate queue items. Broad/coverage/remote verdicts must be read independently.
 
 ## Known Bugs (ACTIVE)
 
+### 2026-11-22 — pinned Zensim fused attribution cache revision
+
+The ARM and x64 CI jobs reach `zensim_attr_smoke::model_map_attr_steers_with_fused_map`
+and fail with `reference cache color conversion revision differs from scorer`.
+This reproduces on both `6eda641d` and `fc16778f` with the same locked model
+dependency. See [the later CI job](https://github.com/imazen/jxl-encoder/actions/runs/45006878049).
+
+In the pinned zensimx source, `precompute_reference_linear_planar` keeps the
+formula revision derived by `config_from_params`. The fresh fused attribution
+path assigns its absent revision override over that configuration before
+validating the cache. The stale path keeps the configured revision. The guard
+correctly refuses the mismatch. The encoder smoke test and model pins still
+exercise the original contract. The optional smoke gate remains open.
+
+
 ### RESOLVED 2026-11-19: extra-channel count admission and header guard
 
 A 1x1 request with 4097 Depth channels panics in the header count assertion

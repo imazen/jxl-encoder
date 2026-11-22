@@ -67,9 +67,14 @@ def summary(measured):
                 values.append(row["distance"])
             values.extend((row["bytes"], f"{row['bytes'] / base['bytes']:.6f}"))
             if not lossless:
-                values.extend((f"{row['ssim2'] - base['ssim2']:.6f}",
-                               f"{row['butteraugli'] - base['butteraugli']:.6f}",
-                               int(quality_passes(base, row))))
+                quality = ("", "", "") if "fallback" in base else (
+                    f"{row['ssim2'] - base['ssim2']:.6f}",
+                    f"{row['butteraugli'] - base['butteraugli']:.6f}",
+                    int(quality_passes(base, row) and (
+                        "target_ssim2" not in base or quality_passes(base, row, "target_")
+                    )),
+                )
+                values.extend(quality)
             yield [*values, row["stream_sha256"], *by_arm[arm]]
     if paired:
         raise ValueError("unmatched timing rows")

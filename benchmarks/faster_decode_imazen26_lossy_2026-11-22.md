@@ -505,3 +505,40 @@ The successful native replay uses 2.60 GiB peak RSS over 78 seconds.
 The four format and effort controls use 0.49 GiB over three seconds.
 Raw inputs, candidate streams and logs are in
 `imazen26-lossy/photo-profile-cli` on i270.
+
+### Registered tier selection on five native photos
+
+The benchmark uses the published tier caps and search at
+`fc16778f`. It times both tiers on the same artifacts at effort 7.
+The Display P3 original stays in the aggregate with the ordinary
+tier-0 stream, without an sRGB quality score.
+
+| Tier | Band | Paired throughput, 1 / 4 / 8 workers | Median / p90 bytes | Fast choices |
+|---|---|---:|---:|---:|
+| Balanced | d1 | 1.083× / 1.058× / 1.118× | 0% / +2.73% | 3/5 |
+| Throughput | d1 | 1.178× / 1.626× / 1.538× | +2.73% / +9.08% | 4/5 |
+| Balanced | d4 | 1.364× / 1.192× / 1.270× | +1.67% / +2.76% | 4/5 |
+| Throughput | d4 | 1.360× / 1.190× / 1.234× | +1.67% / +2.76% | 4/5 |
+
+Both d4 tiers chose identical files. Near d1, the throughput profile
+meets the eight-worker, rate and fast-choice targets. The one-worker
+median remains below 1.20×. The table includes all fallbacks. Versus the
+older decoder on the tier-0 streams, the throughput medians are
+1.183× / 1.548× at d1 and 1.350× / 1.249× at d4, at one and eight
+workers. Old-to-current same-file median ratios range from 0.989× to
+1.008× across both bands and all worker counts.
+
+All 19 distinct chosen and reference files render in jxl-rs and djxl
+v0.12. All 57 exact RGB8 comparisons across workers and decoder versions
+pass. The class p95 latency ratio is at most 1.018× for either selected
+tier. There are seven per-image p95 increases above 10%, all on
+same-file controls or fallbacks. The detailed timing records retain them.
+
+The run uses 2.66 GiB peak RSS over 917 s for 60 quality records and
+2,250 paired timing observations. The frozen run plan, candidate and
+input hashes, binaries and raw timings are in
+`imazen26-lossy/photo-registered-tiers` on i270.
+[Quality table](faster_decode_photo_tiers_native_quality_2026-11-22.tsv).
+[Timing table](faster_decode_photo_tiers_native_timing_2026-11-22.tsv).
+[Aggregates](faster_decode_photo_tiers_native_aggregate_2026-11-22.tsv)
+and [per-image tail outliers](faster_decode_photo_tiers_native_outliers_2026-11-22.tsv).

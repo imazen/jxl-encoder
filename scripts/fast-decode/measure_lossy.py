@@ -153,7 +153,7 @@ class Study:
             raise ValueError(f"wrong sample count for {stream}")
         return rgb
 
-    def source(self, image_id, size):
+    def input_file(self, image_id):
         row = self.cohort[image_id]
         if "path" in row:
             path = Path(row["path"])
@@ -161,6 +161,10 @@ class Study:
             path, = self.args.corpus.rglob(row["url"].rsplit("/", 1)[1])
         if digest(path) != row["sha256"]:
             raise ValueError(f"source hash mismatch: {path}")
+        return path, row["sha256"]
+
+    def source(self, image_id, size):
+        path, source_sha256 = self.input_file(image_id)
         with Image.open(path) as image:
             if image.mode != "RGB":
                 raise ValueError(f"RGB8 input required: {path}")
@@ -182,7 +186,7 @@ class Study:
             raw.write_bytes(image.tobytes())
         self.manifest["inputs"][f"{image_id}-{size}"] = {
             "image_id": image_id, "size": size, "path": str(path), "crop": [x, y, w, h],
-            "source_sha256": row["sha256"], "input_sha256": digest(path), "rgb_sha256": digest(raw),
+            "source_sha256": source_sha256, "input_sha256": digest(path), "rgb_sha256": digest(raw),
         }
         return path, raw, w, h
 
@@ -398,6 +402,8 @@ class Study:
                 stream = measured / "streams" / name
                 if digest(stream) != row["stream_sha256"]:
                     raise ValueError(f"changed stream: {name}")
+                if "fallback" in row:
+                    self.read_rgb(stream, row["width"], row["height"])
                 expected = None
                 for workers in PINS:
                     rgb = [self.read_rgb(
@@ -408,7 +414,7 @@ class Study:
                     if hashes != [expected, expected]:
                         raise ValueError(f"different decoder or worker-count pixels: {name}")
                     writer.writerow((name, workers, *hashes))
-                    if workers == 1:
+                    if workers == 1 and "fallback" not in row:
                         reference = measured / f"{row['id']}-{row['size']}.rgb"
                         values = self.score_target(reference, row, rgb[1])
                         if "target_ssim2" in row and values != (row["target_ssim2"], row["target_butteraugli"]):
@@ -566,6 +572,51 @@ def photo_filter_matches(study, cases, bands, ranking, *, compare_filter_free=Fa
     return selected
 
 
+def measure_photo_tiers(study):
+    # Reuse the exact search and input domain of the user-facing tool.
+    from encode_photo import BYTE_GROWTH, candidates, photo_input
+
+    grid = [arm for band in BANDS for arm in candidates(band)]
+    cases = []
+    fallback = {}
+    for image_id in study.cohort:
+        path, source_sha256 = study.input_file(image_id)
+        (width, height), reason = photo_input(path)
+        if reason is None:
+            cases.append((image_id, "native", grid))
+            continue
+        study.manifest["inputs"][f"{image_id}-native"] = {
+            "path": str(path), "source_sha256": source_sha256, "crop": [0, 0, width, height],
+        }
+        for band in BANDS:
+            stream = study.streams / f"{image_id}-native-base-d{band:g}.jxl"
+            study.encode(path, stream, band, "base")
+            fallback[image_id, "native", band] = {
+                "id": image_id, "size": "native", "width": width, "height": height,
+                "policy": "base", "distance": band, "file": stream.name,
+                "bytes": stream.stat().st_size, "stream_sha256": digest(stream),
+                "fallback": reason,
+            }
+
+    study.measure_quality(cases, check_target=True)
+    all_choices = {
+        name: photo_filter_matches(study, cases, BANDS, "filters", max_growth=limit)
+        for name, limit in BYTE_GROWTH.items()
+    }
+    arms = {}
+    for image_id in study.cohort:
+        for band in BANDS:
+            key = image_id, "native", band
+            base = fallback.get(key, study.key.get((image_id, "native", "base", band)))
+            arms[key] = [("base", base)]
+            for name, choices in all_choices.items():
+                choice = choices[key][1][1] if key in choices else base
+                arms[key].append((name, choice))
+    study.manifest["photo_tier_byte_growth"] = BYTE_GROWTH
+    (study.out / "manifest.json").write_text(json.dumps(study.manifest, indent=2) + "\n")
+    return arms
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("output", "cohort", "corpus", "encoder", "decoder", "baseline_decoder", "djxl", "jxl_rs", "scorer"):
@@ -575,7 +626,8 @@ def main():
                                             "tier4-match", "tier4-native", "tier4-native-refine",
                                             "d1-independent-filter", "photo-filter-holdout",
                                             "photo-filter-backlit-bracket", "photo-filter-saturated-holdout",
-                                            "photo-transform-dc-bracket", "palette-grid", "verify", "confirm"),
+                                            "photo-transform-dc-bracket", "photo-tiers-native",
+                                            "palette-grid", "verify", "confirm"),
                         default="match")
     parser.add_argument("--measured", type=Path)
     parser.add_argument("--blocks", type=int, default=3)
@@ -592,11 +644,15 @@ def main():
         "photo-transform-dc-bracket": ((1,), "compare-configurations"),
     }
     photo_filter_stage = args.stage in photo_filter_stages
-    if photo_filter_stage:
+    if photo_filter_stage or args.stage == "photo-tiers-native":
         POLICIES.update(PHOTO_FILTER_POLICIES)
     study = Study(args)
-    if photo_filter_stage or args.stage in ("match", "refine", "native", "tier4-match", "tier4-native", "tier4-native-refine"):
-        if photo_filter_stage:
+    if photo_filter_stage or args.stage in (
+            "match", "refine", "native", "tier4-match", "tier4-native", "tier4-native-refine",
+            "photo-tiers-native"):
+        if args.stage == "photo-tiers-native":
+            selected = measure_photo_tiers(study)
+        elif photo_filter_stage:
             cases = photo_filter_cases(args.stage)
             study.measure_quality(cases, check_target=True)
             selected = photo_filter_matches(

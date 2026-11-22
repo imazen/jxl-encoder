@@ -114,3 +114,9 @@ This stand-alone tool evaluates up to nine encodes per image. Its evidence
 directory defaults to `output.jxl.fast-decode` and keeps the selection,
 candidate streams, measurements, byte hashes, and exact commands. Use
 `--evidence` for a different new directory.
+
+The `photo-tiers-native` stage measures both exposed photo tiers from one
+shared quality search. It keeps same-file fallbacks, steady RGB8 decode
+timings, and A/A and baseline-decoder arms in both distance bands. The
+benchmark quality columns are empty when a source uses tier 0 outside the
+scoring domain. The full render and same-file readback checks still run.
