@@ -719,3 +719,44 @@ and [class p95](faster_decode_imazen26_photo_layout_p95_2026-11-22.tsv).
 The full run took 1,044 s at 1.05 GiB peak RSS under `run-heavy`.
 Raw samples, exact commands and source and binary hashes are under
 `imazen26-lossless/balanced-photo-layout-ablation` on i270.
+
+### Fix width and vary prefix coding on the independent photos
+
+Force the shared plain and shared distance-1 RLE streams on the same
+four imazen-26 originals, at the previously selected widths of
+128 px for 1012 and 1606 and 256 px for 1237 and 1619. The two arms
+use the same fixed Gradient predictor, effort 7 and frozen encoder
+experiment `65c4e830`. All four RLE hashes match the production
+streams from encoder `7fca6d6b`. All eight files are smaller than
+stock `--fast-decode -g 0`. Median savings are 3.30% with plain
+prefix and 12.49% with RLE. All eight reproduce exact RGB8 source
+samples through Zen at 1/4/8 workers, jxl-rs and djxl v0.12.
+
+The cold allocating RGB8 comparisons use decoder `edc2abcc` on both
+sides, pinned to i270 P cores with CMS off. The direct run rotates
+RLE, plain and same-file A/A in three interleaved blocks of five.
+The stock comparisons use the same timing protocol with
+`--fast-decode -g 0` as their control. All 36 two-stream PNG16
+comparisons match at 1/4/8 workers.
+
+| Cold comparison | Median MP/s at 1 / 4 / 8 workers | Paired median speedup at 1 / 4 / 8 workers |
+|---|---:|---:|
+| Plain vs stock | 109.51 / 305.55 / 460.64 | 1.027× / 1.082× / 1.047× |
+| RLE vs stock | 132.08 / 364.29 / 530.01 | 1.238× / 1.323× / 1.243× |
+| RLE directly vs plain | 132.19 / 364.54 / 526.99 | 1.192× / 1.151× / 1.106× |
+
+RLE wins on every photo at all three worker counts while using
+fewer bytes. The alternative entropy mode leaves the cold
+one-worker relative and eight-worker absolute targets open.
+The class p95 ratios stay within 1.009×. Plain on 1606 has a
+1.259× one-worker p95 against stock with A/A at 1.013×. The RLE
+candidate p95 stays below its paired control for every cell in
+the direct comparison.
+
+[Rates and stream hashes](faster_decode_imazen26_width_entropy_rate_2026-11-22.tsv),
+[per-file timing](faster_decode_imazen26_width_entropy_timing_2026-11-22.tsv)
+and [class p95](faster_decode_imazen26_width_entropy_classes_2026-11-22.tsv).
+Encode, exact decode and both stock comparisons take 77 s at
+0.58 GiB peak RSS. The direct replay takes 31 s at 0.12 GiB.
+The raw samples, commands, binaries and source hashes are under
+`imazen26-lossless/width-holdout-entropy-mode` on i270.
