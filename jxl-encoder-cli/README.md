@@ -35,6 +35,18 @@ Notes:
 - If both `-d` and `-q` are given, `-d` wins (`-q` is only the fallback when `-d` is absent); they are not mutually exclusive.
 - `--lossless` and `-d 0` are equivalent — both select the modular path for true mathematical lossless. Either works.
 
+## Faster lossless decoding for photographs
+
+```bash
+cjxl-rs photo.png photo.jxl --lossless -e 7 --faster-decoding 1 -g 0
+```
+
+This uses 128 px Modular groups and keeps patch selection available.
+On three native SDR imazen-26 photographs, it delivered median decode
+throughput of 2.45× at one worker and 2.10× at eight workers versus tier 0,
+with 4.91% median file growth. Graphics have their own size and throughput
+tradeoffs. [Measurements](../benchmarks/faster_decode_imazen26_lossless_2026-11-22.md#balanced-lossless).
+
 ## Optional controller on the development branch
 
 Build with the `rate-control` Cargo feature to use `--rate-control` and

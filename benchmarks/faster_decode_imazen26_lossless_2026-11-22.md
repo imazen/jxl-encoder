@@ -28,6 +28,24 @@ size, the aliased plot also exceeds the byte budget and the mixed web
 page misses the one-worker target. A single unconditional tier-1 policy
 therefore fails the compact cohort.
 
+### Independent balanced night photo
+
+The same existing tier-1 policy on native imazen-26 test photo 1069
+delivers 2.540× and 2.136× paired throughput at one and eight workers.
+Its 3,070,244-byte stream is 8.38% larger than tier 0. Across the three
+native photo originals the median growth is 4.91% and the largest
+increase is 8.38%. Median throughput is 2.45× and 2.10×, meeting the
+photo gates independently of the graphics results.
+
+Both night photo streams match the source RGB8 samples through
+zenjxl-decoder at one, four and eight workers, jxl-rs and djxl v0.12.
+Both timing arms use the row-span decoder `c266f4c7` at the same
+warm allocating output endpoint and three interleaved blocks of
+five samples per arm, including A/A. The serialized balanced-photo
+and prefix-control run lasted 148 seconds at 0.55 GiB peak RSS.
+[Results, p95 and stream hashes](faster_decode_imazen26_balanced_night_2026-11-22.tsv).
+Raw records are retained in `imazen26-lossless/night-photo-balanced`.
+
 ### Palette caps and group size
 
 The effort-7 grid varies the palette cap and channel compaction independently,
