@@ -491,6 +491,8 @@ VarDCT stream learner. See [lossless tracking](LIBJXL_PARITY_TRACKING.md).
 
 ### Fixed-Gradient prefix RLE trial (2026-11-22)
 
+This ablation omits the distance-1 arm and retains both prefix-only sizes.
+
 The explicit combination of fixed Gradient, prefix coding, disabled tree
 learning and enabled RLE tries shared prefix, local prefix, and local prefix
 with distance-1 runs for each multi-group Modular pass section. Local streams
