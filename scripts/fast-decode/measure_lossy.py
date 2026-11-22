@@ -266,7 +266,8 @@ class Study:
                 selected[image_id, size, band] = candidates
         return selected
 
-    def measure_time(self, selected):
+    def measure_time(self, selected, *, warmup=1):
+        mode = "warm" if warmup else "cold"
         with (self.out / "timings.tsv").open("x", newline="", buffering=1) as output:
             writer = csv.writer(output, delimiter="\t", lineterminator="\n")
             writer.writerow(("id", "size", "band", "mode", "workers", "block", "sample",
@@ -288,14 +289,14 @@ class Study:
                             for name, row, kind in order:
                                 decoder = self.args.decoder if kind == "current" else self.args.baseline_decoder
                                 measured = self.run(["taskset", "-c", cpus, decoder, self.streams / row["file"],
-                                                     "--speedtest", "--num-reps", "1", "--warmup-reps", "1",
+                                                     "--speedtest", "--num-reps", "1", "--warmup-reps", warmup,
                                                      "--no-cms", "--data-type", "u8",
                                                      "--num-threads", 0 if workers == 1 else workers])
                                 parsed = CLI_RATE.search(measured)
                                 pixels = row["width"] * row["height"]
                                 if not parsed or int(parsed[1]) != pixels or float(parsed[2]) <= 0:
                                     raise ValueError(f"wrong timing output: {row['file']}")
-                                writer.writerow((image_id, size, band, "warm", workers, block + 1, sample + 1,
+                                writer.writerow((image_id, size, band, mode, workers, block + 1, sample + 1,
                                                  name, row["file"], kind, pixels, parsed[2]))
                 print("timing complete", image_id, size, band, flush=True)
 

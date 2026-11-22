@@ -93,6 +93,8 @@ below is for the finer d1 and d4 timing comparisons.
 
 [Same-distance counts](faster_decode_imazen26_lossy_ladder_2026-11-22.tsv)
 and [rate at matched quality](faster_decode_imazen26_lossy_quality_match_2026-11-22.tsv).
+The [ladder timing replay](faster_decode_lossy_ladder_replay_2026-11-22.md)
+adds current and baseline decoder timings and dual-renderer quality selection.
 
 ### Tier 4
 

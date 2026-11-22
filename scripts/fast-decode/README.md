@@ -122,3 +122,39 @@ shared quality search. It keeps same-file fallbacks, steady RGB8 decode
 timings, and A/A and baseline-decoder arms in both distance bands. The
 benchmark quality columns are empty when a source uses tier 0 outside the
 scoring domain. The full render and same-file readback checks still run.
+
+## Matched-quality timing across the ladder
+
+`replay_ladder.py` takes the four completed `ladder`, `ladder-gaboff`,
+`ladder-text` and `ladder-tier4` directories. Pass the encoder, scorer
+and external-decoder binaries from their manifests and the Zen decoder
+binaries for the comparison.
+
+```sh
+python3 scripts/fast-decode/replay_ladder.py \
+    "$OUT" "$LADDER" "$GABOFF" "$TEXT" "$TIER4" \
+    --encoder "$FROZEN_ENCODER" --decoder "$ZEN_CURRENT" \
+    --baseline-decoder "$ZEN_BASELINE" --djxl "$DJXL_V012" \
+    --jxl-rs "$JXL_RS" --scorer "$SCORER"
+python3 scripts/fast-decode/summarize_lossy.py "$OUT" "$SUMMARY"
+```
+
+The replay checks every retained stream and raster hash, rerenders the
+independent pixels, and scores the current Zen RGB8 output. It matches
+each quality rung against the two rendered quality guards and the 3% or
+10% per-file rate cap. The tier-4 comparison has its own 10% cap. The
+search may change the distance within the measured ladder. It uses the
+same file at tier 0 when no candidate qualifies. `selected.tsv` maps
+each profile to its timed arm, including any stream shared by two tiers.
+The tool checks those streams across the two Zen revisions and 1, 4 and
+8 workers, then interleaves warm allocating decodes with A/A and old
+decoder arms. The replay characterizes the retained ladder candidates.
+The named photo encode tool has its own near-d1 and near-d4 search.
+
+`summarize_ladder_replay.py "$OUT" "$REPORT"` groups the profile, same-file
+decoder and whole-system measurements from the same timing cells. It emits
+per-rung photo results, class and quality-band summaries, and all per-cell
+p95 latency outliers over 10%. For a separate photo endpoint check, use
+`replay_ladder_endpoints.py "$OUT" "$ENDPOINTS" "$PAIRED_OUTPUT"`. It samples
+q5, q55, q90 and q99 and keeps first-decode allocation timings apart from
+warm caller-owned output timings.
