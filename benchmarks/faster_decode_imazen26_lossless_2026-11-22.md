@@ -561,3 +561,73 @@ and [256-pixel cold replay](faster_decode_imazen26_g256_cold_2026-11-22.tsv).
 Raw samples, commands, source pins and hashes for the normal CLI
 replay are under
 `/mnt/v/output/jxl-encoder/fast-decode-2026-11-22/imazen26-lossless/128-pixel-throughput`.
+
+## Independent test of width selection
+
+Freeze the dimensions-only rule from the
+[three-photo tuning replay](https://github.com/imazen/zenjxl-decoder/blob/d9994cc5/benchmarks/cold_modular_photo_2026-11-22.md#use-both-group-widths-for-cold-throughput).
+Use the 128 px profile if a 256 px layout would have at most 128 groups.
+Use the 256 px profile for the larger layout. Test four originals that
+did not inform that choice. Their PNG-v3 bytes are pinned at
+`0264d4d8`. The crystal and calamari sources belong to the published
+imazen-26 train split and were held out from this rule. The backlit
+interior and berries belong to the imazen-26 test split at `21009633`.
+
+| Photo | Native dimensions | Count at 256 px | Selected groups | Selected bytes vs. stock | Balanced bytes vs. tier 0 |
+|---|---:|---:|---:|---:|---:|
+| 1012 crystal display | 2190×3131 | 117 | 128 px | −27.55% | +9.39% |
+| 1606 calamari and salad | 3462×2150 | 126 | 128 px | −7.66% | +7.58% |
+| 1237 backlit interior | 3000×4000 | 192 | 256 px | −8.55% | +6.40% |
+| 1619 saturated berries | 3000×4000 | 192 | 256 px | −16.43% | +6.40% |
+
+Encoder `7fca6d6b` produces all 20 streams at effort 7. Zen
+`8496962d` decodes each stream at 1/4/8 workers. Pinned jxl-rs and
+djxl v0.12 additionally compare the full raster to the source.
+All RGB8 samples match. The allocating replay also checks exact
+cross-stream PNG16 hashes. The caller-owned endpoint checks exact
+RGB8 against allocating output.
+
+The stock throughput control is `--fast-decode -g 0`. The balanced
+comparison uses ordinary tier 0. The selected profiles save median
+12.49% bytes against stock. Balanced adds 6.99% at the median and
+9.39% at p90. This exceeds the 6% median rate limit.
+
+All decode timing uses in-memory RGB8 on i270 at 1, 4 and 8 workers.
+Each cell uses three interleaved blocks of five with same-file A/A.
+The cold allocating tests use one decode in each fresh process. The
+warm allocating tests decode once before timing. The caller-owned
+tests reuse initialized output storage.
+
+| Profile and endpoint | Median MP/s, 1 / 4 / 8 workers | Paired speedup, 1 / 4 / 8 workers |
+|---|---:|---:|
+| Selected width, cold allocating | 131.10 / 361.37 / 527.56 | 1.2225× / 1.3129× / 1.2225× |
+| Selected width, warm allocating | 135.99 / 395.44 / 592.14 | 1.2191× / 1.2820× / 1.2464× |
+| Selected width, warm caller-owned | 149.17 / 477.89 / 639.32 | 1.2510× / 1.3802× / 1.3662× |
+| Opposite width, cold allocating | 128.99 / 333.90 / 422.86 | 1.1954× / 1.1849× / 0.9727× |
+| Balanced, cold allocating | 27.70 / 90.74 / 159.21 | 2.6854× / 2.3831× / 2.2450× |
+| Balanced, warm allocating | 27.92 / 92.22 / 162.52 | 2.6994× / 2.3995× / 2.2957× |
+| Balanced, warm caller-owned | 28.44 / 96.03 / 165.48 | 2.7193× / 2.4585× / 2.2633× |
+
+The caller-owned comparison meets the relative and absolute throughput
+targets at one and eight workers. The cold allocating median falls below
+1.25× at one worker and 550 MP/s at eight. The warm allocating median
+also falls below 1.25× at one worker. Balanced meets its throughput
+targets in all three endpoints and exceeds its median byte budget.
+
+At eight workers the rule's choice wins on all four photos. At one
+worker the two photos below the cutoff favor 256 px for cold throughput.
+Taking the fastest measured choice for each cold one-worker cell
+would give a median of 1.236× stock. The rule remains experimental.
+The class-level cold eight-worker p95 is 0.881× stock. On input 1606
+the per-image p95 is 1.274× stock with 1.008× A/A. The opposite width
+on that input has a p95 of 1.233× stock in its own paired run.
+The accompanying per-image tables retain both these tails and the A/A
+outliers.
+
+[All 20 stream hashes](faster_decode_imazen26_width_holdout_streams_2026-11-22.tsv),
+[per-image timing](faster_decode_imazen26_width_holdout_timing_2026-11-22.tsv)
+and [class p95](faster_decode_imazen26_width_holdout_p95_2026-11-22.tsv).
+The serialized encode, verification and timing run used 0.58 GiB peak
+RSS over 985 seconds. The binary and input hashes, exact commands and
+raw records are under `imazen26-lossless/width-routing-independent`
+in the run directory on i270.
