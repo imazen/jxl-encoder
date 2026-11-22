@@ -74,6 +74,75 @@ limit at 1.111×. The data establish per-image choices and cohort
 medians. Shipping still requires a policy that chooses and falls back
 reliably.
 
+## Quality shifts across the ladder
+
+The ladder covers 20 quality settings from q5 to q99, with 12 rungs at
+q5–q60 and eight above q60. It uses both photo crops, the flat and text
+regions of the same terminal original, and the aliased plot. All 600
+streams fully render through jxl-rs and djxl v0.12. At the same requested
+distance, EPF off passes the quality guards on all 20 flat terminal rungs,
+five with visible terminal text, and two on the aliased plot.
+
+There are 500 nonbaseline comparisons. Of the 153 that miss either
+quality guard at the same distance, 106 have a measured rung that meets
+both guards with at most 10% more bytes. Of those, 34 fit within 3% and
+16 use at most the baseline bytes. The matching uses the smallest
+measured eligible rendition. For example, 1007 at d5 with EPF off
+recovers a quality match at d4.5 and +6.79% bytes. Confirmed throughput
+below is for the finer d1 and d4 timing comparisons.
+
+[Same-distance counts](faster_decode_imazen26_lossy_ladder_2026-11-22.tsv)
+and [rate at matched quality](faster_decode_imazen26_lossy_quality_match_2026-11-22.tsv).
+
+### Tier 4
+
+The tier-4 diagnostic adds 100 ladder streams across the same five
+shapes, all fully rendered by both independent decoders. On the finer
+d4 photo grid, tier 4 reaches the guards on Zen and jxl-rs at distance
+4.10 on 1007 and 4.20 on 1019. The measured files grow by 0.56% and
+1.42%. Their paired throughput ratios are 1.661× / 1.308× and
+3.119× / 1.927× at one and eight workers. These comparisons use
+1024 px crops.
+
+Near d1, the 1007 finalist at distance 1.05 reduces bytes by 4.69%
+and misses Zen's Butteraugli guard. On 1019, the sampled d1 grid has
+no jxl-rs quality match within the 10% byte ceiling. The native-size
+trial above covers tier 1. Tier 4 remains a d4 candidate for the
+native and patch-heavy cases.
+
+The fine-grid and verification run used 0.55 GiB peak RSS over
+40 seconds. [Tier-4 timings and jxl-rs scores](faster_decode_imazen26_lossy_tier4_2026-11-22.tsv)
+and [Zen scores](faster_decode_imazen26_lossy_tier4_target_2026-11-22.tsv).
+
+## Repeated crop timings
+
+Nine interleaved blocks of five decodes give median paired ratios of
+1.277× / 1.231× at d1 and 1.599× / 1.380× at d4. All four selected
+files meet both quality guards on the timed Zen output. The d4
+eight-worker A/A on 1019 still crosses the p95 limit at 1.104×, with
+a median throughput ratio of 1.011×. The extended crop and ladder run
+used 0.56 GiB peak RSS over 129 seconds.
+[d1 results](faster_decode_imazen26_lossy_refine_confirm_2026-11-22.tsv)
+and [d4 results](faster_decode_imazen26_lossy_match_confirm_2026-11-22.tsv).
+
+## LF/DC and HF metadata profile
+
+At eight workers on the native photos, existing decoder diagnostics
+measure 2.61–6.33 ms in LF groups, including LF/DC reconstruction and
+HF metadata. That phase accounts for 9.0–16.6% of median same-run
+decode latency across the five profiles. The parallel LF and HF join
+uses 2.37–6.13 ms, with a 0.18–0.22 ms copy-back. The combined AC decode
+and render phase takes 22.5–39.7 ms. Independent `perf` sampling on the
+same files puts AC group entropy and EPF among the largest CPU costs.
+The fastest tested file still spends 15.93% of sampled CPU time handling
+user address faults, which is a useful place to test allocation reuse.
+This phase capture measures the current implementation. The optimization
+targets need a same-stream before/after comparison.
+
+The oracle and profile run took 34 seconds and used 0.24 GiB peak RSS.
+Raw sampling stacks and existing phase logs are under `lf-profile`
+in the run directory.
+
 ## Evidence
 
 The [match results](faster_decode_imazen26_lossy_match_2026-11-22.tsv)

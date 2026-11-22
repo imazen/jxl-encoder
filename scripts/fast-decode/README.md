@@ -29,12 +29,20 @@ python3 scripts/fast-decode/summarize_lossy.py "$OUT" "$SUMMARY"
 - `native` probes both distance bands on the two 3000×4000 originals.
 - `ladder` records quality across the encoder's quality scale.
   `ladder-gaboff` extends it to EPF and Gaborish off. `ladder-text`
-  uses a pinned terminal crop with visible text.
+  uses a pinned terminal crop with visible text. `ladder-tier4`
+  provides the tier-4 diagnostic on all five shapes.
+- `tier4-match` refines the tier-4 distance around d1 and d4 on the
+  two photos, then times the measured quality matches within the byte limit.
 - `verify --measured MATCH_DIR` checks exact RGB8 for both timed decoder
   binaries across measured worker counts and scores the target decoder.
 - `confirm --measured MATCH_DIR --blocks 9` repeats the photo timing
   using the retained tier-0 and EPF-off files, including the
   EPF-off/Gaborish-off arm when available.
+
+Use `match_ladder.py OUTPUT LADDER LADDER_GABOFF LADDER_TEXT` for the
+smallest measured candidate matching each tier-0 quality rung. The table
+preserves the same-distance verdict, the rate after matching, and missing
+matches at quality extremes.
 
 The driver selects the smallest candidate per profile that passes both
 quality guards and the per-file rate ceiling. Timed normal-filter and

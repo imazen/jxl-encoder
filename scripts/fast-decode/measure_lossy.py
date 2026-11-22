@@ -339,12 +339,20 @@ def native_cases():
         yield image_id, "native", anchors + refinements
 
 
+def tier4_cases():
+    anchors = [(p, d) for d in BANDS for p in ("base", "tier1")]
+    distances = [d / 100 for d in (*range(55, 106, 5), *range(350, 421, 10))]
+    for image_id in ("1007", "1019"):
+        yield image_id, "1024", anchors + [("tier4", d) for d in distances]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("output", "cohort", "corpus", "encoder", "decoder", "baseline_decoder", "djxl", "jxl_rs", "scorer"):
         parser.add_argument(name, type=Path)
     parser.add_argument("--stage", choices=("match", "refine", "native", "ladder",
-                                            "ladder-gaboff", "ladder-text", "verify", "confirm"),
+                                            "ladder-gaboff", "ladder-text", "ladder-tier4",
+                                            "tier4-match", "verify", "confirm"),
                         default="match")
     parser.add_argument("--measured", type=Path)
     parser.add_argument("--blocks", type=int, default=3)
@@ -354,20 +362,23 @@ def main():
     if args.blocks < 3:
         parser.error("--blocks requires at least three interleaved blocks")
     study = Study(args)
-    if args.stage in ("match", "refine", "native"):
+    if args.stage in ("match", "refine", "native", "tier4-match"):
         if args.stage == "match":
             study.measure_quality(match_cases())
             selected = study.prepare_timing(BANDS, FAST_POLICIES)
         elif args.stage == "refine":
             study.measure_quality(refine_cases())
             selected = study.prepare_timing((1,), FAST_POLICIES + GABORISH_POLICIES)
+        elif args.stage == "tier4-match":
+            study.measure_quality(tier4_cases())
+            selected = study.prepare_timing(BANDS, ("tier4",))
         else:
             study.measure_quality(native_cases())
             selected = study.prepare_timing(BANDS, FAST_POLICIES + GABORISH_POLICIES)
         (study.out / "finalists.json").write_text(json.dumps(
             {f"{i}-{s}-{d}": rows for (i, s, d), rows in selected.items()}, indent=2) + "\n")
         study.measure_time(selected)
-    elif args.stage in ("ladder", "ladder-gaboff", "ladder-text"):
+    elif args.stage in ("ladder", "ladder-gaboff", "ladder-text", "ladder-tier4"):
         policies = ("base", "tier1", *FAST_POLICIES)
         sizes = [("1007", "1024"), ("1019", "1024"), ("8457", "256"), ("7026", "64")]
         if args.stage == "ladder-gaboff":
@@ -375,6 +386,9 @@ def main():
         elif args.stage == "ladder-text":
             policies += ("tier1-epf0-gaboff",)
             sizes = [("8457", "text256")]
+        elif args.stage == "ladder-tier4":
+            policies = ("tier4",)
+            sizes += [("8457", "text256")]
         ladder = [(policy, quality_to_distance(q)) for q in QUALITY_LADDER for policy in policies]
         study.measure_quality((i, s, ladder) for i, s in sizes)
     elif args.stage == "confirm":

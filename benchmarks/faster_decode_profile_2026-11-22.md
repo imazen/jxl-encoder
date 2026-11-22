@@ -14,6 +14,12 @@ direct paired harness. Start with the
 | Throughput lossless, fixed Gradient and prefix with size-selected distance-1 RLE | ≥1.25× / 1.10× vs `--fast-decode -g 0` by class at ≥1 MP, and ≥120 / 550 MP/s | Exact pixels. Bytes at or below comparator in every cell and ≤50% on the repeat-heavy screen median |
 | Lossy with patches and independent EPF | ≥1.20× / 1.15× on ≥1 MP photos near d1 and d4 separately, at matched quality | ≤3% median / 10% p90 byte growth. Per SDR image, SSIMULACRA2 drop ≤0.25 and Butteraugli increase ≤max(0.01, 2%). Count fallbacks and require ≥75% fast choices |
 
+Keep lossy options that shift quality in the sweep. Hold the reference
+band fixed and adjust candidate distance to match rendered quality.
+Record bytes and decode time at the measured candidate distance.
+Keep same-distance measurements to show the size of the quality shift.
+Decoder-only changes still require exact output on each frozen stream.
+
 Ablate fused prefix, two-symbol reads and group interleaving. Test
 singleton histograms, local histograms and palettes for lossless. Measure
 lazy VarDCT tables (≥20% lower cold latency at ≤256 px), LF/DC and HF metadata
