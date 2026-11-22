@@ -443,3 +443,35 @@ The complete holdout took 170 s at 2.62 GiB peak RSS.
 [Paired timing and p95](faster_decode_imazen26_saturated_holdout_timing_2026-11-22.tsv).
 The frozen plan, raw timings and commands are in
 `imazen26-lossy/photo-filter-saturated-holdout` on i270.
+
+### Transform and DC options on saturated fruit at d1
+
+This follow-up uses the known 1619 source. It retains the earlier
+frozen fallback verdict. The 14-encode grid also tests a 16-pixel
+transform limit and tier 1 DC, with EPF and Gaborish controlled
+independently. Each configuration contributes its smallest distinct
+file within the 10% ceiling that matches both rendered-quality guards.
+
+| Candidate | Distance | Bytes vs d1 | Throughput, 1 / 4 / 8 workers |
+|---|---:|---:|---:|
+| Tier 0, 16 px cap, EPF off | 0.99 | +4.44% | 1.067× / 1.084× / 1.108× |
+| Tier 0, 16 px cap, both filters off | 0.96 | +9.97% | 1.184× / 1.645× / 1.520× |
+| Tier 1, both filters off | 0.955 | +9.08% | 1.381× / 1.921× / 1.869× |
+
+For the tier-1 choice, SSIMULACRA2 improves by 0.852 in jxl-rs and
+0.962 in Zen. Butteraugli decreases by 0.010 and 0.022 respectively.
+The encode retains effort 7 and patch eligibility. Combining this
+choice with the previous four measured d1 choices gives median
+throughput 1.226× / 1.518× at one and eight workers, with +2.73% median
+and +9.08% p90 bytes. This is exploratory per-image evidence.
+
+All four distinct finalists fully render in both the pinned jxl-rs
+and djxl v0.12. All 12 exact same-stream RGB8 readbacks match across
+1/4/8 workers and both timed decoder revisions. The A/A median ratios
+range from 1.000× to 1.019×. The one-worker A/A p95 is 0.850×, with
+a 187.5 ms worst reference sample and a 159.4 ms worst A/A sample
+over 15 observations. Both median speed and tails are in the timing
+table. The complete run uses 2.62 GiB peak RSS over 161 seconds.
+[Quality and hashes](faster_decode_imazen26_transform_dc_quality_2026-11-22.tsv).
+[Paired timing and p95](faster_decode_imazen26_transform_dc_timing_2026-11-22.tsv).
+The raw run is in `imazen26-lossy/d1-transform-dc-bracket` on i270.

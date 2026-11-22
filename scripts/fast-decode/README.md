@@ -83,3 +83,7 @@ The `photo-filter-saturated-holdout` stage applies a frozen filter order to
 photo 1619. Among candidates within the 10% file-size ceiling that pass both
 quality guards, prefer fewer active filters, then smaller files. It retains
 the tier-0 reference as the fallback for each band independently.
+
+The `photo-transform-dc-bracket` stage tests transform limits and DC
+coding on the known saturated-photo holdout near d1. A distinct minimum-rate
+eligible stream per configuration proceeds to timing and exact readback.

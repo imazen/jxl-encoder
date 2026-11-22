@@ -35,6 +35,8 @@ GABORISH_POLICIES = ("tier1-gaboff", "tier1-epf0-gaboff", "tier1-epf1-gaboff")
 PHOTO_FILTER_POLICIES = {
     "tier0-epf0-gaboff": ("--epf", "0", "--no-gaborish"),
     "tier1-epf0-adaptive": ("--faster-decoding", "1", "--epf", "0", "--adaptive-gaborish"),
+    "tier0-cap16-epf0": ("--max-strategy-size", "16", "--epf", "0"),
+    "tier0-cap16-epf0-gaboff": ("--max-strategy-size", "16", "--epf", "0", "--no-gaborish"),
 }
 QUALITY_LADDER = tuple(range(5, 100, 5)) + (99,)
 MODULAR_128 = ("--faster-decoding", "1", "-g", "0")
@@ -458,6 +460,15 @@ def native_tier4_cases(refine=False):
 
 
 def photo_filter_cases(stage):
+    if stage == "photo-transform-dc-bracket":
+        return [("1619", "native", [
+            ("base", 1),
+            *(("tier0-epf0-gaboff", d) for d in (0.94, 0.945)),
+            *(("tier0-cap16-epf0-gaboff", d) for d in (0.96, 0.98, 1)),
+            *(("tier0-cap16-epf0", d) for d in (0.99, 1.01)),
+            *(("tier1-epf0", d) for d in (0.98, 1, 1.02)),
+            *(("tier1-epf0-gaboff", d) for d in (0.955, 0.98, 1)),
+        ])]
     if stage == "photo-filter-saturated-holdout":
         return [("1619", "native", [
             ("base", 1),
@@ -514,6 +525,15 @@ def photo_filter_matches(study, cases, bands, ranking, compare_filter_free=False
             else:
                 choice = min(feasible, key=lambda row: (row["bytes"], row["file"]), default=base)
             finalists = [("base", base), ("selected", choice)]
+            if ranking == "compare-configurations":
+                finalists = [("base", base)]
+                seen = {base["stream_sha256"]}
+                for policy in sorted({row["policy"] for row in feasible}):
+                    best = min((row for row in feasible if row["policy"] == policy),
+                               key=lambda row: (row["bytes"], row["file"]))
+                    if best["stream_sha256"] not in seen:
+                        finalists.append((policy, best))
+                        seen.add(best["stream_sha256"])
             if compare_filter_free:
                 filter_free = (row for row in feasible if row["policy"] == "tier0-epf0-gaboff")
                 alternate = min(filter_free, key=lambda row: row["bytes"], default=choice)
@@ -532,7 +552,7 @@ def main():
                                             "tier4-match", "tier4-native", "tier4-native-refine",
                                             "d1-independent-filter", "photo-filter-holdout",
                                             "photo-filter-backlit-bracket", "photo-filter-saturated-holdout",
-                                            "palette-grid", "verify", "confirm"),
+                                            "photo-transform-dc-bracket", "palette-grid", "verify", "confirm"),
                         default="match")
     parser.add_argument("--measured", type=Path)
     parser.add_argument("--blocks", type=int, default=3)
@@ -546,6 +566,7 @@ def main():
         "photo-filter-holdout": (BANDS, "rate-then-filters"),
         "photo-filter-backlit-bracket": ((1,), "rate-then-filters"),
         "photo-filter-saturated-holdout": (BANDS, "filters"),
+        "photo-transform-dc-bracket": ((1,), "compare-configurations"),
     }
     photo_filter_stage = args.stage in photo_filter_stages
     if photo_filter_stage:
