@@ -319,7 +319,11 @@ The shared-prefix experiment uses one frame-wide table per Gradient channel
 with independently reset group streams. It compares plain prefix coding and
 distance-1 RLE on an experiment branch through
 `JXL_EXPERIMENT_SHARED_PREFIX`. The fixed-prefix experiment otherwise
-compares actual section sizes using its local prefix tables. libjxl v0.12
+compares actual section sizes using its local prefix tables. The experimental
+`auto` mode tries frame-wide plain, then frame-wide RLE, and uses the first
+whose actual sections and TOC fit the single-table Gradient baseline and
+cost at most 5% more than the local candidate. Otherwise it uses the local
+candidate. libjxl v0.12
 does not expose this experiment.
 
 

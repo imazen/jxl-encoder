@@ -1200,7 +1200,7 @@ impl FrameEncoder {
 
         #[cfg(feature = "__env_var_diagnostics")]
         let _fr_t0 = crate::clock::Instant::now();
-        let shared_prefix_groups = if self.options.modular_knobs.fixed_prefix_rle
+        let shared_prefix_mode = if self.options.modular_knobs.fixed_prefix_rle
             && self.options.enable_lz77
             && !self.options.use_ans
             && self.options.dc_quant_custom.is_none()
@@ -1208,20 +1208,24 @@ impl FrameEncoder {
             && lf_images.is_empty()
             && (2..=4).contains(&group_images[0].channels.len())
         {
-            match std::env::var("JXL_EXPERIMENT_SHARED_PREFIX").as_deref() {
-                Ok(mode @ ("plain" | "rle")) => Some(super::prefix_rle::write_shared_prefix(
-                    &group_images,
-                    &global_transforms,
-                    &mut lf_global_writer,
-                    mode == "rle",
-                    self.budget.as_ref(),
-                    stop,
-                )?),
-                _ => None,
-            }
+            std::env::var("JXL_EXPERIMENT_SHARED_PREFIX").ok()
         } else {
             None
         };
+        let shared_prefix_groups = match shared_prefix_mode.as_deref() {
+            Some(mode @ ("plain" | "rle")) => Some(super::prefix_rle::write_shared_prefix(
+                &group_images,
+                &global_transforms,
+                &mut lf_global_writer,
+                mode == "rle",
+                self.budget.as_ref(),
+                stop,
+            )?),
+            _ => None,
+        };
+        let shared_prefix_auto = shared_prefix_mode.as_deref() == Some("auto");
+        let shared_prefix_lf_base = shared_prefix_auto.then(|| lf_global_writer.clone());
+        let mut stock_group_sizes = Vec::new();
         let global_state = if shared_prefix_groups.is_some() {
             None
         } else if local_trees_mode {
@@ -1401,7 +1405,7 @@ impl FrameEncoder {
         let budget = self.budget.as_ref();
         #[cfg(feature = "__env_var_diagnostics")]
         let _fr_t_groups = crate::clock::Instant::now();
-        let (pass_group_data, all_picked_local): (Vec<Vec<u8>>, bool) = if let Some(groups) =
+        let (mut pass_group_data, all_picked_local): (Vec<Vec<u8>>, bool) = if let Some(groups) =
             shared_prefix_groups
         {
             (groups, false)
@@ -1563,6 +1567,7 @@ impl FrameEncoder {
                         stop,
                     )?;
 
+                    let stock_size = group_writer.bits_written().div_ceil(8);
                     if self.options.modular_knobs.fixed_prefix_rle
                         && self.options.enable_lz77
                         && matches!(
@@ -1638,14 +1643,58 @@ impl FrameEncoder {
                             group_writer.bits_written().div_ceil(8)
                         );
                     }
-                    Ok((group_writer.finish(), chose_local))
+                    Ok((group_writer.finish(), chose_local, stock_size))
                 })?;
-            let all_picked_local = !results.is_empty() && results.iter().all(|(_, l)| *l);
+            let all_picked_local =
+                !results.is_empty() && results.iter().all(|(_, local, _)| *local);
+            if shared_prefix_auto {
+                stock_group_sizes = results.iter().map(|(_, _, size)| *size).collect();
+            }
             (
-                results.into_iter().map(|(b, _)| b).collect::<Vec<_>>(),
+                results.into_iter().map(|(data, _, _)| data).collect(),
                 all_picked_local,
             )
         };
+
+        if let Some(lf_base) = shared_prefix_lf_base {
+            let mut sizes = Vec::with_capacity(2 + num_lf_groups + num_groups);
+            sizes.push(lf_global_data.len());
+            sizes.extend(lf_group_data.iter().map(Vec::len));
+            sizes.push(hf_global_data.len());
+            let common = sizes.len();
+            sizes.extend(stock_group_sizes);
+            let stock_size = Self::coded_sections_size(&sizes)?;
+            sizes.truncate(common);
+            sizes.extend(pass_group_data.iter().map(Vec::len));
+            let local_size = Self::coded_sections_size(&sizes)?;
+            let transforms = super::section::GlobalTransforms {
+                full_palette: full_palette_info,
+                compact_info: compact_info.clone(),
+                rct_type,
+            };
+            // Allow a bounded rate trade for sharing decoder tables.
+            // Compare complete padded sections and TOC costs.
+            let ceiling = stock_size.min(local_size + local_size / 20);
+            for use_rle in [false, true] {
+                let mut lf = lf_base.clone();
+                let groups = super::prefix_rle::write_shared_prefix(
+                    &group_images,
+                    &transforms,
+                    &mut lf,
+                    use_rle,
+                    budget,
+                    stop,
+                )?;
+                sizes[0] = lf.bits_written().div_ceil(8);
+                sizes.truncate(common);
+                sizes.extend(groups.iter().map(Vec::len));
+                if Self::coded_sections_size(&sizes)? <= ceiling {
+                    lf_global_data = lf.finish();
+                    pass_group_data = groups;
+                    break;
+                }
+            }
+        }
 
         // Keep-best completion: when EVERY group chose its local section,
         // the global tree serialized in LfGlobal is dead weight — swap
