@@ -44,6 +44,24 @@ document scans, and 16-bit HDR. The manifest pins PNG-v3 render bytes from
 `0264d4d8a7e283c046ba2d1febb6e1fc547d511e` and split membership from
 `21009633b62610415b7dcaccdec7806726d9e10c`. Class results describe this cohort.
 
+## Related zqi experiments
+
+The pinned zqi comparison builds a rate and decode-time curve for each
+image, then reports the images whose curves cover a given metric target.
+It compares in-memory decode into fresh RGB8 buffers. For this JPEG XL
+cohort, measure the selected distance directly and check both
+SSIMULACRA2 and Butteraugli on the rendered output.
+[Zqi codec comparison](https://github.com/imazen/zqi/blob/c40aebae9f0b31e538e821e735a4ec1c663d78be/benchmarks/codec_cmp_zen4_2026-10-02.md#lossy-six-2048x2048-photos).
+
+The zqi prefix microbenchmark combines symbol and code length in one
+lookup, writes symbols directly to output, and uses a sentinel to track
+refills. Six streams performed best among the reported sentinel
+configurations on Zen 4. This gives JPEG XL decoder experiments three
+measurable variables: fused lookups, refill frequency, and the number
+of independent streams per worker. The i270 same-stream runs decide
+which changes help JPEG XL.
+[Zqi prefix microbenchmark](https://github.com/imazen/zqi/blob/c40aebae9f0b31e538e821e735a4ec1c663d78be/benchmarks/codec_cmp_zen4_2026-10-02.md).
+
 ## Initial pilot
 
 The study tested existing encoder options at effort 7 with eight encode threads.
