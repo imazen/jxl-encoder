@@ -1,0 +1,62 @@
+# Lossless fast-decode profiles on the imazen-26 feature cohort
+
+The [pinned cohort](faster_decode_imazen26.tsv) supplied six SDR
+originals and 15 distinct center crops. Effort-7 tier 0, tier 1 with
+128 px groups, and `--fast-decode -g 0` produced 63 streams. Exact
+RGB8 source samples were verified through zenjxl-decoder, jxl-rs
+`f370be423933628eb7f783f1b61d4c765eca5f79` and djxl v0.12.0.
+The three 16-bit encodes of HDR original 1064 also match the source
+in all three decoders using a PNG16 readback. The initial PPM check
+requested u16 from an output format that supports only u8. Tier 1
+uses 37,914,116 bytes versus 34,707,356 for tier 0. The HDR control
+has no timings in this table.
+
+## Balanced lossless
+
+| Original | Bytes vs tier 0 | 1-worker decode | 8-worker decode |
+|---|---:|---:|---:|
+| 1007 textured photo | +4.86% | 2.24× | 1.95× |
+| 1019 smooth photo | +4.91% | 2.45× | 2.10× |
+| 8457 terminal | +32.98% | 2.19× | 2.16× |
+| 7026 aliased plot | +35.47% | 2.05× | 2.61× |
+| 8106 mixed web page | +16.84% | 1.94× | 2.07× |
+| 6824 scanned text | +10.97% | 2.27× | 2.08× |
+
+The two held-out photos meet all balanced limits in this run. The held-out
+terminal meets the speed target and exceeds the byte budget. At the native
+size, the aliased plot also exceeds the byte budget and the mixed web
+page misses the one-worker target. A single unconditional tier-1 policy
+therefore fails the compact cohort.
+
+## Throughput lossless
+
+The dedicated two-symbol decoder compared against its parent
+`e58a4838725704e37d90f2acd1d11dcccd7ab98a` on identical `--fast-decode -g 0`
+files. The native photo median reaches 112.2 MP/s at one worker and
+461.1 MP/s at eight. The 1024 px photo crops reach 113.8 and 583.6 MP/s.
+Native graphics and document cells span 126.3–135.0 MP/s at one worker
+and 539.3–709.7 MP/s at eight. The gain depends on the particular stream
+and size. The native photo medians miss both absolute targets.
+
+On terminal 8457, the expanded fixed-Gradient prefix options with
+`--lz77 --lz77-method rle` produced the exact same stream hash as
+`--fast-decode -g 0`. The shared-prefix Modular group path reads neither
+the enable bit nor the method. This directly motivates comparing real
+local prefix and distance-1 RLE streams.
+
+## Method and evidence
+
+Encoder `f574a3172b5009c9914e600903fb3602d74b60c6` was built with
+Rust 1.100.0. The balanced comparison uses production decoder
+`31b6fa590b4d367cdd7715a71eba81cdfd57a1cf`. The two-symbol binary is
+the [dedicated prefix prototype](https://github.com/imazen/zenjxl-decoder/blob/0eba97ebea20c865ac154b7b397caf8a2198826c/benchmarks/fused_prefix_2026-11-22.md).
+Every cell uses 1, 4 and 8 pinned P cores on i270, allocated in-memory u8
+output, one warmup, and three interleaved blocks of five measured decodes
+per arm. Ratios use the median of block-paired ratios. A/A repeats the
+tier-0 stream on the production decoder. Block means do not measure
+per-decode p95. Timing used 0.16 GiB peak RSS over 309 seconds.
+
+[Per-size results](faster_decode_imazen26_lossless_2026-11-22.tsv).
+The full logs, pinned binary and input hashes, streams, and reproduction
+scripts are under `/mnt/v/output/jxl-encoder/fast-decode-2026-11-22/imazen26-lossless`
+on the measured machine.
