@@ -244,3 +244,41 @@ the timing table. The run used 0.21 GiB peak RSS over 118 seconds.
 and [paired rate and timing](faster_decode_imazen26_lossy_rate_first_timing_2026-11-22.tsv).
 Raw timing and command records are in `imazen26-lossy/gated-filter-replay`
 on i270.
+
+### Independent night photo
+
+The frozen rate-first choice was tested on imazen-26 test image 1069, an
+11 MP low-light photograph with sharp illuminated detail. The
+`variant/png-v3` revision is `0264d4d8a7e283c046ba2d1febb6e1fc547d511e`,
+and the RGB8 PNG matches its Git LFS SHA-256
+`6846a47ef54b97348bf89b11b506fbcad9cd418f5ec71d74e74248d9bd0dab10`.
+The grid contains 24 native and 63 center-crop renditions, all scored
+in both jxl-rs and zenjxl-decoder. The matching tiers keep patch
+selection available. The four selections and their tier-0 baselines
+also decode in djxl v0.12.
+
+| Size and band | Selected setting | Byte change | Paired throughput, 1 / 8 workers |
+|---|---|---:|---:|
+| Native, d1 | Tier 1, EPF off, d1 | +3.69% | 1.268× / 1.239× |
+| Native, d4 | Tier 1, EPF 2, d4.08 | +6.62% | 1.531× / 1.411× |
+| 1024 px, d1 | Tier 1, EPF off, d1.02 | −0.09% | 1.305× / 1.271× |
+| 1024 px, d4 | Tier 1, EPF 2, d4.1 | +1.67% | 1.543× / 1.015× |
+
+All four selections meet both rendered-quality guards. The worst
+SSIMULACRA2 delta on the Zen output is −0.12915, and all four
+Butteraugli scores improve on both decoding endpoints. With this
+independent source included, native median byte growth is +3.69%
+near d1 and +3.39% near d4, above the +3% goal in both bands.
+Native median throughput reaches 1.268× / 1.239× near d1 and
+1.531× / 1.411× near d4. At 1024 px the d4 eight-worker median is
+1.14996× against the 1.15× goal.
+
+The baseline and selected files use the same row-span decoder
+`c266f4c7` for timing, with three interleaved blocks of five
+warm allocating RGB8 decodes at 1/4/8 workers and an A/A arm.
+The serialized Modular tests, lossless group experiment and lossy
+holdout took 425 seconds at 2.51 GiB peak RSS under `run-heavy`.
+[Selections, quality deltas and stream hashes](faster_decode_imazen26_lossy_night_holdout_2026-11-22.tsv).
+[Paired timing and p95](faster_decode_imazen26_lossy_night_timing_2026-11-22.tsv).
+The quality grid, raw timing and commands are in
+`imazen26-lossy/night-photo-holdout` on i270.

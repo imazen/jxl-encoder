@@ -319,7 +319,7 @@ the source in zenjxl-decoder at 1/4/8 workers, jxl-rs and djxl v0.12.
 
 The 256 px width meets the 120 MP/s one-worker target and both relative
 throughput targets. It is 38.58 MP/s below the 550 MP/s eight-worker
-target. Its eight-worker median improves over 512 px on both originals.
+target. At eight workers it improves on both originals compared with 512 px.
 
 The experiment encoder is [15c4b125](https://github.com/imazen/jxl-encoder/commit/15c4b1259672ca1eb3718701a9432101dbd2a658).
 The timing decoder uses frame-owned prefix lookups from
