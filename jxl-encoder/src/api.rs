@@ -1558,6 +1558,11 @@ impl LosslessConfig {
     /// the knobs into [`crate::modular::frame::FrameEncoderOptions`].
     pub(crate) fn modular_knobs(&self) -> crate::modular::palette::ModularKnobs {
         crate::modular::palette::ModularKnobs {
+            fixed_prefix_rle: self.use_ans == Some(false)
+                && self.tree_learning == Some(false)
+                && self.modular_predictor == Some(5)
+                && self.lz77 == Some(true)
+                && self.lz77_method == Some(Lz77Method::Rle),
             modular_predictor: self.modular_predictor,
             palette_colors: self.modular_palette_colors,
             channel_colors_global_percent: self.modular_channel_colors_global_percent,

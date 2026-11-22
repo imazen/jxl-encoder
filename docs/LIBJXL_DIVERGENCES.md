@@ -489,6 +489,17 @@ VarDCT stream learner. See [lossless tracking](LIBJXL_PARITY_TRACKING.md).
 
 ## E. Per-API behavior divergences (opt-in)
 
+### Fixed-Gradient prefix RLE and channel histograms (2026-11-22)
+
+The explicit fixed-Gradient prefix and RLE overrides try shared and local
+prefix codes, with or without distance-1 runs. Local sections with two
+through four channels also test separate histograms selected by a
+channel-only Gradient tree. The selector compares emitted padded section
+sizes and keeps its incumbent on a tie. The distance code stays separate
+and singleton in both RLE trials. The default encoding and the plain
+`--fast-decode` control do not enter this experimental route. libjxl v0.12
+chooses RLE through its LZ77 token-cost test.
+
 ### Animation HDR loss dispatch and trace forwarding (2026-11-04)
 
 Lossy animations resolve the HDR loss from request color encoding and use the

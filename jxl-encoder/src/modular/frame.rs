@@ -1535,6 +1535,24 @@ impl FrameEncoder {
                         stop,
                     )?;
 
+                    if self.options.modular_knobs.fixed_prefix_rle
+                        && self.options.enable_lz77
+                        && matches!(
+                            global_state,
+                            super::section::GlobalModularState::Huffman {
+                                predictor_id: 5,
+                                ..
+                            }
+                        )
+                    {
+                        super::prefix_rle::try_local_prefix(
+                            group_image,
+                            &mut group_writer,
+                            budget,
+                            stop,
+                        )?;
+                    }
+
                     // Hybrid: also write this group as a self-contained local-tree
                     // stream (tree learned during the gather wave) and keep
                     // whichever section is smaller. Ties keep global (stability;

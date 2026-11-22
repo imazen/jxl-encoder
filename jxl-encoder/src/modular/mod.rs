@@ -32,6 +32,7 @@ pub(crate) mod ma_libjxl;
 pub(crate) mod palette;
 pub(crate) mod predictor;
 pub(crate) mod predictor_prune;
+mod prefix_rle;
 pub(crate) mod quantize;
 pub(crate) mod rct;
 pub(crate) mod section;

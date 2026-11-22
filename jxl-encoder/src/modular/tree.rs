@@ -155,22 +155,24 @@ pub fn gradient_tree() -> Tree {
 }
 
 /// Creates a tree that selects predictor based on channel.
-#[allow(dead_code)]
 pub fn per_channel_tree(num_channels: usize) -> Tree {
     let mut tree = Vec::with_capacity(num_channels * 2);
+    let first_leaf = num_channels.saturating_sub(1);
 
     // Build a simple chain: if channel == 0, use ctx 0; if channel == 1, use ctx 1; etc.
-    for c in 0..num_channels {
-        if c < num_channels - 1 {
-            // Internal node: split on channel
-            tree.push(PropertyDecisionNode {
-                property: Property::Channel as i32,
-                splitval: c as i32,
-                lchild: tree.len() + num_channels - c, // Leaf for this channel
-                rchild: tree.len() + 1,                // Next decision
-                ..Default::default()
-            });
-        }
+    for c in 0..first_leaf {
+        let higher = c + 1;
+        tree.push(PropertyDecisionNode {
+            property: Property::Channel as i32,
+            splitval: c as i32,
+            lchild: first_leaf + c,
+            rchild: if higher < first_leaf {
+                higher
+            } else {
+                2 * first_leaf
+            },
+            ..Default::default()
+        });
     }
 
     // Leaf nodes
@@ -691,6 +693,25 @@ mod tests {
         let tree = weighted_tree();
         assert_eq!(tree.len(), 1);
         assert_eq!(tree[0].predictor, Predictor::Weighted);
+    }
+
+    #[test]
+    fn channel_splits_use_distinct_gradient_leaves() {
+        for channels in 1..=4 {
+            let mut tree = per_channel_tree(channels);
+            assert_eq!(assign_sequential_contexts(&mut tree) as usize, channels);
+            let mut ids = Vec::new();
+            for channel in 0..channels {
+                let mut properties = PixelProperties::default();
+                properties.values[Property::Channel as usize] = channel as i32;
+                let leaf = traverse_tree(&tree, &properties);
+                assert_eq!(leaf.predictor, Predictor::Gradient);
+                assert_eq!(leaf.context_id, tree[channels - 1 + channel].context_id);
+                ids.push(leaf.context_id);
+            }
+            ids.sort_unstable();
+            assert_eq!(ids, (0..channels as u32).collect::<Vec<_>>());
+        }
     }
 
     #[test]
