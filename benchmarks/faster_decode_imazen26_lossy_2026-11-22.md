@@ -666,3 +666,39 @@ encoder comparison take 242 seconds at 1.27 GiB peak RSS. Both use
 `run-heavy` on i270. The command logs, binary fingerprints, input
 and stream manifests, helper scripts and raw observations are in
 `/mnt/v/output/jxl-encoder/fast-decode-2026-11-22/imazen26-lossy/native-photo-holdout-1009-1427-1447`.
+
+The individual A/A tails above 1.10× are the shared warm-allocating
+1427 d1 one-worker control and four caller-owned controls. All
+cohort A/A tails stay inside the 10% limit.
+[Individual A/A tails](faster_decode_photo_tiers_holdout_control_tails_2026-11-22.tsv).
+
+### Filter and distance follow-up on two holdout photographs
+
+The follow-up uses the macro and glacier after the frozen profile
+comparison. Rates use the same tier-0 reference as above. Each
+configuration shown passes both quality guards on both renderers.
+
+| Photo | Encoding choice | Byte change | Warm throughput, 1 / 4 / 8 workers |
+|---|---|---:|---:|
+| 1427 near d1 | Tier 0, EPF off at d1 | −1 byte | 1.197× / 1.147× / 1.164× |
+| 1427 near d1 | Tier 1, EPF off at d1 | +1.08% | 1.254× / 1.217× / 1.270× |
+| 1447 near d4 | Tier 0, EPF off at d3.95 | −0.43% | 1.311× / 1.190× / 1.192× |
+| 1447 near d4 | Tier 1, EPF off at d3.98 | +0.94% | 1.378× / 1.300× / 1.282× |
+| 1447 near d4 | Tier 1, one EPF pass at d4 | +1.57% | 1.260× / 1.173× / 1.219× |
+| 1447 near d4 | Tier 1, two EPF passes at d3.98 | +2.27% | 1.163× / 1.139× / 1.176× |
+
+On 1427, the two d1 EPF-off files retain Gaborish and have identical
+quality scores on both renderers. The filter-free d0.972 file passes
+the quality guards at +10.11% bytes, above the throughput cap. On
+1447, both d4 EPF-off files qualify at slightly finer distances.
+The tier 1 file at d3.98 shifts SSIMULACRA2 by −0.191 in jxl-rs and
+−0.138 in Zen, and improves Butteraugli by 0.100 and 0.138.
+
+The bracket covers 24 scored streams. The timing replay takes 585
+observations and verifies all 27 same-file RGB8 comparisons across
+Zen decoder revisions and worker counts. All nine reference and
+selected streams render in djxl v0.12. The run takes 231 seconds at
+2.49 GiB peak RSS via `run-heavy` on i270. The raw inputs, streams and
+commands are in `filter-brackets` under the native holdout directory.
+[Two-renderer scores](faster_decode_photo_tiers_holdout_bracket_quality_2026-11-22.tsv)
+and [paired timing and p95](faster_decode_photo_tiers_holdout_bracket_timing_2026-11-22.tsv).

@@ -117,3 +117,12 @@
   complete. No encoder/model change or qualified RD gain.
 - [Intervention record](../benchmarks/zensim_native_interventions_2026-09-08.md)
   owns registration, counts, controls and the limits of normalized secants.
+
+## November 22: decode-oriented photo filters
+
+- **LIKELY:** A finer distance can make EPF-off coding viable near d4.
+  The glacier admits both a smaller tier-0 file and a faster tier-1 file.
+  The macro photograph instead benefits from simpler DC coding with Gaborish
+  retained near d1. Both findings come from the two-image diagnostic, with
+  quality and same-file parity independently checked.
+  [Measurements](../benchmarks/faster_decode_imazen26_lossy_2026-11-22.md#filter-and-distance-follow-up-on-two-holdout-photographs).

@@ -1,0 +1,7 @@
+endpoint	id	band	workers	profile	aa_p95_ratio
+warm_allocating	1427	1	1	balanced	1.164020
+warm_allocating	1427	1	1	throughput	1.164020
+warm_reused	1009	1	4	balanced	1.107004
+warm_reused	1009	4	1	throughput	1.105391
+warm_reused	1447	1	4	throughput	1.181543
+warm_reused	1447	4	4	balanced	1.125998
