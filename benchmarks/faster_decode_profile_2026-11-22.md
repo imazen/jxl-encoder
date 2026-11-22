@@ -62,6 +62,15 @@ of independent streams per worker. The i270 same-stream runs decide
 which changes help JPEG XL.
 [Zqi prefix microbenchmark](https://github.com/imazen/zqi/blob/c40aebae9f0b31e538e821e735a4ec1c663d78be/benchmarks/codec_cmp_zen4_2026-10-02.md).
 
+The current zqi default branch lends workers disjoint mutable row bands
+for full-width groups and uses scratch for column groups and partial
+boundaries. Its direct-band measurement counts instructions on identical
+pixels. Zen's VarDCT rendering already splits caller output into disjoint
+tile fragments. Use the zqi result to prioritize profiling the paths that
+still stage and copy output, then time those paths on i270.
+[Zqi row-band study](https://github.com/imazen/zqi/blob/031154cd457a7b3119bba40e4a6a35cca0e738b6/docs/DECODE_SPEED_HISTORY.md#direct-row-bands-and-browser-scheduling)
+and [Zen fragment renderer](https://github.com/imazen/zenjxl-decoder/blob/de5a5ef3fda613a6d858ef7e3a76c72057e07906/zenjxl-decoder/src/frame/render.rs#L1308).
+
 ## Initial pilot
 
 The study tested existing encoder options at effort 7 with eight encode threads.

@@ -201,6 +201,63 @@ scanned-text source uses 96.40% of its stock bytes and reaches
 The [whole-system measurements](https://github.com/imazen/zenjxl-decoder/blob/de5a5ef3fda613a6d858ef7e3a76c72057e07906/benchmarks/lossless_rle_throughput_2026-11-22.md)
 also include the 16-group scheduling repeat. With that variant the
 native photo medians reach 125.82 / 540.53 MP/s and 1.380× / 1.341× the
-stock throughput at one and eight workers. The native eight-worker
-absolute target remains open. Peak RSS in the direct system comparisons
+stock throughput at one and eight workers. That variant fell short of the native
+eight-worker absolute target. Peak RSS in the direct system comparisons
 was 0.11 GiB with standard batches and 0.12 GiB in the 16-group repeat.
+
+### Shared and local prefix selection
+
+The encoder experiment uses one table per Gradient channel and can share
+those tables across all groups. Groups reset their entropy and predictor
+state independently. Shared plain coding improved one-worker throughput
+over the local-table candidate by 13.4% on the textured native photo and
+15.2% on the scan. Both files grew by less than 5% versus local tables.
+Shared RLE performed better than local tables on the terminal and mixed
+page. Local tables kept an 8-worker advantage on the plot over shared RLE.
+
+The experimental selector tries shared plain, then shared RLE. A shared
+candidate must fit the stock single-table size and cost at most 5% more
+than the local candidate, including padded sections and TOC. It uses
+local tables when both shared candidates exceed the cap. This threshold
+came from the pilot. The throughput confirmation uses the same source
+images. The encoder reproduced all eight selected stream hashes.
+
+| Warm allocating RGB8 | Median 1 worker | Median 8 workers | Paired throughput at 1 / 8 workers |
+|---|---:|---:|---:|
+| Four photo renditions | 129.49 MP/s | 564.41 MP/s | 1.441× / 1.386× |
+| Two native photos | 132.83 MP/s | 564.41 MP/s | 1.464× / 1.443× |
+| Four graphics and scan inputs | 313.19 MP/s | 936.16 MP/s | 3.035× / 1.759× |
+
+The baseline is stock `--fast-decode -g 0` on the landed row-span decoder.
+The selected streams use the experimental fused-token decoder with a
+16-group batch. Every selected file shrank. The terminal used 17.32% of
+stock bytes, the mixed page 38.02%, and the scan 99.24%. All 24 direct
+stock/profile readbacks matched across decoder binaries and worker counts.
+All eight integrated streams also passed six exact source checks each.
+The forced shared modes each passed ten checks over RGBA8 and GrayAlpha8
+odd crops. On native RGB16 HDR 1064 the integrated candidate occupies
+89.82% of stock bytes. Both RGB16 files match the input sample-for-sample
+in all three decoders. The RGB16 run did not time the profile.
+
+Warm results use five interleaved blocks of five samples. The largest A/A
+p95 ratio is 1.073×. Cold results use three blocks of five fresh processes.
+The four photo medians reach 122.91 / 413.43 MP/s at one and eight workers.
+Two cold eight-worker A/A ratios, 1.115× and 1.421×, repeat at 0.971×
+and 1.054× with nine blocks. Cold and warm both allocate output.
+The warm, cold and cold-tail repeat peak RSS values from `run-heavy`
+are 0.12, 0.10 and 0.03 GiB. The integrated build, exact replay
+and RGB16 run used 1.11, 0.58 and 0.61 GiB.
+
+[Encoder selector](https://github.com/imazen/jxl-encoder/commit/15c4b1259672ca1eb3718701a9432101dbd2a658),
+[decoder experiment](https://github.com/imazen/zenjxl-decoder/commit/01f35c77411422dbc8da0da2f6343f40dd07a15d),
+and [per-cell timings and rate](faster_decode_imazen26_shared_prefix_2026-11-22.tsv).
+The archive at `imazen26-lossless/shared-channel-prefix` contains the
+commands, raw samples, source inputs, binary receipts and pixel checks.
+
+On the landed decoder alone, the same selected streams reach
+106.47 / 488.12 MP/s across the four photo renditions and
+1.163× / 1.105× stock throughput. The scan reaches 1.012× / 0.932×.
+The current profile therefore depends on the decoder companion
+for the warm photo targets. All 24 stock/profile readbacks match.
+Three interleaved blocks of five samples used 0.11 GiB peak RSS,
+and the largest A/A p95 ratio was 1.086×.
