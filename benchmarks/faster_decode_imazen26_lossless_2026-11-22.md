@@ -148,3 +148,37 @@ retain the A/A control, stream hashes and all worker counts. The
 prefix-only build and validation used 1.16 GiB peak RSS. The direct
 comparison used 0.13 GiB peak RSS and 33 seconds. Raw blocks and
 reproduction commands are in `imazen26-lossless/rle-direct-ablation`.
+
+### Separate channel histograms
+
+The [encoder experiment](https://github.com/imazen/jxl-encoder/commit/7fb131664f54c8f1f15c759c5e1829310e4b0f5c)
+adds per-channel prefix histograms to the existing section-size comparison.
+The Modular tree splits only on channel number and selects Gradient in
+every leaf. Both context layouts can use distance-1 runs. The distance
+histogram retains its singleton symbol and each run stays within a channel.
+
+| Native input | Byte change vs one local histogram | Current decoder at 1 / 8 workers | Fused prototype at 1 / 8 workers |
+|---|---:|---:|---:|
+| Textured photo 1007 | −8.56% | 0.998× / 0.963× | 0.955× / 0.963× |
+| Smooth photo 1019 | −3.43% | 0.985× / 0.923× | 0.982× / 0.970× |
+| Terminal 8457 | −3.24% | 0.993× / 1.024× | 0.990× / 1.091× |
+| Plot 7026 | −5.16% | 0.982× / 1.004× | 0.989× / 1.157× |
+| Mixed page 8106 | −1.83% | 0.991× / 0.970× | 0.990× / 0.961× |
+| Scanned text 6824 | −1.88% | 0.996× / 1.039× | 0.921× / 0.942× |
+
+The textured photo at 1024 px saves 9.97% bytes. On the native photos,
+the older fused prototype reaches 84.84/111.71 MP/s at one worker and
+379.35/482.07 MP/s at eight in the throughput-profile comparison
+against shared prefix. Both native photo medians remain below the
+throughput thresholds. The direct same-decoder comparisons above show
+that the byte reduction comes with a modest photo decode cost.
+
+All eight files pass six exact source readbacks. Odd 259×257 RGBA8
+and GrayAlpha8 crops also reproduce source samples with both
+independent decoders and Zen at one, four and eight workers. The
+existing `--fast-decode -g 0` terminal stream is byte-identical.
+The build and first comparison used 1.12 GiB peak RSS over 80 seconds.
+The direct same-decoder comparisons used 0.12 GiB over 68 seconds.
+[Direct paired results](faster_decode_imazen26_channel_prefix_2026-11-22.tsv).
+Full commands, stream hashes and alpha controls are in
+`imazen26-lossless/per-channel-prefix`.
