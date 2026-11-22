@@ -1799,6 +1799,25 @@ separate queue items. Broad/coverage/remote verdicts must be read independently.
 
 ## Known Bugs (ACTIVE)
 
+### 2026-11-22: Zensim fused attribution clears the reference color revision
+
+The aarch64 attribution smoke test fails with
+`reference cache color conversion revision differs from scorer` on both
+`53639ee4` and `240ad4f0`. Both jobs reach the same 372-class Profile B
+comparison. The guarded photo selector change touches Python and its evidence
+files. [Earlier CI](https://github.com/imazen/jxl-encoder/actions/runs/45021818787)
+and [current CI](https://github.com/imazen/jxl-encoder/actions/runs/45023897947).
+
+In pinned zensimx `f3bc01a9`, the planar reference precompute carries the
+formula revision derived by `config_from_params`. The ordinary fused
+attribution caller passes `None` to `fused_basic_into_at_revision`, which
+assigns that value over the derived revision before `validate_cached_revision`.
+The assignment also appears on inspected upstream main `1d29d123`. The
+repair belongs in the fused attribution walk and must preserve the
+profile-derived revision when there is no explicit override. Verify the
+existing attribution and candidate-binding smoke tests with the repaired
+pin. The color compatibility check catches this mismatch.
+
 ### 2026-11-22 — pinned Zensim fused attribution cache revision
 
 The ARM and x64 CI jobs reach `zensim_attr_smoke::model_map_attr_steers_with_fused_map`
