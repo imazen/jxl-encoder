@@ -1,5 +1,45 @@
 # Faster JPEG XL decoding with the current encoder and decoder
 
+## Qualification goal
+
+Ship opt-in faster-decode Modular lossless and VarDCT lossy profiles plus
+bit-exact decoder gains. Preserve default bytes, effort control and
+conformance. Measure exclusively on i270 at 1, 4 and 8 workers with the
+direct paired harness. Start with the
+[seven feature-specific imazen-26 inputs](faster_decode_imazen26.tsv).
+
+| Profile | Median throughput at 1 / 8 workers | Rate and quality |
+|---|---|---|
+| Balanced lossless, tier 1 with 128 px groups and patches | ≥2.00× / 1.75× vs effort-7 tier 0, photos and graphics separately at ≥1 MP | Exact pixels. Photo growth ≤6% median / 12% p90, graphics ≤16% / 25% |
+| Throughput lossless, fixed Gradient and prefix with size-selected distance-1 RLE | ≥1.25× / 1.10× vs `--fast-decode -g 0` by class at ≥1 MP, and ≥120 / 550 MP/s | Exact pixels. Bytes at or below comparator in every cell and ≤50% on the repeat-heavy screen median |
+| Lossy with patches and independent EPF | ≥1.20× / 1.15× on ≥1 MP photos near d1 and d4 separately, at matched quality | ≤3% median / 10% p90 byte growth. Per SDR image, SSIMULACRA2 drop ≤0.25 and Butteraugli increase ≤max(0.01, 2%). Count fallbacks and require ≥75% fast choices |
+
+Ablate fused prefix, two-symbol reads and group interleaving. Test
+singleton histograms, local histograms and palettes for lossless. Measure
+lazy VarDCT tables (≥20% lower cold latency at ≤256 px), LF/DC and HF metadata
+(≥15% less phase time and ≥5% higher throughput at 8 workers where hot),
+small trees, scratch reuse and any measured scheduling bottleneck. General
+decoder changes need ≥5% median speedup, ≤2% median control slowdown and
+≤10% class p95 latency increase.
+
+Use pinned same-stream decoder and end-to-end encoder comparisons, with
+identical u8 RGB/RGBA endpoints, cold/warm and allocating/reused results,
+three interleaved blocks of at least five samples, and A/A controls.
+Cover tiny and group-boundary crops, ≥1 MP and native sizes, with a dense
+lossy ladder. Keep imazen-26 test originals grouped across crops. Verify
+lossless source pixels, decoder and worker-count parity, full rendering
+with jxl-rs and djxl v0.12, and existing locks and format contracts for
+strides, streaming, progressive, alpha, HDR and metadata. Retain per-image
+rate, quality, timing, hashes and commands and verify landed changes on main.
+
+The initial seven sources cover textured and smooth photos, repetitive
+terminal content, palette and aliased lines, mixed web content, textured
+document scans, and 16-bit HDR. The manifest pins PNG-v3 render bytes from
+`0264d4d8a7e283c046ba2d1febb6e1fc547d511e` and split membership from
+`21009633b62610415b7dcaccdec7806726d9e10c`. Class results describe this cohort.
+
+## Initial pilot
+
 The study tested existing encoder options at effort 7 with eight encode threads.
 It used jxl-encoder `f574a317`, zenjxl-decoder `e58a4838`, and
 [djxl v0.12.0](https://github.com/libjxl/libjxl/releases/tag/v0.12.0).
