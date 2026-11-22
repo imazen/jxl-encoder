@@ -59,3 +59,10 @@ and baseline decoders, with A/A on the current baseline. Each timing block
 has five interleaved processes per arm. Each process warms once, then
 times an allocating in-memory RGB8 decode. The recorded pixel count and
 CLI throughput recover individual decode latency.
+
+Replay measured d1 and d4 selections with both renderers' quality guards
+and only measured candidate bytes as the primary ranking criterion.
+
+```sh
+python3 scripts/fast-decode/select_scored_filters.py LOSSY_RUN_DIR SELECTED.tsv
+```

@@ -207,3 +207,40 @@ example, the baseline A/A p95 at one worker on 1007 near d4 reached
 longer confirmation. Raw inputs, streams, hashes, commands, and timing
 samples are under `/mnt/v/output/jxl-encoder/fast-decode-2026-11-22/imazen26-lossy`
 on i270.
+
+## Rate-first filter replay
+
+The replay chooses the smallest measured tier-1 file that passes both
+quality guards on both renderers and stays within 10% of tier-0 bytes.
+It considers EPF-off settings near d1 and zero, one or two EPF passes
+near d4. The d1 candidates can vary Gaborish. All tier-1 choices keep
+patch selection available. When no scored fast rendition qualifies,
+the replay uses the tier-0 file. It uses the frozen distance grid and
+selects without timing data.
+
+| Photo size | Quality band | Median byte change | Median paired throughput, 1 / 8 workers |
+|---|---|---:|---:|
+| Native | d1 | +2.27% | 1.281× / 1.514× |
+| Native | d4 | +2.14% | 1.667× / 1.421× |
+| 1024 px crop | d1 | +0.21% | 1.212× / 1.213× |
+| 1024 px crop | d4 | −0.61% | 1.445× / 1.295× |
+
+Both photo originals use fast settings in every size and band. The
+largest byte increase on a photo is 4.21%. The scan crop retains EPF
+off near d1 and falls back to tier 0 near d4. This replay reuses the two
+originals that informed the filter search, so independent source
+qualification remains open. It chooses from captured renditions and
+scores. The encoder still needs a runtime search and its encode-cost
+measurement.
+
+The fresh timing uses the row-span decoder from
+[zenjxl-decoder main](https://github.com/imazen/zenjxl-decoder/commit/c266f4c7f2b602b66d5d5f678917dffd645a119f)
+on both sides. It alternates three blocks of five warm allocating RGB8
+decodes at one, four and eight workers. A/A tails above 1.10 remain in
+the timing table. The run used 0.21 GiB peak RSS over 118 seconds.
+
+[Selection script](../scripts/fast-decode/select_scored_filters.py),
+[selected hashes and quality deltas](faster_decode_imazen26_lossy_rate_first_2026-11-22.tsv)
+and [paired rate and timing](faster_decode_imazen26_lossy_rate_first_timing_2026-11-22.tsv).
+Raw timing and command records are in `imazen26-lossy/gated-filter-replay`
+on i270.
