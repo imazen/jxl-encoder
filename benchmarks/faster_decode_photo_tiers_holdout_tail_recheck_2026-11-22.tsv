@@ -1,0 +1,5 @@
+arm	speedup	p95_ratio	blocks	samples_per_block
+balanced	1.002084	0.981052	9	5
+throughput	0.994084	0.997807	9	5
+aa	0.999987	0.998361	9	5
+old	0.959622	1.046497	9	5

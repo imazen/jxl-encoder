@@ -592,3 +592,77 @@ block across three blocks. This shows the encoded DC policy reducing
 LF-group work. Decoder-only phase optimization remains a separate gate.
 The capture used 0.11 GiB peak RSS over five seconds.
 [Phase timings](faster_decode_photo_tier_d1_dc_phase_2026-11-22.tsv).
+
+### Three new native test photographs
+
+The frozen search from encoder `31c746beb15d` ran at effort 7 on three
+new imazen-26 test originals. The cityscape tests dense fine edges at
+12 MP, the macro photograph mixes detail and defocus at 12 MP, and the
+narrow 7.472 MP glacier tests bright textured ice. The cohort pins the
+source split and SDR render revisions used in the
+[initial study](faster_decode_profile_2026-11-22.md#qualification-goal).
+[Source identities and hashes](faster_decode_photo_tiers_holdout_cohort_2026-11-22.tsv).
+
+| Warm allocating tier | Band | Paired throughput, 1 / 4 / 8 workers | Median / p90 bytes | Fast choices |
+|---|---|---:|---:|---:|
+| Balanced | d1 | 1.201× / 1.125× / 1.127× | 0.00% / +0.02% | 3/3 |
+| Throughput | d1 | 1.205× / 1.530× / 1.523× | +0.78% / +4.91% | 3/3 |
+| Balanced | d4 | 1.220× / 1.144× / 1.179× | +1.19% / +1.51% | 2/3 |
+| Throughput | d4 | 1.225× / 1.155× / 1.157× | +1.19% / +1.51% | 2/3 |
+
+The two d1 tiers differ on the cityscape and glacier. The cityscape's
+EPF-off balanced file is 0.31% smaller and decodes at 1.115× with eight
+workers. The filter-free throughput file is 4.91% larger and decodes at
+1.580×. Throughput clears both d1 speed floors on this panel. Balanced
+misses the eight-worker floor. Both d4 tier medians clear the warm speed
+floors, and both fall short of the 75% selection target. The glacier uses
+the ordinary d4 file. Both nonfallback d4 photos use tier 1 with two EPF
+passes. The two tiers selected the same files near d4, with independent
+samples retained for every arm.
+[Selections, quality and stream hashes](faster_decode_photo_tiers_holdout_selected_2026-11-22.tsv).
+
+| Tier | Band | Cold throughput, 1 / 4 / 8 workers | Reused output throughput, 1 / 4 / 8 workers |
+|---|---|---:|---:|
+| Balanced | d1 | 1.197× / 1.139× / 1.122× | 1.266× / 1.131× / 1.124× |
+| Throughput | d1 | 1.198× / 1.481× / 1.443× | 1.197× / 1.696× / 1.666× |
+| Balanced | d4 | 1.230× / 1.149× / 1.149× | 1.250× / 1.142× / 1.154× |
+| Throughput | d4 | 1.224× / 1.158× / 1.153× | 1.239× / 1.136× / 1.144× |
+
+D1 throughput retains the eight-worker gain when the caller owns the
+output buffer. Its one-worker ratio is close to the 1.20× floor across
+all three endpoints. On the same ordinary streams, the current decoder
+runs at 0.985× to 1.029× the baseline decoder across cold and warm
+cohort comparisons. The corresponding whole-system throughput tier
+results at one and eight workers are 1.195× / 1.521× near d1 and
+1.232× / 1.163× near d4 for warm allocating output. The earlier
+encoder `f574a3172b50` reproduces every ordinary stream byte-for-byte.
+[Endpoint aggregates](faster_decode_photo_tiers_holdout_aggregate_2026-11-22.tsv),
+[per-image results](faster_decode_photo_tiers_holdout_cells_2026-11-22.tsv)
+and [encoder identity](faster_decode_photo_tiers_holdout_old_encoder_2026-11-22.tsv).
+
+All 45 candidates were scored after RGB8 rendering in jxl-rs and
+zenjxl-decoder. The 13 distinct selected and reference files also
+fully rendered in djxl v0.12. All 39 same-file RGB8 comparisons pass
+across Zen revisions `e58a48387257` and `dda06cbe10418` at 1, 4 and
+8 workers. The caller-owned harness checks exact equality with the
+allocating path for each stream. [Same-file RGB8 hashes](faster_decode_photo_tiers_holdout_readbacks_2026-11-22.tsv).
+
+Warm allocating and cold each use 1,350 observations, with three
+interleaved blocks of five decodes per arm. The cold arm times the
+first decode in each fresh process. The caller-owned endpoint uses
+1,620 observations across separate profile comparisons. The cohort
+p95 uses per-image normalization to the median tier-0 latency. The
+largest selected cohort p95 ratio is 1.006× and the largest A/A
+cohort ratio is 1.034×. The individual 1.117× cold p95 on the d4
+glacier measures the same file on both arms. A nine-block repeat of
+that first-decode case gives 0.998× throughput-tier and 0.998× A/A
+p95. The repeat takes 22 seconds at 0.12 GiB peak RSS.
+[Per-image p95 outliers](faster_decode_photo_tiers_holdout_outliers_2026-11-22.tsv)
+and [same-file repeat](faster_decode_photo_tiers_holdout_tail_recheck_2026-11-22.tsv).
+
+The build, candidate search, warm run and readbacks take 559 seconds
+at 2.54 GiB peak RSS. The cold and caller-owned replay and the earlier
+encoder comparison take 242 seconds at 1.27 GiB peak RSS. Both use
+`run-heavy` on i270. The command logs, binary fingerprints, input
+and stream manifests, helper scripts and raw observations are in
+`/mnt/v/output/jxl-encoder/fast-decode-2026-11-22/imazen26-lossy/native-photo-holdout-1009-1427-1447`.

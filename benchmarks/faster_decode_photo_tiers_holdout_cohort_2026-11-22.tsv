@@ -1,0 +1,4 @@
+id	split	feature	sha256	url
+1009	test	Aerial fine repeating buildings and edges	611c74e094a137c88c8459ddfb2a16872e48a656d3c288cad4504ef87c875b33	https://codec-corpus.r2.imazen.org/imazen-26-png-v3/1000-lilith-photos-general/1009_general_aerial-cityscape_tokyo-skytree-sumida_s23u_iso50-f2p4_20230706-144950_3000x4000.sdr.png
+1427	test	Macro subject detail over defocused background	dd7b9491fe6bf115820b28dc945f58090866de872f365eddcb50e5751825129b	https://codec-corpus.r2.imazen.org/imazen-26-png-v3/1400-lilith-nature/1427_nature_bee-on-pink-flower_monument-inochi-kyoto_s23u_iso64-f4p9_20231107-111746_3000x4000.sdr.png
+1447	test	Bright ice with blue crevasses and narrow native geometry	38c1cba30779a107849432f8865b0481bb3fa3d4367cb9b46487fda743ca8e00	https://codec-corpus.r2.imazen.org/imazen-26-png-v3/1400-lilith-nature/1447_nature_glacier-ice-formations_hornafjordur-iceland_s23u_iso50-f1p7_20231207-114532_1868x4000.sdr.png
