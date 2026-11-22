@@ -49,6 +49,8 @@ pub const CHANNEL_COLORS_GROUP_PERCENT: f32 = 80.0;
 /// builders).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ModularKnobs {
+    /// Try fixed-Gradient prefix streams with the explicit 256 px profile.
+    pub(crate) fixed_prefix_rle: bool,
     /// Optional forced fixed predictor for the no-tree-learning fallback
     /// path (libjxl `cjxl -P N` / `--modular_predictor`,
     /// `enc_params.h:options.predictor`).

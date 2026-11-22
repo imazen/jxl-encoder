@@ -9,7 +9,7 @@ use super::encode::{build_histogram_from_residuals, select_best_rct_at};
 use super::palette::CHANNEL_COLORS_PERCENT;
 use crate::bit_writer::BitWriter;
 use crate::entropy_coding::lz77::Lz77Method;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::headers::ColorEncoding;
 use crate::headers::frame_header::{BlendMode, FrameCrop, FrameHeader};
 
@@ -1200,6 +1200,22 @@ impl FrameEncoder {
 
         #[cfg(feature = "__env_var_diagnostics")]
         let _fr_t0 = crate::clock::Instant::now();
+        let fixed_prefix = self.options.modular_knobs.fixed_prefix_rle
+            && self.options.enable_lz77
+            && !self.options.use_ans
+            && self.options.dc_quant_custom.is_none()
+            && tree_mode != TreeMode::Hybrid
+            && !local_trees_mode
+            && num_passes == 1
+            && patches.is_none()
+            && meta_image.is_none()
+            && lf_images.is_empty()
+            && (2..=4).contains(&group_images[0].channels.len())
+            && group_transforms
+                .iter()
+                .all(|group| group.compact_info.is_empty() && group.rct_type.is_none());
+        let shared_prefix_lf_base = fixed_prefix.then(|| lf_global_writer.clone());
+        let mut stock_group_sizes = Vec::new();
         let global_state = if local_trees_mode {
             // LfGlobal for the sectioned mode: the proven global-tree byte
             // shape; stream 0 codes ONLY the meta channels (palette /
@@ -1377,7 +1393,7 @@ impl FrameEncoder {
         let budget = self.budget.as_ref();
         #[cfg(feature = "__env_var_diagnostics")]
         let _fr_t_groups = crate::clock::Instant::now();
-        let (pass_group_data, all_picked_local): (Vec<Vec<u8>>, bool) = if local_trees_mode {
+        let (mut pass_group_data, all_picked_local): (Vec<Vec<u8>>, bool) = if local_trees_mode {
             // Whole-image-equivalent stride for every per-group gather (see
             // the local writer's stride note).
             let full_pixels: usize = group_images
@@ -1535,6 +1551,28 @@ impl FrameEncoder {
                         stop,
                     )?;
 
+                    let stock_size = group_writer.bits_written().div_ceil(8);
+                    if fixed_prefix
+                        && matches!(
+                            global_state,
+                            super::section::GlobalModularState::Huffman {
+                                predictor_id: 5,
+                                ..
+                            }
+                        )
+                    {
+                        match super::prefix_rle::try_local_prefix(
+                            group_image,
+                            &mut group_writer,
+                            budget,
+                            stop,
+                        ) {
+                            Ok(()) | Err(Error::AllocationLimit { .. } | Error::OutOfMemory(_)) => {
+                            }
+                            Err(error) => return Err(error),
+                        }
+                    }
+
                     // Hybrid: also write this group as a self-contained local-tree
                     // stream (tree learned during the gather wave) and keep
                     // whichever section is smaller. Ties keep global (stability;
@@ -1592,14 +1630,62 @@ impl FrameEncoder {
                             group_writer.bits_written().div_ceil(8)
                         );
                     }
-                    Ok((group_writer.finish(), chose_local))
+                    Ok((group_writer.finish(), chose_local, stock_size))
                 })?;
-            let all_picked_local = !results.is_empty() && results.iter().all(|(_, l)| *l);
+            let all_picked_local =
+                !results.is_empty() && results.iter().all(|(_, local, _)| *local);
+            if fixed_prefix {
+                stock_group_sizes = results.iter().map(|(_, _, size)| *size).collect();
+            }
             (
-                results.into_iter().map(|(b, _)| b).collect::<Vec<_>>(),
+                results.into_iter().map(|(data, _, _)| data).collect(),
                 all_picked_local,
             )
         };
+
+        if let Some(lf_base) = shared_prefix_lf_base {
+            let mut sizes = Vec::with_capacity(2 + num_lf_groups + num_groups);
+            sizes.push(lf_global_data.len());
+            sizes.extend(lf_group_data.iter().map(Vec::len));
+            sizes.push(hf_global_data.len());
+            let common = sizes.len();
+            sizes.extend(stock_group_sizes);
+            let stock_size = Self::coded_sections_size(&sizes)?;
+            sizes.truncate(common);
+            sizes.extend(pass_group_data.iter().map(Vec::len));
+            let local_size = Self::coded_sections_size(&sizes)?;
+            let transforms = super::section::GlobalTransforms {
+                full_palette: full_palette_info,
+                compact_info: compact_info.clone(),
+                rct_type,
+            };
+            // Allow a bounded rate trade for sharing decoder tables.
+            // Compare complete padded sections and TOC costs.
+            let ceiling = stock_size.min(local_size + local_size / 20);
+            for use_rle in [false, true] {
+                let mut lf = lf_base.clone();
+                let groups = match super::prefix_rle::write_shared_prefix(
+                    &group_images,
+                    &transforms,
+                    &mut lf,
+                    use_rle,
+                    budget,
+                    stop,
+                ) {
+                    Ok(groups) => groups,
+                    Err(Error::AllocationLimit { .. } | Error::OutOfMemory(_)) => break,
+                    Err(error) => return Err(error),
+                };
+                sizes[0] = lf.bits_written().div_ceil(8);
+                sizes.truncate(common);
+                sizes.extend(groups.iter().map(Vec::len));
+                if Self::coded_sections_size(&sizes)? <= ceiling {
+                    lf_global_data = lf.finish();
+                    pass_group_data = groups;
+                    break;
+                }
+            }
+        }
 
         // Keep-best completion: when EVERY group chose its local section,
         // the global tree serialized in LfGlobal is dead weight — swap

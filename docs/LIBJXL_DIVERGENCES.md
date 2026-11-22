@@ -489,6 +489,23 @@ VarDCT stream learner. See [lossless tracking](LIBJXL_PARITY_TRACKING.md).
 
 ## E. Per-API behavior divergences (opt-in)
 
+### Fixed-Gradient prefix RLE and channel histograms (2026-11-22)
+
+The explicit 256 px group option with fixed Gradient, tier 0, Huffman,
+tree learning off, distance-1 RLE enabled, patches off and squeeze off
+selects this policy outside the Libjxl strategy. It applies to single-pass
+global-tree frames with two through four planes, ordinary global color
+transforms, and no local group transforms, Modular meta-image or LF images.
+
+Local sections try plain prefix and distance-1 RLE with one or several
+histograms. Shared sections try frame-wide plain prefix first and then RLE,
+with one histogram per channel and independent group state. A shared
+candidate must fit the incumbent single-table stream and at most 105%
+of the local stream, including padded sections and TOC. Local size ties
+keep the incumbent. The RLE distance code stays separate and singleton.
+The selector keeps an available stream if memory limits refuse a trial.
+libjxl v0.12 chooses RLE through its LZ77 token-cost test.
+
 ### Animation HDR loss dispatch and trace forwarding (2026-11-04)
 
 Lossy animations resolve the HDR loss from request color encoding and use the

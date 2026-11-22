@@ -47,6 +47,20 @@ throughput of 2.45× at one worker and 2.10× at eight workers versus tier 0,
 with 4.91% median file growth. Graphics have their own size and throughput
 tradeoffs. [Measurements](../benchmarks/faster_decode_imazen26_lossless_2026-11-22.md#balanced-lossless).
 
+The throughput profile uses 256 px Modular groups and tries plain or
+distance-1 run-length prefix coding with fixed Gradient prediction.
+
+```bash
+cjxl-rs photo.png photo-fast.jxl --lossless -e 7 -g 1 \
+  --no-ans --no-tree-learning --modular-predictor 5 \
+  --lz77 --lz77-method rle --no-patches --no-squeeze
+```
+
+On the same three photos, the profile reached median throughput of
+151 MP/s at one worker and 574 MP/s at eight workers on i270 with
+zenjxl-decoder. Every file was smaller than the stock `--fast-decode -g 0`
+file. [Measurements](../benchmarks/faster_decode_imazen26_lossless_2026-11-22.md#production-throughput-profile).
+
 ## Optional controller on the development branch
 
 Build with the `rate-control` Cargo feature to use `--rate-control` and

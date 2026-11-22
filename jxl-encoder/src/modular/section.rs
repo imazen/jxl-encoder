@@ -1909,7 +1909,7 @@ pub struct GlobalTransforms {
 ///
 /// When `compact_info` is present, writes ChannelCompact (kPalette with num_c=1)
 /// transforms first, then RCT with begin_c shifted by the number of compact meta channels.
-fn write_global_transforms_full(
+pub(super) fn write_global_transforms_full(
     writer: &mut BitWriter,
     transforms: &GlobalTransforms,
 ) -> Result<()> {

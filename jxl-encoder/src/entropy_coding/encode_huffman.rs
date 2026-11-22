@@ -909,7 +909,7 @@ fn write_dyn_context_map(context_map: &[u8], writer: &mut BitWriter) -> Result<(
 }
 
 /// Write all dynamically-sized prefix codes.
-fn write_dyn_prefix_codes(
+pub(crate) fn write_dyn_prefix_codes(
     prefix_codes: &[DynPrefixCode],
     uint_configs: &[HybridUintConfig],
     writer: &mut BitWriter,
@@ -1070,6 +1070,47 @@ impl OwnedEntropyCode {
             }
             Ok(())
         }
+    }
+}
+
+/// One prefix code per context. Keeping the distance context separate makes
+/// a constant distance symbol a zero-bit code even in a mixed stream.
+pub(crate) fn build_entropy_code_unclustered<'a>(
+    tokens: impl IntoIterator<Item = &'a Token>,
+    configs: &[HybridUintConfig],
+    lz77: Option<&Lz77Params>,
+) -> OwnedEntropyCode {
+    let mut histograms = vec![vec![0u32; 1]; configs.len()];
+    for token in tokens {
+        let context = token.context() as usize;
+        let (_, symbol) = encode_token_value_with_config(token, lz77, &configs[context]);
+        let histogram = &mut histograms[context];
+        let symbol = symbol as usize;
+        if symbol >= histogram.len() {
+            histogram.resize(symbol + 1, 0);
+        }
+        histogram[symbol] += 1;
+    }
+    let prefix_codes = histograms
+        .iter()
+        .map(|histogram| {
+            let mut depths = vec![0; histogram.len()];
+            if histogram.iter().any(|&count| count != 0) {
+                create_huffman_tree(histogram, histogram.len(), 15, &mut depths);
+            } else {
+                depths[0] = 1;
+            }
+            let mut bits = vec![0; histogram.len()];
+            convert_bit_depths_to_symbols(&depths, &mut bits);
+            DynPrefixCode { depths, bits }
+        })
+        .collect();
+    OwnedEntropyCode {
+        context_map: (0..configs.len() as u8).collect(),
+        prefix_codes,
+        static_codes: None,
+        uint_configs: configs.to_vec(),
+        libjxl_log_alpha: false,
     }
 }
 

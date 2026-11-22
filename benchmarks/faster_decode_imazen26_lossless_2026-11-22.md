@@ -369,3 +369,40 @@ The two decoder revisions, encoder revision, pinning and warm
 interleaved protocol are the same as in the group-width comparison.
 [Paired results, p95 and stream hashes](faster_decode_imazen26_throughput_night_2026-11-22.tsv).
 Raw commands and readbacks are in `imazen26-lossless/night-photo-throughput`.
+
+### Production throughput profile
+
+The explicit 256 px Gradient prefix and distance-1 RLE options activate
+the full policy through the existing [CLI settings](../jxl-encoder-cli/README.md#faster-lossless-decoding-for-photographs).
+Legacy strict settings and profiles keep their existing routes.
+The encoder selects local or shared tables on eligible frames using
+emitted section and TOC sizes. It retains the ordinary route for
+frame layouts with auxiliary Modular images or local transforms.
+
+The production encoder reproduces all three measured profile streams
+byte-for-byte. A separate replay also compares six tier-0, balanced
+and stock-fast stream hashes with the baseline encoder. Thirteen
+encodes, including the plot, terminal, mixed page and an odd RGBA
+control, match the source in zenjxl-decoder at one, four and eight
+workers and in jxl-rs and djxl v0.12.
+
+| Native photograph | Bytes vs stock | MP/s, 1 / 8 workers | Paired speedup, 1 / 8 workers |
+|---|---:|---:|---:|
+| 1007 textured | −8.76% | 114.60 / 451.60 | 1.365× / 1.230× |
+| 1019 smooth | −27.52% | 151.39 / 573.60 | 1.561× / 1.376× |
+| 1069 night | −34.50% | 177.73 / 666.32 | 1.720× / 1.437× |
+
+The three-photo median is **151.39 / 573.60 MP/s** and **1.561× / 1.376×**
+relative to stock `--fast-decode -g 0`. The integrated Zen decoder
+runs the frame-owned lookup from
+[6000956d](https://github.com/imazen/zenjxl-decoder/commit/6000956dc06e36b04e3b0c4ee9a527e9d6acd913).
+The physical host and worker affinity are i270 with the same three
+interleaved blocks of five warm allocating RGB8 decodes, plus A/A.
+All nine timed endpoint pairs match in PNG16. The complete timing,
+encoder byte-lock, divergence-drift and minimal-build run took 168
+seconds at 1.34 GiB peak RSS. The independent stream replay used 5.06
+GiB peak RSS across its 197-second wrapper, including decoder validation.
+
+[Final rate, throughput and p95](faster_decode_imazen26_throughput_production_2026-11-22.tsv).
+[Exact source and codestream hashes](faster_decode_imazen26_throughput_streams_2026-11-22.tsv).
+Raw measurements and binary hashes are in `imazen26-lossless/photo-production`.
