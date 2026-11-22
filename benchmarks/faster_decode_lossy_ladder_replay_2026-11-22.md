@@ -10,9 +10,9 @@ terminal original. All 700 retained streams were encoded at e7 with
 The replay checks all stream and reference-raster hashes and reproduces
 all 700 pinned jxl-rs RGB8 readback hashes. It scores current
 [zenjxl-decoder dda06cbe](https://github.com/imazen/zenjxl-decoder/commit/dda06cbe104184544a5e4cf9dcb13901fdb01342)
-RGB8 pixels separately. Both renderers must stay within 0.25
-SSIMULACRA2 points of the tier-0 floor and within the Butteraugli
-increase allowance of max(0.01, 2% of tier 0). Every selected
+RGB8 pixels separately. Both renderers must score at least the
+tier-0 SSIMULACRA2 score minus 0.25 points. Butteraugli may increase
+by at most max(0.01, 2% of tier 0). Every selected
 stream renders in djxl v0.12. The 216 distinct selected streams return the same RGB8
 pixels on both Zen revisions and at each of 1, 4 and 8 workers, for
 648 exact comparisons. The old decoder is
