@@ -469,3 +469,38 @@ frozen streams are under
 `/mnt/v/output/jxl-encoder/fast-decode-2026-11-22/imazen26-lossless/native-holdout-1009-1427-1447`.
 [Per-image timings](faster_decode_lossless_native_holdout_cells_2026-11-22.tsv)
 and [stream and pixel hashes](faster_decode_lossless_native_holdout_streams_2026-11-22.tsv).
+
+### Shared prefix and group-width follow-up
+
+The frozen holdout is followed by a diagnostic that forces shared plain
+prefix or shared distance-1 RLE at 128 and 256 px. The retained encoder
+experiment `65c4e830` emits the forced streams. The production file and
+stock comparator stay in the same timing blocks. All 12 variants beat stock
+bytes and reproduce the source through current Zen at 1, 4 and 8 workers,
+jxl-rs and djxl v0.12. The 256 px forced RLE files reproduce the production
+hashes for 1009 and 1427. The glacier's production stream has its own hash
+and is smaller than either shared alternative.
+
+| Photograph | Warm candidate result | Bytes vs stock | Paired speedup, 1 / 8 workers |
+|---|---|---:|---:|
+| 1009 aerial | Forced 256 px plain, 115.19 / 533.80 MP/s | −7.55% | 1.046× / 1.152× |
+| 1427 macro | Production or forced 256 px RLE, 130.44 / 548.89 MP/s | −17.70% | 1.172× / 1.221× |
+| 1447 glacier | Forced 128 px RLE, 129.04 / 616.20 MP/s | −25.45% | 1.162× / 1.282× |
+
+On the aerial image, 256 px plain costs 3.72% more bytes than the
+production RLE stream and improves one-worker throughput by 13.24% in
+the direct comparison. On the glacier, 128 px RLE costs 8.28% more bytes
+than production and improves eight-worker throughput by 21.42%. On the
+macro photograph, the production stream has the highest paired gain
+at both one and eight workers. Selecting the fastest observed mode
+separately per image and worker leaves the one-worker median at 1.172×.
+This post-hoc result bounds the options tested here. It does not qualify
+a changed selector.
+
+All arms use 990 warm allocating RGB8 samples in total, with three
+interleaved blocks of five observations per arm and A/A. The run takes
+131 seconds and 0.58 GiB peak RSS under `run-heavy` on i270. Raw files,
+exact commands and binary receipts are in `shared-ablation` beneath the
+native lossless holdout.
+[Rate and exact stream hashes](faster_decode_lossless_native_holdout_ablation_rate_2026-11-22.tsv)
+and [paired timings](faster_decode_lossless_native_holdout_ablation_timing_2026-11-22.tsv).
