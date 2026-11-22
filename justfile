@@ -295,6 +295,12 @@ subsampled-metadata-check manifest="Cargo.toml":
     cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features jpeg-reencoding,chroma-subsampling --test subsampled_odd_shapes --test subsampled_metadata
     cargo clippy --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features jpeg-reencoding,chroma-subsampling --lib --test subsampled_odd_shapes --test subsampled_metadata -- -D warnings
 
+# backend is chroma-subsampling (MoxCMS) or cms-lcms (Rust Little CMS).
+rgb-icc-backend-check backend manifest="Cargo.toml":
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features "__expert,jpeg-reencoding,{{backend}}" --lib api::cms::
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --no-default-features --features "__expert,jpeg-reencoding,{{backend}}" --test optional_icc_minimal_contract --test subsampled_odd_shapes --test subsampled_metadata
+    cargo test --locked --manifest-path {{quote(manifest)}} -p jxl-encoder --features "__expert,jpeg-reencoding,{{backend}}" --test source_color_contract optional_icc:: -- --test-threads=1
+
 libjxl-cfl-dc-oracle source build out:
     c++ -std=c++17 -O1 -ffp-contract=off -no-pie -I{{quote(source)}} -I{{quote(build + "/lib/include")}} -I{{quote(source + "/third_party/highway")}} scripts/libjxl_cfl_dc.cc {{quote(build + "/lib/CMakeFiles/jxl_enc-obj.dir/jxl/enc_modular.cc.o")}} {{quote(build + "/lib/CMakeFiles/jxl_dec-obj.dir/jxl/quantizer.cc.o")}} {{quote(build + "/lib/CMakeFiles/jxl_dec-obj.dir/jxl/quant_weights.cc.o")}} {{quote(build + "/lib/CMakeFiles/jxl_dec-obj.dir/jxl/memory_manager_internal.cc.o")}} -Wl,--unresolved-symbols=ignore-all -o {{quote(out)}}
 

@@ -342,6 +342,32 @@ the word singular; the actual error names the determinant bound. Its corrected
 assertion retains a typed failure and the precise determinant diagnostic.
 All established byte expectations, thresholds and ignores remain unchanged.
 
+### ZenPixels 0.4 and RGB ICC backend selection
+
+The optional RGB8 coefficient encoder uses the ZenPixels 0.4
+[`CmsRequest` interface](https://github.com/imazen/zenpixels/pull/165).
+Build with `jpeg-reencoding,chroma-subsampling` for MoxCMS 0.9.2, or with
+`jpeg-reencoding,cms-lcms` for the [Rust Little CMS port](https://github.com/imazen/lcms/commit/55b59476cf64920345e9ca32eb3a4678bf0bbece).
+Both configurations keep extended-range intermediate RGB and apply the same
+final RGB8 quantization. Little CMS uses the ZenPixels ICC database for its
+linear BT.709 source profile. Sources explicitly signaled as PQ or HLG use
+MoxCMS in both builds to retain the established extended-range overflow
+behavior.
+The separate profile-to-linear CMYK path uses its qualified private MoxCMS
+revision. The locked graph still includes ZenPixels 0.3 for existing sibling
+version constraints.
+
+`just rgb-icc-backend-check chroma-subsampling` and
+`just rgb-icc-backend-check cms-lcms` exercise identical source, budget,
+cancellation, geometry, metadata and external-decoder checks. Supply the
+pinned v0.12 `CJXL_PATH`, `DJXL_PATH`, and `LIBJXL_ORIGINAL_PROFILE_ORACLE`.
+On i270, both backends pass all 24 checks apiece, including the original-profile
+JPEG controls and the pre-existing overflow refusal. The Rec. 2020 control
+uses the original ICC fixture bytes with the unchanged oracle-bound SHA256.
+The combined replay took 102 s at 2.13 GiB peak RSS. The i270 logs, commands,
+source pins and earlier negative controls are under
+`/mnt/v/output/jxl-encoder/cms-pixel-pr-cohort-i270-2026-11-22`.
+
 ## H10 CMYK core corrections and remaining callers
 
 The candidate requires a CMYK ICC whenever Black is present, converts
