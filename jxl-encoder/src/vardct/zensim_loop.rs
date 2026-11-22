@@ -2401,10 +2401,9 @@ impl VarDctEncoder {
             // through the signed ModelSensitivity fold). Iterations 2+ steer
             // with the model's own gradient.
             if model_map_active && model_s.is_none() {
-                // Gradient base: folded-class arms use the FOLDED features
-                // captured by the first compare's score extraction (appendix
-                // N — the bake's true input regime); 372-class arms read the
-                // compare walk's features as before.
+                // Use the scoring walk's full row for named profiles. The
+                // 372-class routing value predates dense feature layouts,
+                // whose model inputs can refer to higher feature IDs.
                 let base_opt: Option<Vec<f64>> = if folded_class {
                     folded_feats_for_grad
                         .take()
@@ -2412,7 +2411,7 @@ impl VarDctEncoder {
                 } else {
                     dm_result.as_ref().and_then(|dm| {
                         let feats = dm.result().features();
-                        (feats.len() >= rd_n_in).then(|| feats[..rd_n_in].to_vec())
+                        (feats.len() >= rd_n_in).then(|| feats.to_vec())
                     })
                 };
                 if let Some(base) = base_opt {
@@ -2442,7 +2441,7 @@ impl VarDctEncoder {
                             )
                             .unwrap_or(f64::NAN)
                         };
-                        let mut s = vec![0.0f64; rd_n_in];
+                        let mut s = vec![0.0f64; base.len()];
                         let mut probe = base.clone();
                         for (k, sk) in s.iter_mut().enumerate() {
                             let eps = (base[k].abs() * 1e-3).max(1e-5);
@@ -2467,7 +2466,7 @@ impl VarDctEncoder {
                             width as u32,
                             height as u32,
                         )
-                        .unwrap_or_else(|_| vec![0.0f64; rd_n_in])
+                        .unwrap_or_else(|_| vec![0.0f64; base.len()])
                     };
                     if cfg.map_arm == Some(MapArm::Abs) {
                         for v in &mut s {

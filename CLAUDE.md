@@ -1799,39 +1799,24 @@ separate queue items. Broad/coverage/remote verdicts must be read independently.
 
 ## Known Bugs (ACTIVE)
 
-### 2026-11-22: Zensim fused attribution clears the reference color revision
+### RESOLVED 2026-11-22: Zensim Profile B attribution and signed steering
 
-The attribution smoke test fails with
-`reference cache color conversion revision differs from scorer` on
-`240ad4f0` in the x64 and aarch64 jobs. The earlier aarch64 job for
-`53639ee4` reaches the same 372-class Profile B comparison and fails. The guarded photo selector change touches Python and its evidence
-files. [Earlier CI](https://github.com/imazen/jxl-encoder/actions/runs/45021818787)
-and [current CI](https://github.com/imazen/jxl-encoder/actions/runs/45023897947).
+The pinned [Zensim repair](https://github.com/imazen/zensimx/commit/ef588fcc30b0bde3c4469aa0f2a298b38070cce5)
+preserves the profile's reference color revision and scores the full folded
+feature plan while producing the basic attribution map. Earlier x64 and
+aarch64 CI failed at the reference-cache check.
+[First replay](https://github.com/imazen/jxl-encoder/actions/runs/45006878049),
+[earlier CI](https://github.com/imazen/jxl-encoder/actions/runs/45021818787),
+[later CI](https://github.com/imazen/jxl-encoder/actions/runs/45023897947),
+and [same pinned-base failure](https://github.com/imazen/jxl-encoder/actions/runs/45038622085).
 
-In pinned zensimx `f3bc01a9`, the planar reference precompute carries the
-formula revision derived by `config_from_params`. The ordinary fused
-attribution caller passes `None` to `fused_basic_into_at_revision`, which
-assigns that value over the derived revision before `validate_cached_revision`.
-The assignment also appears on inspected upstream main `1d29d123`. The
-repair belongs in the fused attribution walk and must preserve the
-profile-derived revision when there is no explicit override. Verify the
-existing attribution and candidate-binding smoke tests with the repaired
-pin. The color compatibility check catches this mismatch.
-
-### 2026-11-22 — pinned Zensim fused attribution cache revision
-
-The ARM and x64 CI jobs reach `zensim_attr_smoke::model_map_attr_steers_with_fused_map`
-and fail with `reference cache color conversion revision differs from scorer`.
-This reproduces on both `6eda641d` and `fc16778f` with the same locked model
-dependency. See [the later CI job](https://github.com/imazen/jxl-encoder/actions/runs/45006878049).
-
-In the pinned zensimx source, `precompute_reference_linear_planar` keeps the
-formula revision derived by `config_from_params`. The fresh fused attribution
-path assigns its absent revision override over that configuration before
-validating the cache. The stale path keeps the configured revision. The guard
-correctly refuses the mismatch. The encoder smoke test and model pins still
-exercise the original contract. The optional smoke gate remains open.
-
+The pin alone restores the fused attribution smoke test. The H-arm test then
+finds that the encoder truncates a full feature row to 372 columns before
+differentiating the current dense Profile B model. Its out-of-range feature
+IDs produce a forward error, which the gradient fallback converts to a
+constant zero map. The encoder passes the full named-profile row to the
+finite-difference gradient. Both unchanged smoke tests pass on i270,
+including nonconstant signed fields and the candidate reconstruction check.
 
 ### RESOLVED 2026-11-19: extra-channel count admission and header guard
 
