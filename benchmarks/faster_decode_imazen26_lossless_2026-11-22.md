@@ -760,3 +760,26 @@ Encode, exact decode and both stock comparisons take 77 s at
 0.58 GiB peak RSS. The direct replay takes 31 s at 0.12 GiB.
 The raw samples, commands, binaries and source hashes are under
 `imazen26-lossless/width-holdout-entropy-mode` on i270.
+
+### Predictor pruning and color transforms at 128 px
+
+The four-photo rate ablation keeps effort 7, tier 1, 128 px groups,
+local MA trees and normal patch selection. All four stock files reproduce
+their earlier stream hashes. The median and p90 byte increases over tier 0
+are 6.99% and 9.39%, respectively.
+
+Seven predictor probe settings, including disabled pruning, fixed
+predictor counts and wider or denser sampling, reproduce all four
+stock hashes. Disabling squeeze and disabling palettes also reproduce them.
+The tier-1 effort-7 learner retains Gradient alone after gathering
+predictor candidates. The broader probe can change encoder work but leaves
+that predictor restriction in place.
+
+Forcing the seven color transforms in the effort-7 search produces zero
+smaller files in 28 encodes. RCT 12 comes closest with a 7.07% median
+increase over tier 0. The native inputs, encoder and existing baselines
+are the same as in the four-photo tree layout ablation. The rate-only run
+takes 96 s at 0.58 GiB peak RSS under `run-heavy` on i270.
+[Per-file bytes and hashes](faster_decode_imazen26_balanced_128_rct_2026-11-22.tsv).
+Raw commands and all streams are under
+`imazen26-lossless/balanced-128-predictors-rct`.
