@@ -503,3 +503,61 @@ exact commands and binary receipts are in `shared-ablation` beneath the
 native lossless holdout.
 [Rate and exact stream hashes](faster_decode_lossless_native_holdout_ablation_rate_2026-11-22.tsv)
 and [paired timings](faster_decode_lossless_native_holdout_ablation_timing_2026-11-22.tsv).
+
+## 128-pixel throughput option
+
+The explicit fixed-Gradient prefix/RLE bundle accepts either `-g 0` or
+`-g 1`. At 128 pixels the shared-table trial tries RLE first and may use
+up to 110% of the local coded size. At 256 pixels it tries plain prefix
+first and may use up to 105%. Both trials check the incumbent coded size,
+including padded sections and the TOC. The 128-pixel option does the
+most for the one-worker cohort. The 256-pixel option has higher
+warm eight-worker throughput on this panel.
+
+The 5% allowance would select the 4,776,319-byte glacier at 128 pixels.
+The 10% allowance emits the measured shared RLE stream of 5,170,247 bytes.
+It is 8.28% larger than the 256-pixel profile and 25.45% smaller than
+stock `--fast-decode -g 0`. The cityscape and macro select the same shared
+RLE streams at both allowances.
+
+The ordinary CLI reproduces the three forced shared RLE streams
+byte for byte at 128 pixels when given the 10% policy. All three
+reconstruct the original RGB8 samples in jxl-rs, djxl v0.12 and
+zenjxl-decoder at 1, 4 and 8 workers. The tier-0, balanced, legacy
+fast-decode and 256-pixel profile controls retain their previous hashes
+on all three originals. The 5% trial and 10% trial used 1.21 and
+1.19 GiB peak RSS for the builds, encodes and exact decodes.
+[Encoded stream hashes](faster_decode_imazen26_g128_streams_2026-11-22.tsv).
+
+With the [frame-owned RLE decoder](https://github.com/imazen/zenjxl-decoder/blob/8496962d/benchmarks/fused_prefix_2026-11-22.md#frame-owned-rle-tables-on-the-native-photo-holdout),
+the 128-pixel profile's three files save 10.68–25.45% relative to
+stock, with a median saving of 17.10%. These are the same three photos
+that informed the allowance trial, so the results characterize the
+options on that panel. The decoder tests compare the stock and profile
+streams on one binary, with identical output endpoints and A/A.
+
+| Profile | Endpoint | Median MP/s, 1 / 4 / 8 workers | Paired speedup, 1 / 4 / 8 workers |
+|---|---|---:|---:|
+| 128 px | Cold allocating | 137.45 / 331.55 / 511.34 | 1.274× / 1.193× / 1.157× |
+| 128 px | Warm allocating | 143.76 / 378.32 / 549.48 | 1.282× / 1.236× / 1.214× |
+| 256 px | Cold allocating | 129.22 / 352.16 / 521.30 | 1.201× / 1.226× / 1.169× |
+| 256 px | Warm allocating | 133.22 / 389.79 / 660.40 | 1.183× / 1.205× / 1.195× |
+| 128 px | Warm caller-owned | 156.50 / 427.20 / 625.44 | 1.306× / 1.248× / 1.177× |
+| 256 px | Warm caller-owned | 143.16 / 458.80 / 645.61 | 1.204× / 1.349× / 1.337× |
+
+The cold eight-worker absolute target still needs work. The 128-pixel
+warm eight-worker median is 0.52 MP/s below the absolute target.
+The caller-owned runs check exact RGB8 against allocating decode and
+stock. Candidate p95 ratios are within 1.025× in the new cold and
+caller-owned cells. The highest one-worker A/A p95 in the caller-owned
+replay is 1.271×. The eight-worker 256-pixel cold macro A/A p95 is
+1.131×. Both remain in the tables.
+
+Existing hash locks and divergence checks give 81 pass verdicts and
+one existing ignore. The tests, decoder harness build and further
+timings use 1.34 GiB peak RSS over 163 s.
+[Caller-owned timings and p95](faster_decode_imazen26_width_reused_2026-11-22.tsv)
+and [256-pixel cold replay](faster_decode_imazen26_g256_cold_2026-11-22.tsv).
+Raw samples, commands, source pins and hashes for the normal CLI
+replay are under
+`/mnt/v/output/jxl-encoder/fast-decode-2026-11-22/imazen26-lossless/128-pixel-throughput`.

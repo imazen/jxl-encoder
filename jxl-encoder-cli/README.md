@@ -47,8 +47,8 @@ throughput of 2.45× at one worker and 2.10× at eight workers versus tier 0,
 with 4.91% median file growth. Graphics have their own size and throughput
 tradeoffs. [Measurements](../benchmarks/faster_decode_imazen26_lossless_2026-11-22.md#balanced-lossless).
 
-The throughput profile uses 256 px Modular groups and tries plain or
-distance-1 run-length prefix coding with fixed Gradient prediction.
+The throughput options use fixed Gradient prediction and try shared
+prefix tables, including distance-1 run-length coding.
 
 ```bash
 cjxl-rs photo.png photo-fast.jxl --lossless -e 7 -g 1 \
@@ -56,14 +56,16 @@ cjxl-rs photo.png photo-fast.jxl --lossless -e 7 -g 1 \
   --lz77 --lz77-method rle --no-patches --no-squeeze
 ```
 
-On the same three photos, the profile reached median throughput of
-151 MP/s at one worker and 574 MP/s at eight workers on i270 with
-zenjxl-decoder. Every file was smaller than the stock `--fast-decode -g 0`
-file. On a separate three-photo panel, warm throughput reached 130 MP/s
-and 515 MP/s with 17.70% median byte savings. That panel fell short of
-the relative and eight-worker throughput goals.
-[Initial measurements](../benchmarks/faster_decode_imazen26_lossless_2026-11-22.md#production-throughput-profile)
-and [additional holdout](../benchmarks/faster_decode_imazen26_lossless_2026-11-22.md#three-additional-native-lossless-photo-controls).
+Use `-g 1` for 256 px groups and `-g 0` for the 128 px option. The
+128 px option prefers run-length coding and allows up to 10% more bytes
+than the local-table candidate when the shared stream fits the incumbent
+size. The 256 px option tries plain prefix first and allows 5%.
+
+On the three additional native photographs measured on i270, the 128 px
+option delivers 144 MP/s at one worker when warm, a 1.282× speedup
+over stock `--fast-decode -g 0`, and saves 17.10% median bytes. The
+256 px option reaches 660 MP/s at eight workers warm, a 1.195× speedup.
+[Measurements](../benchmarks/faster_decode_imazen26_lossless_2026-11-22.md#128-pixel-throughput-option).
 
 ## Optional controller on the development branch
 
