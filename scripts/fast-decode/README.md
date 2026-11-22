@@ -78,3 +78,8 @@ The `photo-filter-backlit-bracket` stage tests lower distances on image
 smallest distinct filter-free stream within the 10% rate cap that passes
 both rendered-quality guards. Keep this tuning bracket separate from
 the frozen `photo-filter-holdout` result.
+
+The `photo-filter-saturated-holdout` stage applies a frozen filter order to
+photo 1619. Among candidates within the 10% file-size ceiling that pass both
+quality guards, prefer fewer active filters, then smaller files. It retains
+the tier-0 reference as the fallback for each band independently.

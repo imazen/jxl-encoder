@@ -458,6 +458,15 @@ def native_tier4_cases(refine=False):
 
 
 def photo_filter_cases(stage):
+    if stage == "photo-filter-saturated-holdout":
+        return [("1619", "native", [
+            ("base", 1),
+            *(("tier0-epf0-gaboff", d) for d in (1, 0.98, 0.95)),
+            ("tier0-epf0", 1), ("tier0-epf0", 0.98),
+            ("base", 4),
+            *(("tier1-epf0", d) for d in (4.10, 4.08, 4)),
+            ("tier1-epf2", 4.08), ("tier1-epf2", 4),
+        ])]
     if stage == "photo-filter-backlit-bracket":
         return [("1237", "native", [
             ("base", 1), ("tier0-epf0", 1),
@@ -479,7 +488,7 @@ def photo_filter_cases(stage):
     ) for image_id in ("1007", "1019", "1069")]
 
 
-def photo_filter_matches(study, cases, bands, prefer_fewer_filters, compare_filter_free=False):
+def photo_filter_matches(study, cases, bands, ranking, compare_filter_free=False):
     selected = {}
     filters = {"tier0-epf0-gaboff": 0, "tier0-epf0": 1,
                "tier1-epf0": 1, "tier1-epf2": 3}
@@ -492,11 +501,15 @@ def photo_filter_matches(study, cases, bands, prefer_fewer_filters, compare_filt
             feasible = [row for row in candidates
                         if 10 * row["bytes"] <= 11 * base["bytes"]
                         and quality_passes(base, row) and quality_passes(base, row, "target_")]
-            if prefer_fewer_filters:
+            if ranking == "rate-then-filters":
                 # The per-file 3% preference precedes filter count.
                 choice = min(feasible, key=lambda row: (
                     100 * row["bytes"] > 103 * base["bytes"], filters[row["policy"]],
                     row["bytes"], row["file"],
+                ), default=base)
+            elif ranking == "filters":
+                choice = min(feasible, key=lambda row: (
+                    filters[row["policy"]], row["bytes"], row["file"],
                 ), default=base)
             else:
                 choice = min(feasible, key=lambda row: (row["bytes"], row["file"]), default=base)
@@ -518,7 +531,7 @@ def main():
                                             "ladder-gaboff", "ladder-text", "ladder-tier4",
                                             "tier4-match", "tier4-native", "tier4-native-refine",
                                             "d1-independent-filter", "photo-filter-holdout",
-                                            "photo-filter-backlit-bracket",
+                                            "photo-filter-backlit-bracket", "photo-filter-saturated-holdout",
                                             "palette-grid", "verify", "confirm"),
                         default="match")
     parser.add_argument("--measured", type=Path)
@@ -529,9 +542,10 @@ def main():
     if args.blocks < 3:
         parser.error("--blocks requires at least three interleaved blocks")
     photo_filter_stages = {
-        "d1-independent-filter": ((1,), False),
-        "photo-filter-holdout": (BANDS, True),
-        "photo-filter-backlit-bracket": ((1,), True),
+        "d1-independent-filter": ((1,), "rate"),
+        "photo-filter-holdout": (BANDS, "rate-then-filters"),
+        "photo-filter-backlit-bracket": ((1,), "rate-then-filters"),
+        "photo-filter-saturated-holdout": (BANDS, "filters"),
     }
     photo_filter_stage = args.stage in photo_filter_stages
     if photo_filter_stage:

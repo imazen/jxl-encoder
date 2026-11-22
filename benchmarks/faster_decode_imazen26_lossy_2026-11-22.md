@@ -405,3 +405,41 @@ The bracket and repeat ran for 98 s and 50 s with 2.60 and 2.57 GiB peak
 RSS. [Candidate scores and hashes](faster_decode_imazen26_backlit_bracket_quality_2026-11-22.tsv).
 [Paired timing and p95](faster_decode_imazen26_backlit_bracket_timing_2026-11-22.tsv).
 The raw runs are in `imazen26-lossy/d1-backlit-gaborish-bracket` on i270.
+
+### Frozen filter order on saturated fruit
+
+The fifth native photo (1619, 12 MP, test split) exercises saturated
+fruit and fine color detail. The frozen rule prefers EPF and Gaborish
+off, then EPF off near d1. Near d4 it prefers tier 1 with EPF off, then
+tier 1 with two EPF passes. Within a filter configuration it selects
+the smallest stream that passes both quality guards in both decoders
+and the 10% file-size ceiling. If no candidate passes, it keeps tier 0.
+
+Near d1, all five candidates miss at least one Butteraugli guard.
+Disabling only EPF at d1 changes the jxl-rs score by +0.001 and the Zen
+score by +0.031, above the Zen limit of +0.028 before rounding. The
+rule keeps the identical tier-0 stream. The measured ratios of
+0.995× / 0.992× / 0.990× at 1 / 4 / 8 workers are timing variation
+for the same input and executable.
+
+Near d4, tier 1 with EPF off at d4.10 grows bytes 1.67%. Relative to
+the d4 reference, SSIMULACRA2 improves by 0.325 in jxl-rs and 0.339
+in Zen. Butteraugli improves by 0.132 and 0.141. Throughput is 2.258× /
+1.662× / 1.711× at 1 / 4 / 8 workers. Paired A/A p95 latency ratios for
+both bands range from 0.889× to 1.023×. The three final distinct streams
+fully render in jxl-rs and djxl v0.12, with all nine exact worker-count
+and baseline/current decoder RGB8 comparisons passing.
+
+Including this source and the previous per-photo choices gives d4
+medians of 1.531× / 1.411× at 1 / 8 workers, with +2.51% median and
++6.62% p90 bytes and 5/5 fast choices. Near d1, even including the
+exploratory backlit alternate, the corresponding medians are 1.176× /
+1.503× with 4/5 fast choices and flat median bytes. The d1 one-worker
+goal remains 1.20×. These five-photo aggregates combine frozen holdouts
+and earlier per-photo selections.
+
+The complete holdout took 170 s at 2.62 GiB peak RSS.
+[Candidate scores and hashes](faster_decode_imazen26_saturated_holdout_quality_2026-11-22.tsv).
+[Paired timing and p95](faster_decode_imazen26_saturated_holdout_timing_2026-11-22.tsv).
+The frozen plan, raw timings and commands are in
+`imazen26-lossy/photo-filter-saturated-holdout` on i270.
