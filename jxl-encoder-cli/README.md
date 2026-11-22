@@ -41,11 +41,16 @@ Notes:
 cjxl-rs photo.png photo.jxl --lossless -e 7 --faster-decoding 1 -g 0
 ```
 
-This uses 128 px Modular groups and keeps patch selection available.
-On three native SDR imazen-26 photographs, it delivered median decode
-throughput of 2.45× at one worker and 2.10× at eight workers versus tier 0,
-with 4.91% median file growth. Graphics have their own size and throughput
-tradeoffs. [Measurements](../benchmarks/faster_decode_imazen26_lossless_2026-11-22.md#balanced-lossless).
+Tier 1 keeps patch selection available. Use `-g 0` for 128 px Modular
+groups or `-g 1` for 256 px groups. On four native imazen-26 photographs
+on i270, the warm allocating results were:
+
+| Tier 1 group size | Median bytes vs tier 0 | Median throughput at 1 / 8 workers vs tier 0 |
+|---|---:|---:|
+| 128 px | +6.99% | 2.70× / 2.30× |
+| 256 px | +4.17% | 2.47× / 2.24× |
+
+[Measurements](../benchmarks/faster_decode_imazen26_lossless_2026-11-22.md#a-lower-rate-tier-1-on-the-same-four-photos).
 
 The throughput options use fixed Gradient prediction and try shared
 prefix tables, including distance-1 run-length coding.

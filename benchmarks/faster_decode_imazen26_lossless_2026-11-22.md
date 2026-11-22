@@ -631,3 +631,49 @@ The serialized encode, verification and timing run used 0.58 GiB peak
 RSS over 985 seconds. The binary and input hashes, exact commands and
 raw records are under `imazen26-lossless/width-routing-independent`
 in the run directory on i270.
+
+### A lower-rate tier 1 on the same four photos
+
+The three effort-7 variants keep tier 1 and allow patches. They
+independently change the group width, force Greedy LZ77 in 128 px
+groups, or raise the 128 px tree-learning sample fraction to 1.0.
+The same pinned encoder produces all 12 candidates. Each candidate
+reproduces exact RGB8 samples in Zen at 1/4/8 workers, jxl-rs and
+djxl v0.12.
+
+| Tier 1 choice | Median bytes vs tier 0 | p90 bytes vs tier 0 |
+|---|---:|---:|
+| 128 px, original settings | +6.99% | +9.39% |
+| 128 px, Greedy LZ77 | +6.99% | +9.39% |
+| 128 px, full tree sample | +6.54% | +9.25% |
+| 256 px, original settings | +4.17% | +7.09% |
+
+Greedy emits the same four stream hashes as the original setting.
+The full-sample option changes each file and still exceeds the 6%
+median limit. The 256 px tier meets both rate limits, so it goes
+through the paired decode gate as a distinct size/speed tradeoff.
+
+| Tier 1 at 256 px | Median MP/s, 1 / 4 / 8 workers | Paired speedup, 1 / 4 / 8 workers |
+|---|---:|---:|
+| Cold allocating | 25.80 / 88.09 / 150.77 | 2.457× / 2.310× / 2.139× |
+| Warm allocating | 25.99 / 90.76 / 162.70 | 2.468× / 2.350× / 2.235× |
+| Warm caller-owned | 26.40 / 93.46 / 165.46 | 2.481× / 2.394× / 2.315× |
+
+The 256 px tier meets the 2.00× and 1.75× median throughput targets
+at one and eight workers across all three endpoints on these photos.
+The 128 px tier has higher speedups at both worker counts for
+allocating decode. Both tiers are selectable through the existing CLI.
+
+Each endpoint uses three interleaved blocks of five samples per cell
+and A/A. Both allocating endpoints check all 12 PNG16 pairs across
+worker counts. The caller-owned endpoint checks exact RGB8 against
+the allocating endpoint and tier 0. The largest per-file p95 ratio
+for 256 px is 0.538× tier 0. The largest A/A p95 ratio is 1.046×.
+
+[Candidate rates and stream hashes](faster_decode_imazen26_balanced_rate_ablation_2026-11-22.tsv),
+[per-file timing](faster_decode_imazen26_balanced_g256_timing_2026-11-22.tsv)
+and [class p95](faster_decode_imazen26_balanced_g256_p95_2026-11-22.tsv).
+The encode check and warm run used 0.58 GiB peak RSS over 439 s.
+Cold and caller-owned replay used 0.30 GiB over 414 s.
+The raw timing samples, input and binary hashes, and commands are
+under `imazen26-lossless/balanced-photo-rate-ablation` on i270.
