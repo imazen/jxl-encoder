@@ -1,0 +1,200 @@
+{
+  "encoder_commit": "f574a3172b5009c9914e600903fb3602d74b60c6",
+  "decoder_commit": "e58a4838725704e37d90f2acd1d11dcccd7ab98a",
+  "encoder_features": "default",
+  "decoder_features": "all-simd,threads",
+  "reference_version": "djxl v0.12.0 a7a9c78",
+  "score_origin": "RGB8 pixel scoring with Butteraugli 0.9.3 and fast-ssim2 0.9.0 via jxl-oxide, with independent full renders",
+  "rounds": 3,
+  "decodes_per_process_after_warmup": 5,
+  "extra_lossless_probe": "Four retained libjxl v0.12.0 effort-1 lossless wire-shape controls",
+  "pinned_cpus": {
+    "1": "2",
+    "8": "0-7"
+  },
+  "profile_flags": {
+    "lossless": {
+      "baseline": [],
+      "tier1": [
+        "--faster-decoding",
+        "1"
+      ],
+      "tier1-g128": [
+        "--faster-decoding",
+        "1",
+        "-g",
+        "0"
+      ],
+      "tier1-g128-rle": [
+        "--faster-decoding",
+        "1",
+        "-g",
+        "0",
+        "--lz77",
+        "--lz77-method",
+        "rle"
+      ],
+      "tier2": [
+        "--faster-decoding",
+        "2"
+      ],
+      "tier3": [
+        "--faster-decoding",
+        "3"
+      ],
+      "tier4": [
+        "--faster-decoding",
+        "4"
+      ],
+      "fast-decode": [
+        "--fast-decode",
+        "-g",
+        "0"
+      ]
+    },
+    "lossy": {
+      "baseline": [],
+      "epf-off": [
+        "--epf",
+        "0"
+      ],
+      "tier2": [
+        "--faster-decoding",
+        "2"
+      ],
+      "tier3": [
+        "--faster-decoding",
+        "3"
+      ],
+      "tier4": [
+        "--faster-decoding",
+        "4"
+      ]
+    }
+  },
+  "sha256": {
+    "cjxl-rs": "989238ff10181d87279d26532a5b6d50745323d5e12749b1995e09fecb80b4a3",
+    "zenjxl-decoder-cli": "8f8a5e22b7adbcab8deb57872f9a9709e5db916da446aac0e5b5044610e9fc74",
+    "djxl": "ef38c21001892cfd449753a19e257746de7d6d2ae3030616f536547d20c75991",
+    "score": "a49896b77bf76a1b32ff6b119f1903b2dbcf8d2378e5beb15f26ad5e5c3ca4ec"
+  },
+  "lossy_followup_flags": {
+    "tier1-auto": [
+      [
+        1,
+        4
+      ],
+      [
+        "--faster-decoding",
+        "1"
+      ]
+    ],
+    "tier1-epf-off": [
+      [
+        0.85,
+        1,
+        1.15,
+        3.5,
+        4,
+        4.5
+      ],
+      [
+        "--faster-decoding",
+        "1",
+        "--epf",
+        "0"
+      ]
+    ],
+    "tier1-epf-one": [
+      [
+        3.5,
+        4,
+        4.5
+      ],
+      [
+        "--faster-decoding",
+        "1",
+        "--epf",
+        "1"
+      ]
+    ],
+    "epf-off": [
+      [
+        0.85,
+        1.15,
+        3.5,
+        4.5
+      ],
+      [
+        "--epf",
+        "0"
+      ]
+    ],
+    "epf-one": [
+      [
+        3.5,
+        4,
+        4.5
+      ],
+      [
+        "--epf",
+        "1"
+      ]
+    ]
+  },
+  "inputs_sha256": {
+    "photo-0.26mp": "c7b8f38aa309b7e32d7387dff4fb82aeeba3ede32116130600a05825b9966f18",
+    "photo-2.78mp": "2d74383267345922b4afb34f04d6249ca9a39869d9954008e24a7794263b9415",
+    "terminal-1.75mp": "1c9deabfbe43dfff391123ea0f008ab08d75e19da4a0dad59af521ccce2a1beb",
+    "palette-0.31mp": "ef88ea90dd22a8adbad1e7e9d91d9a92b8209dbd8db8b4ee1e171c51f87e10b8"
+  },
+  "tier1_djxl_exact_pfm": [
+    {
+      "source": "photo-0.26mp",
+      "distance": "1",
+      "baseline_pfm_sha256": "94a6879861b034c5c8b4d62a4cdede374904bf67d39f7d295e06d8f484a71bcd",
+      "tier1_pfm_sha256": "94a6879861b034c5c8b4d62a4cdede374904bf67d39f7d295e06d8f484a71bcd",
+      "exact": "True"
+    },
+    {
+      "source": "photo-0.26mp",
+      "distance": "4",
+      "baseline_pfm_sha256": "e1dc4a258c8d3c8beb1b7dc9636c56b70e6d746494f24bd24a7d7343691e9f32",
+      "tier1_pfm_sha256": "e1dc4a258c8d3c8beb1b7dc9636c56b70e6d746494f24bd24a7d7343691e9f32",
+      "exact": "True"
+    },
+    {
+      "source": "photo-2.78mp",
+      "distance": "1",
+      "baseline_pfm_sha256": "01196488b8b9fcb78a42369b14d2663b9bf2ad873a409c9516e5307517d02ad3",
+      "tier1_pfm_sha256": "01196488b8b9fcb78a42369b14d2663b9bf2ad873a409c9516e5307517d02ad3",
+      "exact": "True"
+    },
+    {
+      "source": "photo-2.78mp",
+      "distance": "4",
+      "baseline_pfm_sha256": "79d604e6145eacc8ecf9c7a523d84f42f37a879a698e12d04f67678262b89c67",
+      "tier1_pfm_sha256": "79d604e6145eacc8ecf9c7a523d84f42f37a879a698e12d04f67678262b89c67",
+      "exact": "True"
+    },
+    {
+      "source": "terminal-1.75mp",
+      "distance": "1",
+      "baseline_pfm_sha256": "100a2b6d2502d9646551071847072eb638e178e5c90f0b7f026ee990477a7107",
+      "tier1_pfm_sha256": "100a2b6d2502d9646551071847072eb638e178e5c90f0b7f026ee990477a7107",
+      "exact": "True"
+    },
+    {
+      "source": "terminal-1.75mp",
+      "distance": "4",
+      "baseline_pfm_sha256": "8cc377bb9478735306a75bab44af9619b57980befb007a11ee61990e19b63edb",
+      "tier1_pfm_sha256": "8cc377bb9478735306a75bab44af9619b57980befb007a11ee61990e19b63edb",
+      "exact": "True"
+    }
+  ],
+  "artifact_directory": "/mnt/v/output/jxl-encoder/fast-decode-2026-11-22",
+  "artifact_host": "i270",
+  "decoder_build": "cargo build --locked --release -p zenjxl-decoder-cli --bin zenjxl-decoder-cli --no-default-features --features all-simd,threads",
+  "encoder_build": "cargo +1.100.0 build --locked --release -p jxl-encoder-cli",
+  "encoder_args": "-e 7 --threads 8 -d DISTANCE, with --lossless at distance 0"
+}
