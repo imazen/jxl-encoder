@@ -647,8 +647,8 @@ pub fn compute_pre_erosion_avx2(
             let v = (center + gamma_off).max(zero);
             let v2 = v * v;
             let v3 = v2 * v;
-            let num = k_num_mul_v.mul_add(v2, eps_v);
-            let den = k_den_mul_v.mul_add(v3, k_v_offset_v);
+            let num = k_num_mul_v.mul_add_relaxed(v2, eps_v);
+            let den = k_den_mul_v.mul_add_relaxed(v3, k_v_offset_v);
             let gammac = den / num;
 
             // diff = (gammac * (center - base))²
@@ -659,7 +659,8 @@ pub fn compute_pre_erosion_avx2(
             let clamped = diff_sq.min(limit_v);
 
             // masking_sqrt: 0.25 * sqrt(v * sqrt(K_MUL*1e8) + K_LOG_OFFSET)
-            let result = masking_scale * (clamped.mul_add(masking_mul_v, masking_offset_v)).sqrt();
+            let result =
+                masking_scale * (clamped.mul_add_relaxed(masking_mul_v, masking_offset_v)).sqrt();
 
             // Accumulate into diff_buffer
             if (y - y_start) % 4 != 0 {
@@ -783,12 +784,12 @@ pub fn per_block_modulations_avx2(
                 // ratio_of_deriv_inverted(r): num/den
                 let r2 = r * r;
                 let r3 = r2 * r;
-                let r_num = k_num_v.mul_add(r2, eps_v);
-                let r_den = k_den_v.mul_add(r3, k_voff_v);
+                let r_num = k_num_v.mul_add_relaxed(r2, eps_v);
+                let r_den = k_den_v.mul_add_relaxed(r3, k_voff_v);
                 let g2 = g * g;
                 let g3 = g2 * g;
-                let g_num = k_num_v.mul_add(g2, eps_v);
-                let g_den = k_den_v.mul_add(g3, k_voff_v);
+                let g_num = k_num_v.mul_add_relaxed(g2, eps_v);
+                let g_den = k_den_v.mul_add_relaxed(g3, k_voff_v);
                 ratio_acc = ratio_acc + r_num / r_den + g_num / g_den;
             }
             // Horizontal sum of ratio_acc (8 partial sums → 1 total)
@@ -966,14 +967,15 @@ pub fn compute_pre_erosion_neon(
             let v = (center + gamma_off).max(zero);
             let v2 = v * v;
             let v3 = v2 * v;
-            let num = k_num_mul_v.mul_add(v2, eps_v);
-            let den = k_den_mul_v.mul_add(v3, k_v_offset_v);
+            let num = k_num_mul_v.mul_add_relaxed(v2, eps_v);
+            let den = k_den_mul_v.mul_add_relaxed(v3, k_v_offset_v);
             let gammac = den / num;
 
             let raw_diff = gammac * (center - base);
             let diff_sq = raw_diff * raw_diff;
             let clamped = diff_sq.min(limit_v);
-            let result = masking_scale * (clamped.mul_add(masking_mul_v, masking_offset_v)).sqrt();
+            let result =
+                masking_scale * (clamped.mul_add_relaxed(masking_mul_v, masking_offset_v)).sqrt();
 
             if (y - y_start) % 4 != 0 {
                 let existing = f32x4::from_slice_t(token, &diff_buffer[local_x..]);
@@ -1088,10 +1090,10 @@ pub fn per_block_modulations_neon(
                     let g = (iny + x_vals).max(zero_v);
                     let r2 = r * r;
                     let g2 = g * g;
-                    let r_num = k_num_v.mul_add(r2, eps_v);
-                    let r_den = k_den_v.mul_add(r2 * r, k_voff_v);
-                    let g_num = k_num_v.mul_add(g2, eps_v);
-                    let g_den = k_den_v.mul_add(g2 * g, k_voff_v);
+                    let r_num = k_num_v.mul_add_relaxed(r2, eps_v);
+                    let r_den = k_den_v.mul_add_relaxed(r2 * r, k_voff_v);
+                    let g_num = k_num_v.mul_add_relaxed(g2, eps_v);
+                    let g_den = k_den_v.mul_add_relaxed(g2 * g, k_voff_v);
                     let ratios = r_num / r_den + g_num / g_den;
                     let arr: [f32; 4] = ratios.into();
                     ratio_total += arr[0] + arr[1] + arr[2] + arr[3];

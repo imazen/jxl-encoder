@@ -616,7 +616,7 @@ fn vectorized_dct1d_4(
     let w1 = v0 - v1;
 
     // B transform
-    let b0 = sqrt2.mul_add(w0, w1);
+    let b0 = sqrt2.mul_add_relaxed(w0, w1);
 
     // InverseEvenOdd: [u0, b0, u1, w1]
     (u0, b0, u1, w1)

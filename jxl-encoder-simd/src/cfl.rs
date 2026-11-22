@@ -419,8 +419,8 @@ pub fn find_best_multiplier_avx2(
         let s = crate::load_f32x8(token, values_s, i);
         let a = inv_cf * m;
         let b = base_v * m - s;
-        acc_aa = a.mul_add(a, acc_aa);
-        acc_ab = a.mul_add(b, acc_ab);
+        acc_aa = a.mul_add_relaxed(a, acc_aa);
+        acc_ab = a.mul_add_relaxed(b, acc_ab);
         i += 8;
     }
 
@@ -471,8 +471,8 @@ pub fn find_best_multiplier_neon(
         let s = f32x4::from_slice_t(token, &values_s[i..]);
         let a = inv_cf * m;
         let b = base_v * m - s;
-        acc_aa = a.mul_add(a, acc_aa);
-        acc_ab = a.mul_add(b, acc_ab);
+        acc_aa = a.mul_add_relaxed(a, acc_aa);
+        acc_ab = a.mul_add_relaxed(b, acc_ab);
         i += 4;
     }
 
@@ -841,8 +841,8 @@ pub fn find_best_multiplier_newton_avx2(
         let s = crate::load_f32x8(token, values_s, i);
         let a = inv_cf * m;
         let b = base_v * m - s;
-        acc_aa = a.mul_add(a, acc_aa);
-        acc_ab = a.mul_add(b, acc_ab);
+        acc_aa = a.mul_add_relaxed(a, acc_aa);
+        acc_ab = a.mul_add_relaxed(b, acc_ab);
         i += 8;
     }
     let mut sum_aa: f32 = acc_aa.reduce_add();
@@ -882,9 +882,9 @@ pub fn find_best_multiplier_newton_avx2(
             let a = inv_cf * m;
             let b = base_v * m - s;
 
-            let v = a.mul_add(x_v, b);
-            let vpe = a.mul_add(xpe_v, b);
-            let vme = a.mul_add(xme_v, b);
+            let v = a.mul_add_relaxed(x_v, b);
+            let vpe = a.mul_add_relaxed(xpe_v, b);
+            let vme = a.mul_add_relaxed(xme_v, b);
 
             let av = v.abs();
             let avpe = vpe.abs();
@@ -1074,8 +1074,8 @@ pub fn find_best_multiplier_newton_neon(
         let s = f32x4::from_slice_t(token, &values_s[i..]);
         let a = inv_cf * m;
         let b = base_v * m - s;
-        acc_aa = a.mul_add(a, acc_aa);
-        acc_ab = a.mul_add(b, acc_ab);
+        acc_aa = a.mul_add_relaxed(a, acc_aa);
+        acc_ab = a.mul_add_relaxed(b, acc_ab);
         i += 4;
     }
     let mut sum_aa: f32 = acc_aa.reduce_add();
@@ -1115,9 +1115,9 @@ pub fn find_best_multiplier_newton_neon(
             let a = inv_cf * m;
             let b = base_v * m - s;
 
-            let v = a.mul_add(x_v, b);
-            let vpe = a.mul_add(xpe_v, b);
-            let vme = a.mul_add(xme_v, b);
+            let v = a.mul_add_relaxed(x_v, b);
+            let vpe = a.mul_add_relaxed(xpe_v, b);
+            let vme = a.mul_add_relaxed(xme_v, b);
 
             let av = v.abs();
             let avpe = vpe.abs();

@@ -321,13 +321,16 @@ pub fn gaborish_5x5_impl(
             // FMA association matches the prior hand-written AVX2/NEON bodies
             // bit-for-bit: outermost is `wc*center + (...)`, innermost is
             // `w_big_d * big_d_sum` (plain multiply, no FMA on the tail).
-            let result = wc_v.mul_add(
+            let result = wc_v.mul_add_relaxed(
                 center,
-                wr_v.mul_add(
+                wr_v.mul_add_relaxed(
                     r_sum,
-                    wd_v.mul_add(
+                    wd_v.mul_add_relaxed(
                         d_sum,
-                        w_big_r_v.mul_add(big_r_sum, wl_v.mul_add(l_sum, w_big_d_v * big_d_sum)),
+                        w_big_r_v.mul_add_relaxed(
+                            big_r_sum,
+                            wl_v.mul_add_relaxed(l_sum, w_big_d_v * big_d_sum),
+                        ),
                     ),
                 ),
             );

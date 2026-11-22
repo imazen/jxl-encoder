@@ -201,8 +201,8 @@ pub fn compute_mask1x1_avx2(
         let exp_val = exp_shifted.to_f32x8();
         let frac = mantissa - one;
         // Rational polynomial: (p0 + frac*(p1 + frac*p2)) / (q0 + frac*(q1 + frac*q2))
-        let num = frac.mul_add(p2, p1).mul_add(frac, p0);
-        let den = frac.mul_add(q2, q1).mul_add(frac, q0);
+        let num = frac.mul_add_relaxed(p2, p1).mul_add_relaxed(frac, p0);
+        let den = frac.mul_add_relaxed(q2, q1).mul_add_relaxed(frac, q0);
         num / den + exp_val
     }
 
@@ -246,8 +246,8 @@ pub fn compute_mask1x1_avx2(
             // ratio_of_derivatives(v) = den/num
             let v2 = v * v;
             let v3 = v2 * v;
-            let num = k_num_mul_v.mul_add(v2, eps_v);
-            let den = k_den_mul_v.mul_add(v3, k_v_offset_v);
+            let num = k_num_mul_v.mul_add_relaxed(v2, eps_v);
+            let den = k_den_mul_v.mul_add_relaxed(v3, k_v_offset_v);
             let gammac = den / num;
 
             // diff = |gammac * (center - base)|
@@ -356,8 +356,8 @@ pub fn compute_mask1x1_neon(
         let mantissa = mantissa_bits.bitcast_f32x4();
         let exp_val = exp_shifted.to_f32x4();
         let frac = mantissa - one;
-        let num = frac.mul_add(p2, p1).mul_add(frac, p0);
-        let den = frac.mul_add(q2, q1).mul_add(frac, q0);
+        let num = frac.mul_add_relaxed(p2, p1).mul_add_relaxed(frac, p0);
+        let den = frac.mul_add_relaxed(q2, q1).mul_add_relaxed(frac, q0);
         num / den + exp_val
     }
 
@@ -394,8 +394,8 @@ pub fn compute_mask1x1_neon(
             let v = (center + gamma_off).max(zero);
             let v2 = v * v;
             let v3 = v2 * v;
-            let num = k_num_mul_v.mul_add(v2, eps_v);
-            let den = k_den_mul_v.mul_add(v3, k_v_offset_v);
+            let num = k_num_mul_v.mul_add_relaxed(v2, eps_v);
+            let den = k_den_mul_v.mul_add_relaxed(v3, k_v_offset_v);
             let gammac = den / num;
 
             let diff = (gammac * (center - base)).abs();

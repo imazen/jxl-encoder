@@ -272,7 +272,7 @@ pub fn entropy_coeffs_impl(
 
         // Entropy accumulation: entropy += sqrt(|rval|) * cost_delta
         let q = rval.abs();
-        entropy_acc = q.sqrt().mul_add(cost_delta_v, entropy_acc);
+        entropy_acc = q.sqrt().mul_add_relaxed(cost_delta_v, entropy_acc);
 
         // nzeros: count non-zero rounded values
         let nz_mask = q.simd_ne(zero);
@@ -282,7 +282,7 @@ pub fn entropy_coeffs_impl(
         if !pixel_domain {
             let diff_abs = diff.abs();
             info_loss_acc += diff_abs;
-            info_loss2_acc = diff_abs.mul_add(diff_abs, info_loss2_acc);
+            info_loss2_acc = diff_abs.mul_add_relaxed(diff_abs, info_loss2_acc);
 
             // q >= 1.5 penalty
             let ge_mask = q.simd_ge(thr_1_5);
@@ -639,8 +639,8 @@ pub fn shannon_entropy_impl(token: Token, counts: &[i32], total_count: usize) ->
             let mantissa = mantissa_bits.bitcast_f32x8();
             let exp_val = exp_shifted.to_f32x8();
             let frac = mantissa - one;
-            let num = frac.mul_add(p2, p1).mul_add(frac, p0);
-            let den = frac.mul_add(q2, q1).mul_add(frac, q0);
+            let num = frac.mul_add_relaxed(p2, p1).mul_add_relaxed(frac, p0);
+            let den = frac.mul_add_relaxed(q2, q1).mul_add_relaxed(frac, q0);
             num / den + exp_val
         };
 
@@ -779,8 +779,8 @@ pub fn estimate_bits_u32_impl(token: Token, counts: &[u32], total: u32) -> f64 {
             let mantissa = mantissa_bits.bitcast_f32x8();
             let exp_val = exp_shifted.to_f32x8();
             let frac = mantissa - one;
-            let num = frac.mul_add(p2, p1).mul_add(frac, p0);
-            let den = frac.mul_add(q2, q1).mul_add(frac, q0);
+            let num = frac.mul_add_relaxed(p2, p1).mul_add_relaxed(frac, p0);
+            let den = frac.mul_add_relaxed(q2, q1).mul_add_relaxed(frac, q0);
             num / den + exp_val
         };
         let lb = {
@@ -791,8 +791,8 @@ pub fn estimate_bits_u32_impl(token: Token, counts: &[u32], total: u32) -> f64 {
             let mantissa = mantissa_bits.bitcast_f32x8();
             let exp_val = exp_shifted.to_f32x8();
             let frac = mantissa - one;
-            let num = frac.mul_add(p2, p1).mul_add(frac, p0);
-            let den = frac.mul_add(q2, q1).mul_add(frac, q0);
+            let num = frac.mul_add_relaxed(p2, p1).mul_add_relaxed(frac, p0);
+            let den = frac.mul_add_relaxed(q2, q1).mul_add_relaxed(frac, q0);
             num / den + exp_val
         };
         acc_a -= ca * la;
@@ -816,8 +816,8 @@ pub fn estimate_bits_u32_impl(token: Token, counts: &[u32], total: u32) -> f64 {
             let mantissa = mantissa_bits.bitcast_f32x8();
             let exp_val = exp_shifted.to_f32x8();
             let frac = mantissa - one;
-            let num = frac.mul_add(p2, p1).mul_add(frac, p0);
-            let den = frac.mul_add(q2, q1).mul_add(frac, q0);
+            let num = frac.mul_add_relaxed(p2, p1).mul_add_relaxed(frac, p0);
+            let den = frac.mul_add_relaxed(q2, q1).mul_add_relaxed(frac, q0);
             num / den + exp_val
         };
         acc_a -= c * lc;

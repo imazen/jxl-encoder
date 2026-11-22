@@ -863,6 +863,17 @@ checklist) were archived to [docs/CODE-HISTORY.md](docs/CODE-HISTORY.md)
 
 ## Resolved Bugs
 
+### RESOLVED 2026-11-22: deprecation errors with magetypes 0.9.32
+
+The pinned dependency made the generic SIMD `mul_add` spelling deprecated.
+It delegates to `mul_add_relaxed`, which keeps the backend's rounding rule.
+The encoder SIMD sites reported by Linux x64 and ARM Clippy now use that
+spelling. Scalar `f32::mul_add` is a different operation and keeps its
+existing spelling. Strict release workspace Clippy on i270, strict ARM64
+cross-Clippy for the SIMD crate, 69 encoder byte locks and five strict
+libjxl byte locks pass with the same dependency lock and expectations.
+The paired byte-lock and cross-Clippy wrapper used 1.11 GiB peak RSS.
+
 ### RESOLVED 2026-11-17: extra-channel metadata bounds and atomic admission
 
 Shared validation now refuses shift 4, CFA 275, oversized names and invalid

@@ -336,7 +336,7 @@ pub(crate) fn dct1d_32_batch(token: archmage::X64V3Token, v: &mut [magetypes::si
     crate::dct16::dct1d_16_batch(token, &mut s);
 
     // B transform on second half (FMA: sqrt2 * s[0] + s[1], single rounding)
-    s[0] = sqrt2.mul_add(s[0], s[1]);
+    s[0] = sqrt2.mul_add_relaxed(s[0], s[1]);
     for i in 1..15 {
         s[i] += s[i + 1];
     }
@@ -539,7 +539,7 @@ pub(crate) fn dct1d_32_batch_neon(
     }
     crate::dct16::dct1d_16_batch_neon(token, &mut s);
 
-    s[0] = sqrt2.mul_add(s[0], s[1]);
+    s[0] = sqrt2.mul_add_relaxed(s[0], s[1]);
     for i in 1..15 {
         s[i] += s[i + 1];
     }

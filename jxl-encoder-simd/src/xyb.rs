@@ -507,13 +507,13 @@ where
     for _ in 0..3 {
         let r2 = r * r;
         // NegMulAdd(xa_3, r^4, k4_3*r) == k4_3*r - xa_3*r^4, fused.
-        r = (-xa_3).mul_add(r2 * r2, k4_3 * r);
+        r = (-xa_3).mul_add_relaxed(r2 * r2, k4_3 * r);
     }
     let r2 = r * r;
     // MulAdd(k1_3, NegMulAdd(xa, r^4, r), r)
-    r = k1_3.mul_add((-x).mul_add(r2 * r2, r), r);
+    r = k1_3.mul_add_relaxed((-x).mul_add_relaxed(r2 * r2, r), r);
     let r2 = r * r;
-    r2.mul_add(x, add)
+    r2.mul_add_relaxed(x, add)
 }
 
 #[magetypes(define(f32x8, i32x8), v4, v3, -neon, wasm128, -scalar)]
@@ -557,9 +557,12 @@ pub fn forward_xyb_impl(
         let bv = f32x8::from_slice_t(token, &b[base..]);
 
         // Matrix multiply + bias (FMA chains, association preserved)
-        let mixed0 = m00.mul_add(rv, m01.mul_add(gv, m02.mul_add(bv, bias0)));
-        let mixed1 = m10.mul_add(rv, m11.mul_add(gv, m12.mul_add(bv, bias1)));
-        let mixed2 = m20.mul_add(rv, m21.mul_add(gv, m22.mul_add(bv, bias2)));
+        let mixed0 =
+            m00.mul_add_relaxed(rv, m01.mul_add_relaxed(gv, m02.mul_add_relaxed(bv, bias0)));
+        let mixed1 =
+            m10.mul_add_relaxed(rv, m11.mul_add_relaxed(gv, m12.mul_add_relaxed(bv, bias1)));
+        let mixed2 =
+            m20.mul_add_relaxed(rv, m21.mul_add_relaxed(gv, m22.mul_add_relaxed(bv, bias2)));
 
         // Clamp negative to zero
         let mixed0 = mixed0.max(zero);
@@ -691,9 +694,12 @@ pub fn forward_xyb_impl_neon(
             let gv = f32x8::from_slice_t(token, &g[base..]);
             let bv = f32x8::from_slice_t(token, &b[base..]);
 
-            let mixed0 = m00.mul_add(rv, m01.mul_add(gv, m02.mul_add(bv, bias0)));
-            let mixed1 = m10.mul_add(rv, m11.mul_add(gv, m12.mul_add(bv, bias1)));
-            let mixed2 = m20.mul_add(rv, m21.mul_add(gv, m22.mul_add(bv, bias2)));
+            let mixed0 =
+                m00.mul_add_relaxed(rv, m01.mul_add_relaxed(gv, m02.mul_add_relaxed(bv, bias0)));
+            let mixed1 =
+                m10.mul_add_relaxed(rv, m11.mul_add_relaxed(gv, m12.mul_add_relaxed(bv, bias1)));
+            let mixed2 =
+                m20.mul_add_relaxed(rv, m21.mul_add_relaxed(gv, m22.mul_add_relaxed(bv, bias2)));
 
             // `$cb(v, bias)` returns cbrt(v) with the `-cbrt(bias)` offset
             // already applied — FUSED into the final MulAdd for `Libjxl`
@@ -846,14 +852,14 @@ pub fn inverse_xyb_planar_impl(
         let gr2 = gamma_r * gamma_r;
         let gg2 = gamma_g * gamma_g;
         let gb2 = gamma_b * gamma_b;
-        let mixed_r = gr2.mul_add(gamma_r, neg_bias0);
-        let mixed_g = gg2.mul_add(gamma_g, neg_bias1);
-        let mixed_b = gb2.mul_add(gamma_b, neg_bias2);
+        let mixed_r = gr2.mul_add_relaxed(gamma_r, neg_bias0);
+        let mixed_g = gg2.mul_add_relaxed(gamma_g, neg_bias1);
+        let mixed_b = gb2.mul_add_relaxed(gamma_b, neg_bias2);
 
         // Inverse opsin matrix (FMA chains, association preserved)
-        let rv = inv00.mul_add(mixed_r, inv01.mul_add(mixed_g, inv02 * mixed_b));
-        let gv = inv10.mul_add(mixed_r, inv11.mul_add(mixed_g, inv12 * mixed_b));
-        let bv = inv20.mul_add(mixed_r, inv21.mul_add(mixed_g, inv22 * mixed_b));
+        let rv = inv00.mul_add_relaxed(mixed_r, inv01.mul_add_relaxed(mixed_g, inv02 * mixed_b));
+        let gv = inv10.mul_add_relaxed(mixed_r, inv11.mul_add_relaxed(mixed_g, inv12 * mixed_b));
+        let bv = inv20.mul_add_relaxed(mixed_r, inv21.mul_add_relaxed(mixed_g, inv22 * mixed_b));
 
         // Planar SIMD store — no scalar interleave needed on the hot path.
         let rs: &mut [f32; 8] = (&mut out_r[base..base + 8]).try_into().unwrap();

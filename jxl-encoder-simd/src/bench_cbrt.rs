@@ -42,11 +42,11 @@ pub fn cbrt_libjxl_batch_impl(token: Token, src: &[f32], out: &mut [f32], n: usi
         for _ in 0..3 {
             let r2 = r * r;
             // NegMulAdd(xa_3, r^4, k4_3*r) == k4_3*r - xa_3*r^4, fused.
-            r = (-xa_3).mul_add(r2 * r2, k4_3 * r);
+            r = (-xa_3).mul_add_relaxed(r2 * r2, k4_3 * r);
         }
         let r2 = r * r;
         // MulAdd(k1_3, NegMulAdd(xa, r^4, r), r)
-        r = k1_3.mul_add((-x).mul_add(r2 * r2, r), r);
+        r = k1_3.mul_add_relaxed((-x).mul_add_relaxed(r2 * r2, r), r);
         let r2 = r * r;
         let os: &mut [f32; 8] = (&mut out[base..base + 8]).try_into().unwrap();
         (r2 * x).store(os);

@@ -436,7 +436,7 @@ pub(crate) fn vectorized_dct1d_8(
     let d1 = b2 - b3;
 
     // B transform: d0 = sqrt2 * d0 + d1
-    let d0 = sqrt2.mul_add(d0, d1);
+    let d0 = sqrt2.mul_add_relaxed(d0, d1);
 
     // InverseEvenOdd: first_half = [c0, d0, c1, d1]
     let fh0 = c0;
@@ -469,7 +469,7 @@ pub(crate) fn vectorized_dct1d_8(
     let g1 = e2 - e3;
 
     // B transform
-    let g0 = sqrt2.mul_add(g0, g1);
+    let g0 = sqrt2.mul_add_relaxed(g0, g1);
 
     // InverseEvenOdd of inner DCT-4
     let sh0 = f0;
@@ -480,7 +480,7 @@ pub(crate) fn vectorized_dct1d_8(
     // ---- B transform on second half ----
     // IMPORTANT: must process top-down (0→1→2) so each step uses the ORIGINAL next value.
     // `let` creates new bindings, so sh0 = f(sh1_original) before sh1 is shadowed.
-    let sh0 = sqrt2.mul_add(sh0, sh1);
+    let sh0 = sqrt2.mul_add_relaxed(sh0, sh1);
     let sh1 = sh1 + sh2;
     let sh2 = sh2 + sh3;
 
@@ -906,7 +906,7 @@ fn neon_dct1d_8(
 
     let d0 = b2 + b3;
     let d1 = b2 - b3;
-    let d0 = sqrt2.mul_add(d0, d1);
+    let d0 = sqrt2.mul_add_relaxed(d0, d1);
 
     let fh0 = c0;
     let fh1 = d0;
@@ -933,7 +933,7 @@ fn neon_dct1d_8(
 
     let g0 = e2 + e3;
     let g1 = e2 - e3;
-    let g0 = sqrt2.mul_add(g0, g1);
+    let g0 = sqrt2.mul_add_relaxed(g0, g1);
 
     let sh0 = f0;
     let sh1 = g0;
@@ -941,7 +941,7 @@ fn neon_dct1d_8(
     let sh3 = g1;
 
     // B transform on second half
-    let sh0 = sqrt2.mul_add(sh0, sh1);
+    let sh0 = sqrt2.mul_add_relaxed(sh0, sh1);
     let sh1 = sh1 + sh2;
     let sh2 = sh2 + sh3;
 

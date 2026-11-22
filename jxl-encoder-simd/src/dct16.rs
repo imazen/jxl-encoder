@@ -288,7 +288,7 @@ fn dct1d_4_batch(token: archmage::X64V3Token, v: &mut [magetypes::simd::f32x8; 4
     let sh1 = s0 - s1;
 
     // B transform: sh0 = sqrt2 * sh0 + sh1
-    let sh0 = sqrt2.mul_add(sh0, sh1);
+    let sh0 = sqrt2.mul_add_relaxed(sh0, sh1);
 
     // InverseEvenOdd interleave: [fh0, sh0, fh1, sh1]
     v[0] = fh0;
@@ -334,7 +334,7 @@ fn dct1d_8_batch(token: archmage::X64V3Token, v: &mut [magetypes::simd::f32x8; 8
 
     // B transform on second half
     // sh[0] = sqrt2 * sh[0] + sh[1]; sh[1] += sh[2]; sh[2] += sh[3]
-    second_half[0] = sqrt2.mul_add(second_half[0], second_half[1]);
+    second_half[0] = sqrt2.mul_add_relaxed(second_half[0], second_half[1]);
     second_half[1] += second_half[2];
     second_half[2] += second_half[3];
 
@@ -400,7 +400,7 @@ pub(crate) fn dct1d_16_batch(token: archmage::X64V3Token, v: &mut [magetypes::si
     // B transform on second half
     // sh[0] = sqrt2 * sh[0] + sh[1]
     // sh[i] += sh[i+1] for i = 1..7
-    second_half[0] = sqrt2.mul_add(second_half[0], second_half[1]);
+    second_half[0] = sqrt2.mul_add_relaxed(second_half[0], second_half[1]);
     second_half[1] += second_half[2];
     second_half[2] += second_half[3];
     second_half[3] += second_half[4];
@@ -910,7 +910,7 @@ fn dct1d_4_batch_neon(token: archmage::NeonToken, v: &mut [magetypes::simd::f32x
     let s1 = s1 * wc4_1;
     let sh0 = s0 + s1;
     let sh1 = s0 - s1;
-    let sh0 = sqrt2.mul_add(sh0, sh1);
+    let sh0 = sqrt2.mul_add_relaxed(sh0, sh1);
 
     v[0] = fh0;
     v[1] = sh0;
@@ -945,7 +945,7 @@ fn dct1d_8_batch_neon(token: archmage::NeonToken, v: &mut [magetypes::simd::f32x
     let mut second_half = [s0, s1, s2, s3];
     dct1d_4_batch_neon(token, &mut second_half);
 
-    second_half[0] = sqrt2.mul_add(second_half[0], second_half[1]);
+    second_half[0] = sqrt2.mul_add_relaxed(second_half[0], second_half[1]);
     second_half[1] += second_half[2];
     second_half[2] += second_half[3];
 
@@ -1001,7 +1001,7 @@ pub(crate) fn dct1d_16_batch_neon(
     let mut second_half = [s0, s1, s2, s3, s4, s5, s6, s7];
     dct1d_8_batch_neon(token, &mut second_half);
 
-    second_half[0] = sqrt2.mul_add(second_half[0], second_half[1]);
+    second_half[0] = sqrt2.mul_add_relaxed(second_half[0], second_half[1]);
     second_half[1] += second_half[2];
     second_half[2] += second_half[3];
     second_half[3] += second_half[4];

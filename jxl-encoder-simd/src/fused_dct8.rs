@@ -255,7 +255,7 @@ pub fn fused_dct8_entropy_avx2(
 
             // Entropy: sqrt(|round(val)|) * cost_delta
             let q = rval.abs();
-            entropy_acc = q.sqrt().mul_add(cost_delta_v, entropy_acc);
+            entropy_acc = q.sqrt().mul_add_relaxed(cost_delta_v, entropy_acc);
 
             // Count non-zero quantized coefficients
             let nz_mask = q.simd_ne(zero);
