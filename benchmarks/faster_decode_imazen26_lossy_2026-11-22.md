@@ -377,3 +377,31 @@ throughput ratios range from 0.997× to 1.025× and p95 latency ratios from
 [Paired timings and p95](faster_decode_imazen26_photo_filter_holdout_timing_2026-11-22.tsv).
 Raw timings, the frozen plan and commands are in
 `imazen26-lossy/d1-d4-backlit-holdout` on i270.
+
+### Backlit d1 tuning follow-up
+
+This second trial uses the known holdout to test a rate-for-speed trade.
+At effort 7, the d0.95 tier-0 rendition disables EPF and Gaborish, retains
+patch eligibility and uses 5.98% more bytes than the d1 tier-0 reference.
+SSIMULACRA2 improves by 0.575 in jxl-rs and 0.577 in Zen. Butteraugli
+changes by −0.039 and +0.019 respectively, within both guards. It is the
+smallest filter-free candidate in the new bracket that passes both
+decoders' quality guards.
+
+With the same warm allocating RGB8 endpoint, the three-way repeat gives
+1.176× / 1.533× / 1.503× at 1 / 4 / 8 workers. Keeping Gaborish and
+disabling only EPF gives 1.078× / 1.067× / 1.057× at the smaller byte
+count. A/A throughput spans 0.998× to 1.012× and A/A p95 latency spans
+0.945× to 0.980×. The reference and both candidates fully render in
+jxl-rs and djxl v0.12, and all nine same-stream exact RGB8 checks pass.
+
+Using the faster 1237 candidate in the four-photo d1 calculation moves
+the median to 1.20111× / 1.51068× at 1 / 8 workers. Median byte growth is
++1.36% and p90 is +5.98%, with four fast choices. This passes the numerical
+targets for the measured per-image choices. The independent holdout
+above keeps its original settings and verdict.
+
+The bracket and repeat ran for 98 s and 50 s with 2.60 and 2.57 GiB peak
+RSS. [Candidate scores and hashes](faster_decode_imazen26_backlit_bracket_quality_2026-11-22.tsv).
+[Paired timing and p95](faster_decode_imazen26_backlit_bracket_timing_2026-11-22.tsv).
+The raw runs are in `imazen26-lossy/d1-backlit-gaborish-bracket` on i270.

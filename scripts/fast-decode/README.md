@@ -72,3 +72,9 @@ and only measured candidate bytes as the primary ranking criterion.
 ```sh
 python3 scripts/fast-decode/select_scored_filters.py LOSSY_RUN_DIR SELECTED.tsv
 ```
+
+The `photo-filter-backlit-bracket` stage tests lower distances on image
+1237 with EPF and Gaborish off. It times the ranked selection and the
+smallest distinct filter-free stream within the 10% rate cap that passes
+both rendered-quality guards. Keep this tuning bracket separate from
+the frozen `photo-filter-holdout` result.
