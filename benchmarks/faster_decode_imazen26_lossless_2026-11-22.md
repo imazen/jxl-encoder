@@ -488,14 +488,13 @@ and is smaller than either shared alternative.
 | 1447 glacier | Forced 128 px RLE, 129.04 / 616.20 MP/s | −25.45% | 1.162× / 1.282× |
 
 On the aerial image, 256 px plain costs 3.72% more bytes than the
-production RLE stream and improves one-worker throughput by 13.24% in
+production RLE stream and improves one-worker throughput by 13.33% in
 the direct comparison. On the glacier, 128 px RLE costs 8.28% more bytes
 than production and improves eight-worker throughput by 21.42%. On the
 macro photograph, the production stream has the highest paired gain
 at both one and eight workers. Selecting the fastest observed mode
 separately per image and worker leaves the one-worker median at 1.172×.
-This post-hoc result bounds the options tested here. It does not qualify
-a changed selector.
+This post-hoc result bounds the tested alternatives on those photos.
 
 All arms use 990 warm allocating RGB8 samples in total, with three
 interleaved blocks of five observations per arm and A/A. The run takes
