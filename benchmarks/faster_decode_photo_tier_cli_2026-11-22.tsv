@@ -1,0 +1,9 @@
+case	profile	reference_distance	effort	encode_threads	policy	distance	bytes	sha256	fallback
+1069-throughput-d1	throughput	1	7	8	base	1	610759	913509cd5e929d870caf6c2781b9570ec8a7d4143dec9404b71e670c897adf04	color encoding outside the sRGB scoring domain
+1619-balanced-d1	balanced	1	7	8	base	1	2047818	436076182aa153a46be53ea605ea5a5a53e8610dd3157eded0e297d542a98b0d	no candidate meets rendered quality and byte limits
+1619-balanced-d4	balanced	4	7	8	tier1-epf0	4.1	558838	7ae10f8e7c357bc07c1c888c93646e84e3849d15815ecfe50757a59c9c2bb7a8	
+1619-throughput-d1	throughput	1	7	8	tier1-epf0-gaboff	0.955	2233859	9abb118c2b6323d7dddc1bcdf83d0b940239b1b02e9a29702be3ca7fc488f8cc	
+alpha	throughput	4	3	1	base	4	7343	09e873b8816772e9d6953470a5a0b7e7c847eacf9cb937a5a49e98de05234173	pixel layout outside the opaque RGB8 profile
+hdr	throughput	4	3	1	base	4	1063319	6d7377df92623f103600cac0d5d21ae96d7eda1f6a1145c297f229472a58faf3	pixel layout outside the opaque RGB8 profile
+rgb	balanced	1	5	1	tier0-epf0	0.98	15842	04ee1c45c0fa269b5f66da78460f61e1bcab25527ef30fe06dbf48bb3253025b	
+tiny	throughput	4	3	1	base	4	86	488e3b590390f63a7cc06185a34aea2fe2c96fc2333b7d81e4eb4a34185457d9	dimensions below the metric minimum

@@ -87,3 +87,30 @@ the tier-0 reference as the fallback for each band independently.
 The `photo-transform-dc-bracket` stage tests transform limits and DC
 coding on the known saturated-photo holdout near d1. A distinct minimum-rate
 eligible stream per configuration proceeds to timing and exact readback.
+
+## Opt-in lossy photo tiers
+
+Use `encode_photo.py` to select a decode-oriented JPEG XL encode at distance
+1 or 4 from a still PNG. Both tiers prefer fewer restoration filters, then
+smaller files, after checking rendered RGB8 with Zen and the pinned jxl-rs
+oracle. Both keep normal patch selection and the requested encode effort.
+The `balanced` tier allows up to 3% extra bytes per file. The `throughput`
+tier allows up to 10%. Each uses the original tier-0 stream when its quality
+and rate limits leave no eligible candidate.
+
+```sh
+python3 scripts/fast-decode/encode_photo.py photo.png output.jxl \
+    --profile throughput --distance 1 --effort 7 --threads 8 \
+    --encoder "$CJXL_RS" --decoder "$ZENJXL" --jxl-rs "$JXL_RS" \
+    --djxl "$DJXL_V012" --scorer "$SCORE_RGB8"
+```
+
+The search operates on opaque SDR RGB8 sources with sRGB samples, including
+the full-range sRGB cICP tag. Other PNG layouts and color encodings go through
+the same tier-0 command as the reference. The final stream must render in
+djxl v0.12 before publication. Existing output files are preserved.
+
+This stand-alone tool evaluates up to nine encodes per image. Its evidence
+directory defaults to `output.jxl.fast-decode` and keeps the selection,
+candidate streams, measurements, byte hashes, and exact commands. Use
+`--evidence` for a different new directory.

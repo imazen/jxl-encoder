@@ -78,16 +78,21 @@ def score(scorer, rgb, name):
 
 
 class Study:
-    def __init__(self, args):
+    def __init__(self, args, *, cohort=None, effort=7, threads=8, affinity=True):
         self.args = args
+        self.effort = effort
+        self.threads = threads
+        self.affinity = affinity
         self.out = args.output
         self.out.mkdir()
         self.streams = self.out / "streams"
         self.streams.mkdir()
         self.commands = (self.out / "commands.log").open("x", buffering=1)
         self.key = {}
-        with args.cohort.open() as stream:
-            self.cohort = {row["id"]: row for row in csv.DictReader(stream, delimiter="\t")}
+        if cohort is None:
+            with args.cohort.open() as stream:
+                cohort = {row["id"]: row for row in csv.DictReader(stream, delimiter="\t")}
+        self.cohort = cohort
         names = ("encoder", "decoder", "baseline_decoder", "djxl", "jxl_rs", "scorer")
         self.manifest = {
             "stage": args.stage,
@@ -95,8 +100,9 @@ class Study:
             "binaries": {k: {"path": str(getattr(args, k)), "sha256": digest(getattr(args, k))}
                          for k in names},
             "policies": POLICIES,
-            "pins": PINS,
-            "effort": 7,
+            "pins": PINS if affinity else {},
+            "effort": effort,
+            "encode_threads": threads,
             "quality_ladder": QUALITY_LADDER,
             "timing_blocks": args.blocks,
         }
@@ -104,6 +110,9 @@ class Study:
         if "v0.12.0 a7a9c78" not in version:
             raise ValueError(f"wrong libjxl reference: {version}")
         self.manifest["djxl_version"] = version.strip()
+
+    def pinned(self, cpus, command):
+        return ["taskset", "-c", cpus, *command] if self.affinity else command
 
     def run(self, command):
         cmd = list(map(str, command))
@@ -124,8 +133,9 @@ class Study:
         with os.fdopen(read_fd, "rb") as reader, os.fdopen(write_fd, "wb") as writer:
             path.symlink_to(f"/dev/fd/{write_fd}")
             try:
-                cmd = ["taskset", "-c", PINS[workers], str(decoder), str(stream), str(path),
-                       *flags, "--data-type", "u8"]
+                cmd = self.pinned(PINS[workers], [
+                    str(decoder), str(stream), str(path), *flags, "--data-type", "u8",
+                ])
                 print(json.dumps(cmd), file=self.commands)
                 with subprocess.Popen(cmd, pass_fds=(write_fd,), stdout=self.commands,
                                       stderr=self.commands) as process:
@@ -145,7 +155,10 @@ class Study:
 
     def source(self, image_id, size):
         row = self.cohort[image_id]
-        path, = self.args.corpus.rglob(row["url"].rsplit("/", 1)[1])
+        if "path" in row:
+            path = Path(row["path"])
+        else:
+            path, = self.args.corpus.rglob(row["url"].rsplit("/", 1)[1])
         if digest(path) != row["sha256"]:
             raise ValueError(f"source hash mismatch: {path}")
         with Image.open(path) as image:
@@ -174,12 +187,15 @@ class Study:
         return path, raw, w, h
 
     def encode(self, source, stream, distance, policy):
-        self.run(["taskset", "-c", "0-7", self.args.encoder, source, stream,
-                  "--threads", 8, "-e", 7, "-d", distance, *POLICIES[policy]])
+        self.run(self.pinned("0-7", [
+            self.args.encoder, source, stream, "--threads", self.threads,
+            "-e", self.effort, "-d", distance, *POLICIES[policy],
+        ]))
 
     def score_target(self, reference, row, rgb):
-        cmd = ["taskset", "-c", "2", str(self.args.scorer), str(row["width"]),
-               str(row["height"]), str(reference)]
+        cmd = self.pinned("2", [
+            str(self.args.scorer), str(row["width"]), str(row["height"]), str(reference),
+        ])
         print(json.dumps(cmd), file=self.commands)
         with subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                               stderr=self.commands) as scorer:
@@ -201,7 +217,9 @@ class Study:
             writer.writeheader()
             for image_id, size, arms in cases:
                 source, raw, w, h = self.source(image_id, size)
-                score_cmd = ["taskset", "-c", "2", str(self.args.scorer), str(w), str(h), str(raw)]
+                score_cmd = self.pinned("2", [
+                    str(self.args.scorer), str(w), str(h), str(raw),
+                ])
                 print(json.dumps(score_cmd), file=self.commands)
                 with subprocess.Popen(score_cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                       stderr=self.commands) as scorer:
@@ -499,10 +517,15 @@ def photo_filter_cases(stage):
     ) for image_id in ("1007", "1019", "1069")]
 
 
-def photo_filter_matches(study, cases, bands, ranking, compare_filter_free=False):
+def photo_filter_matches(study, cases, bands, ranking, *, compare_filter_free=False, max_growth=10):
     selected = {}
-    filters = {"tier0-epf0-gaboff": 0, "tier0-epf0": 1,
-               "tier1-epf0": 1, "tier1-epf2": 3}
+    filters = {
+        "tier0-epf0-gaboff": 0,
+        "tier1-epf0-gaboff": 0,
+        "tier0-epf0": 1,
+        "tier1-epf0": 1,
+        "tier1-epf2": 3,
+    }
     for image_id, size, arms in cases:
         for band in bands:
             base = study.key[image_id, size, "base", band]
@@ -510,7 +533,7 @@ def photo_filter_matches(study, cases, bands, ranking, compare_filter_free=False
                           for policy, distance in arms
                           if policy != "base" and (distance < 2) == (band == 1)]
             feasible = [row for row in candidates
-                        if 10 * row["bytes"] <= 11 * base["bytes"]
+                        if 100 * row["bytes"] <= (100 + max_growth) * base["bytes"]
                         and quality_passes(base, row) and quality_passes(base, row, "target_")]
             if ranking == "rate-then-filters":
                 # The per-file 3% preference precedes filter count.

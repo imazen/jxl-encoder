@@ -475,3 +475,33 @@ table. The complete run uses 2.62 GiB peak RSS over 161 seconds.
 [Quality and hashes](faster_decode_imazen26_transform_dc_quality_2026-11-22.tsv).
 [Paired timing and p95](faster_decode_imazen26_transform_dc_timing_2026-11-22.tsv).
 The raw run is in `imazen26-lossy/d1-transform-dc-bracket` on i270.
+
+### Opt-in balanced and throughput tools
+
+The [photo encoder tool](../scripts/fast-decode/README.md#opt-in-lossy-photo-tiers)
+scores delivered images before choosing a configuration. The two tiers
+use the same rendered-quality guards. Balanced allows 3% growth per file
+and throughput allows 10%. Each retains the reference when no candidate
+passes. Both preserve the caller's encode effort.
+
+At d1 on 1619, balanced returns the exact tier-0 reference. Throughput
+returns the measured d0.955 tier-1 filter-free stream, adding 9.08% bytes
+for 1.381× / 1.869× at one and eight workers. At d4, balanced returns
+the measured tier-1 EPF-off d4.10 stream, adding 1.67% bytes for
+2.258× / 1.711×. These three outputs have the same hashes as the timed
+files above. Taken together, the two tiers give callers a different
+rate and decode tradeoff on the same input.
+
+The source PNG for night photo 1069 explicitly signals Display P3.
+The earlier scores use the RGB sample-domain endpoint. The standalone
+tool limits its sRGB-based quality search to its sRGB scoring domain
+and reproduces the tier-0 stream for 1069. The RGBA8, 16-bit PQ and
+7×9 controls also return byte-identical ordinary encodes. A separate
+odd-sized RGB8 case verifies that effort 5 and one encode thread reach
+every encode. An existing destination is preserved.
+
+[Tool results and hashes](faster_decode_photo_tier_cli_2026-11-22.tsv).
+The successful native replay uses 2.60 GiB peak RSS over 78 seconds.
+The four format and effort controls use 0.49 GiB over three seconds.
+Raw inputs, candidate streams and logs are in
+`imazen26-lossy/photo-profile-cli` on i270.
