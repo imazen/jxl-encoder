@@ -1,0 +1,12 @@
+[package]
+name = "score-rgb8"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+butteraugli = { git = "https://github.com/imazen/butteraugli", rev = "d2466a4eaad67f8008838c0caa452484300214ca" }
+fast-ssim2 = { version = "=0.7.1", features = ["imgref"] }
+imgref = "=1.12.3"
