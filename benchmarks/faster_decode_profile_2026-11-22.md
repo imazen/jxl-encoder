@@ -2,17 +2,24 @@
 
 ## Qualification goal
 
-Ship opt-in JPEG XL profiles that decode photographs faster. Qualify each
-photo profile independently on throughput, rate and conformance. Graphics
-retain their own settings or fall back to tier 0. Measure only on i270 at
-1, 4 and 8 workers with the direct paired harness and a small
+Ship opt-in JPEG XL profiles that decode photographs faster. Keep distinct
+tiers when they offer different speed, rate or quality tradeoffs. Qualify
+each tier on its photo workload at 1, 4 and 8 workers on i270 using the
+direct paired harness and a small
 [feature-specific imazen-26 cohort](faster_decode_imazen26.tsv).
+Verify graphics conformance, report graphics speed and rate separately,
+and allow graphics to keep their own settings or fall back to tier 0.
 
-| Profile | Median throughput at 1 / 8 workers | Rate and quality |
+| Photo profile | Median throughput at 1 / 8 workers | Rate and quality |
 |---|---|---|
-| Balanced lossless, tier 1 with 128 px groups and patches | ≥2.00× / 1.75× vs effort-7 tier 0, photos and graphics separately at ≥1 MP | Exact pixels. Photo growth ≤6% median / 12% p90, graphics ≤16% / 25% |
-| Throughput lossless, fixed Gradient and prefix with size-selected distance-1 RLE | ≥1.25× / 1.10× vs `--fast-decode -g 0` by class at ≥1 MP, and ≥120 / 550 MP/s | Exact pixels. Bytes at or below comparator in every cell and ≤50% on the repeat-heavy screen median |
-| Lossy with patches and independent EPF | ≥1.20× / 1.15× on ≥1 MP photos near d1 and d4 separately, at matched quality | ≤3% median / 10% p90 byte growth. Per SDR image, SSIMULACRA2 drop ≤0.25 and Butteraugli increase ≤max(0.01, 2%). Count fallbacks and require ≥75% fast choices |
+| Balanced lossless, tier 1 with patches | ≥2.00× / 1.75× vs effort-7 tier 0 on photos ≥1 MP | Exact pixels. Growth ≤6% median / 12% p90 |
+| Throughput lossless, fixed Gradient and prefix with size-selected distance-1 RLE | ≥1.25× / 1.10× vs `--fast-decode -g 0` on photos ≥1 MP, and ≥120 / 550 MP/s | Exact pixels. Bytes at or below comparator in every photo cell |
+| Lossy with patches and independent EPF | ≥1.20× / 1.15× on photos ≥1 MP near d1 and d4 separately, at matched quality | ≤3% median / 10% p90 byte growth. Per SDR image, SSIMULACRA2 drop ≤0.25 and Butteraugli increase ≤max(0.01, 2%). Count fallbacks and require ≥75% fast choices |
+
+Measure lossless group widths separately. For graphics-specific trials,
+retain the balanced reference of ≤16% median and ≤25% p90 byte growth,
+and the throughput reference of ≤50% of the stock bytes on the median
+repeat-heavy screen.
 
 Keep lossy options that shift quality in the sweep. Hold the reference
 band fixed and adjust candidate distance to match rendered quality.
