@@ -182,3 +182,25 @@ The direct same-decoder comparisons used 0.12 GiB over 68 seconds.
 [Direct paired results](faster_decode_imazen26_channel_prefix_2026-11-22.tsv).
 Full commands, stream hashes and alpha controls are in
 `imazen26-lossless/per-channel-prefix`.
+
+### Whole-system retest with row-bounded RLE
+
+The decoder's [row-span optimization](https://github.com/imazen/zenjxl-decoder/commit/c266f4c7f2b602b66d5d5f678917dffd645a119f)
+ships on main. It consumes repeated residuals in rows and copies
+zero-residual spans when the Gradient state allows it. The system retest
+uses the frozen per-channel bitstreams from the preceding study and an
+experimental decoder with fused literals and run lengths.
+
+Across eight source and size pairs, each file is smaller than the
+stock `--fast-decode -g 0` stream and all 24 cross-system readbacks
+match. The terminal uses 17.35% of its stock bytes and reaches
+3.027× / 1.995× paired throughput at one and eight workers. The
+scanned-text source uses 96.40% of its stock bytes and reaches
+1.182× / 1.184×. The baseline system uses the landed decoder.
+
+The [whole-system measurements](https://github.com/imazen/zenjxl-decoder/blob/de5a5ef3fda613a6d858ef7e3a76c72057e07906/benchmarks/lossless_rle_throughput_2026-11-22.md)
+also include the 16-group scheduling repeat. With that variant the
+native photo medians reach 125.82 / 540.53 MP/s and 1.380× / 1.341× the
+stock throughput at one and eight workers. The native eight-worker
+absolute target remains open. Peak RSS in the direct system comparisons
+was 0.11 GiB with standard batches and 0.12 GiB in the 16-group repeat.
