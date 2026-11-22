@@ -677,3 +677,45 @@ The encode check and warm run used 0.58 GiB peak RSS over 439 s.
 Cold and caller-owned replay used 0.30 GiB over 414 s.
 The raw timing samples, input and binary hashes, and commands are
 under `imazen26-lossless/balanced-photo-rate-ablation` on i270.
+
+### Balanced tree layout at fixed 128 px on photographs
+
+Keep tier 1 at effort 7, 128 px groups and patch selection available.
+Force the global, local or Hybrid MA tree layout and test Optimal
+LZ77 in the automatic layout as a separate arm. Use the same four
+native photos and frozen source hashes from the width comparison.
+Encoder `7fca6d6b` and decoder `8496962d` are the same pinned builds.
+
+| Layout | Median bytes vs tier 0 | p90 bytes vs tier 0 |
+|---|---:|---:|
+| Global | +5.83% | +9.13% |
+| Hybrid | +5.08% | +8.07% |
+| Local | +6.99% | +9.39% |
+| Auto with Optimal LZ77 | +6.99% | +9.39% |
+
+Local and Optimal each reproduce all four automatic-layout hashes.
+Every one of the 16 streams reproduces exact RGB8 source samples
+through Zen at 1/4/8 workers, jxl-rs and djxl v0.12.
+
+Both smaller layouts proceed to warm allocating timing on i270,
+with three interleaved blocks of five per arm and A/A at 1/4/8
+workers. All 24 stock-to-candidate PNG16 comparisons match.
+
+| Layout | Paired throughput vs tier 0, 1 / 4 / 8 workers | Class p95 latency ratio, 1 / 4 / 8 workers |
+|---|---:|---:|
+| Global | 0.921× / 0.909× / 0.916× | 1.138 / 1.226 / 1.236 |
+| Hybrid | 1.252× / 1.192× / 1.169× | 0.824 / 0.886 / 0.891 |
+
+The global and Hybrid variants meet both byte limits and miss both
+speed thresholds. The largest per-image global p95 is 1.272× at
+four workers on 1012. A/A is 1.154× in that cell. All class A/A p95
+ratios are at most 1.010×. The 128 px automatic layout remains the
+allocating-speed option. The 256 px balanced option meets the
+rate and speed bars on this panel.
+
+[Candidate rates and hashes](faster_decode_imazen26_photo_layout_rate_2026-11-22.tsv),
+[per-file timings](faster_decode_imazen26_photo_layout_timing_2026-11-22.tsv)
+and [class p95](faster_decode_imazen26_photo_layout_p95_2026-11-22.tsv).
+The full run took 1,044 s at 1.05 GiB peak RSS under `run-heavy`.
+Raw samples, exact commands and source and binary hashes are under
+`imazen26-lossless/balanced-photo-layout-ablation` on i270.

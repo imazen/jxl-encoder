@@ -1,0 +1,7 @@
+endpoint	workers	profile_latency_p95_ratio	aa_latency_p95_ratio
+g128-global	1	1.137731	0.999546
+g128-global	4	1.226014	1.009693
+g128-global	8	1.235925	0.998815
+g128-hybrid	1	0.823834	0.994187
+g128-hybrid	4	0.886192	1.002151
+g128-hybrid	8	0.891373	1.001923
