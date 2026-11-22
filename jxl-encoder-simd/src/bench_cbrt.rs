@@ -10,6 +10,18 @@
 
 use archmage::prelude::*;
 
+#[inline(always)]
+fn cbrt_scalar(x: f32) -> f32 {
+    #[cfg(feature = "std")]
+    {
+        x.cbrt()
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        libm::cbrtf(x)
+    }
+}
+
 /// libjxl `base/fast_math-inl.h::CubeRootAndAdd` (with `add == 0`).
 ///
 /// Newton on the INVERSE cube root: multiplies and FMAs only, **no divisions**,
@@ -68,7 +80,7 @@ pub fn cbrt_lowp_batch_impl(token: Token, src: &[f32], out: &mut [f32], n: usize
             .store(os);
     }
     for i in (chunks * 8)..n {
-        out[i] = src[i].cbrt();
+        out[i] = cbrt_scalar(src[i]);
     }
 }
 
@@ -84,7 +96,7 @@ pub fn cbrt_midp_batch_impl(token: Token, src: &[f32], out: &mut [f32], n: usize
             .store(os);
     }
     for i in (chunks * 8)..n {
-        out[i] = src[i].cbrt();
+        out[i] = cbrt_scalar(src[i]);
     }
 }
 
@@ -172,7 +184,7 @@ pub fn cbrt_lowp_vecguess_batch_impl(token: Token, src: &[f32], out: &mut [f32],
         f32x8::blend(x.simd_eq(zero), x, y | sign).store(os);
     }
     for i in (chunks * 8)..n {
-        out[i] = src[i].cbrt();
+        out[i] = cbrt_scalar(src[i]);
     }
 }
 

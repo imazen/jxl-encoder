@@ -224,6 +224,8 @@ pub(crate) fn cbrt_libjxl_scalar(x: f32) -> f32 {
 /// not added by the caller (`(r2*x) + add` would round twice).
 #[inline(always)]
 fn cbrt_libjxl_scalar_add(x: f32, add: f32) -> f32 {
+    use crate::scalarmath::mul_add_f32 as fma;
+
     const K_EXP_BIAS: i32 = 0x5480_0000;
     const K_EXP_MUL: i32 = 0x002A_AAAA;
     let xa_3 = x * (1.0 / 3.0);
@@ -236,12 +238,12 @@ fn cbrt_libjxl_scalar_add(x: f32, add: f32) -> f32 {
     let mut r = f32::from_bits(m2 as u32);
     for _ in 0..3 {
         let r2 = r * r;
-        r = (-xa_3).mul_add(r2 * r2, (4.0 / 3.0) * r);
+        r = fma(-xa_3, r2 * r2, (4.0 / 3.0) * r);
     }
     let r2 = r * r;
-    r = (1.0f32 / 3.0).mul_add((-x).mul_add(r2 * r2, r), r);
+    r = fma(1.0 / 3.0, fma(-x, r2 * r2, r), r);
     let r2 = r * r;
-    r2.mul_add(x, add)
+    fma(r2, x, add)
 }
 
 // --- Scalar fallbacks ---
