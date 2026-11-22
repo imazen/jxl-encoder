@@ -95,3 +95,26 @@ each size. The byte-first selector misses the photo throughput gates.
 The locked release build and all checks used 1.17 GiB peak RSS over
 78 seconds. Reproduction and raw block timings are in
 `imazen26-lossless/local-prefix-v3` under the run folder.
+
+### What distance-1 runs add
+
+The [prefix-only ablation](https://github.com/imazen/jxl-encoder/commit/bf72bf330f9f3edd1e5b34e2f83dc62401db12bd)
+keeps both shared and local prefix choices and removes the RLE choice.
+All eight ablation streams passed the same six exact readbacks. Relative
+to shared prefix, local prefix alone reduced bytes by 0.11–1.08% on the
+terminal, plot and web page. Against that local-prefix experiment, allowing
+distance-1 runs reduced bytes by 82.05%, 87.57% and 62.42%, respectively.
+
+The two stream sets were also interleaved directly on the same fused
+decoder binary. RLE improved the three graphics cases by 1.27–1.38× at
+one worker and 1.19–1.34× at eight. On the textured photo, it reduced
+bytes by 0.77–2.32% and slowed one-worker decoding by 8.45–10.95%.
+For the native smooth photo it reduced bytes by 22.59% and improved
+one-worker decoding by 5.65%. This split explains why a byte-only
+selector can help repeat-heavy content and still miss the photo gate.
+
+[Direct ablation results](faster_decode_imazen26_rle_ablation_2026-11-22.tsv)
+retain the A/A control, stream hashes and all worker counts. The
+prefix-only build and validation used 1.16 GiB peak RSS. The direct
+comparison used 0.13 GiB peak RSS and 33 seconds. Raw blocks and
+reproduction commands are in `imazen26-lossless/rle-direct-ablation`.
