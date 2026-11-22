@@ -1075,8 +1075,8 @@ impl OwnedEntropyCode {
 
 /// One prefix code per context. Keeping the distance context separate makes
 /// a constant distance symbol a zero-bit code even in a mixed stream.
-pub(crate) fn build_entropy_code_unclustered(
-    tokens: &[Token],
+pub(crate) fn build_entropy_code_unclustered<'a>(
+    tokens: impl IntoIterator<Item = &'a Token>,
     configs: &[HybridUintConfig],
     lz77: Option<&Lz77Params>,
 ) -> OwnedEntropyCode {

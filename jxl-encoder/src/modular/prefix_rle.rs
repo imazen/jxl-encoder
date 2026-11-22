@@ -20,7 +20,10 @@ use super::{
     channel::ModularImage,
     encode::{write_gradient_tree_tokens, write_tree_histogram_for_gradient},
     encode_tree::write_tree,
-    section::collect_all_residuals_with_predictor,
+    section::{
+        GlobalTransforms, GroupTransforms, collect_all_residuals_with_predictor,
+        write_global_transforms_full, write_group_header,
+    },
     tree::{Tree, assign_sequential_contexts, per_channel_tree},
 };
 
@@ -89,6 +92,78 @@ pub(super) fn try_local_prefix(
         }
     }
     Ok(())
+}
+
+/// Collect each group's tokens independently, then build one code for the frame.
+pub(super) fn write_shared_prefix(
+    groups: &[ModularImage],
+    transforms: &GlobalTransforms,
+    global: &mut BitWriter,
+    use_rle: bool,
+    budget: Option<&Arc<MemoryBudget>>,
+    stop: Option<&dyn enough::Stop>,
+) -> Result<Vec<Vec<u8>>> {
+    let channels = groups[0].channels.len();
+    let mut tree = per_channel_tree(channels);
+    assign_sequential_contexts(&mut tree);
+
+    let mut params = Lz77Params::new(channels, true);
+    params.enabled = true;
+    let lz77 = use_rle.then_some(&params);
+    let num_samples = groups
+        .iter()
+        .flat_map(|group| &group.channels)
+        .map(|channel| channel.width() as u64 * channel.height() as u64)
+        .sum::<u64>();
+    let _reservation = MemoryBudget::reserve_opt(
+        budget,
+        num_samples * (size_of::<u32>() + size_of::<Token>()) as u64,
+    )?;
+    let fallible = budget.is_some_and(|budget| budget.is_fallible());
+    let mut group_tokens = Vec::with_capacity(groups.len());
+    for group in groups {
+        check_stop(stop)?;
+        let (residuals, _) = collect_all_residuals_with_predictor(group, 5);
+        let mut tokens = vec_with_capacity_fallible(fallible, residuals.len())?;
+        let mut start = 0;
+        for (index, channel) in group.channels.iter().enumerate() {
+            let context = tree[channels - 1 + index].context_id;
+            let end = start + channel.width() * channel.height();
+            let values = &residuals[start..end];
+            if use_rle {
+                append_runs(values, context, &params, &mut tokens, stop)?;
+            } else {
+                tokens.extend(values.iter().map(|&value| Token::new(context, value)));
+            }
+            start = end;
+        }
+        group_tokens.push(tokens);
+    }
+    let mut configs = [HybridUintConfig::new(4, 2, 0); 5];
+    configs[channels] = HybridUintConfig::new(0, 0, 0);
+    let code = build_entropy_code_unclustered(
+        group_tokens.iter().flatten(),
+        &configs[..channels + usize::from(use_rle)],
+        lz77,
+    );
+    global.write(1, 1)?; // default LfQuantFactors
+    global.write(1, 1)?; // global MA tree
+    write_tree(global, &tree)?;
+    write_lz77_header(lz77, global)?;
+    code.write_header(global)?;
+    global.write(1, 1)?; // use the global tree
+    global.write(1, 1)?; // default weighted predictor parameters
+    write_global_transforms_full(global, transforms)?;
+    global.zero_pad_to_byte();
+
+    let transforms = GroupTransforms::none();
+    crate::parallel::parallel_map_result(groups.len(), |group| {
+        let mut writer = BitWriter::new();
+        write_group_header(&mut writer, None, &transforms)?;
+        code.write_tokens_owned(&group_tokens[group], lz77, &mut writer)?;
+        writer.zero_pad_to_byte();
+        Ok(writer.finish())
+    })
 }
 
 fn append_runs(

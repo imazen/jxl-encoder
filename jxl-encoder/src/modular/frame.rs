@@ -1200,7 +1200,31 @@ impl FrameEncoder {
 
         #[cfg(feature = "__env_var_diagnostics")]
         let _fr_t0 = crate::clock::Instant::now();
-        let global_state = if local_trees_mode {
+        let shared_prefix_groups = if self.options.modular_knobs.fixed_prefix_rle
+            && self.options.enable_lz77
+            && !self.options.use_ans
+            && self.options.dc_quant_custom.is_none()
+            && meta_image.is_none()
+            && lf_images.is_empty()
+            && (2..=4).contains(&group_images[0].channels.len())
+        {
+            match std::env::var("JXL_EXPERIMENT_SHARED_PREFIX").as_deref() {
+                Ok(mode @ ("plain" | "rle")) => Some(super::prefix_rle::write_shared_prefix(
+                    &group_images,
+                    &global_transforms,
+                    &mut lf_global_writer,
+                    mode == "rle",
+                    self.budget.as_ref(),
+                    stop,
+                )?),
+                _ => None,
+            }
+        } else {
+            None
+        };
+        let global_state = if shared_prefix_groups.is_some() {
+            None
+        } else if local_trees_mode {
             // LfGlobal for the sectioned mode: the proven global-tree byte
             // shape; stream 0 codes ONLY the meta channels (palette /
             // ChannelCompact — with its own tiny learned tree) or, without
@@ -1377,7 +1401,11 @@ impl FrameEncoder {
         let budget = self.budget.as_ref();
         #[cfg(feature = "__env_var_diagnostics")]
         let _fr_t_groups = crate::clock::Instant::now();
-        let (pass_group_data, all_picked_local): (Vec<Vec<u8>>, bool) = if local_trees_mode {
+        let (pass_group_data, all_picked_local): (Vec<Vec<u8>>, bool) = if let Some(groups) =
+            shared_prefix_groups
+        {
+            (groups, false)
+        } else if local_trees_mode {
             // Whole-image-equivalent stride for every per-group gather (see
             // the local writer's stride note).
             let full_pixels: usize = group_images

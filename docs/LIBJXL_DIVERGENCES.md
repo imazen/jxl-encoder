@@ -315,6 +315,14 @@ Numeric constants where ours differ from libjxl's reference values.
 
 ## D. Algorithm-choice divergences
 
+The shared-prefix experiment uses one frame-wide table per Gradient channel
+with independently reset group streams. It compares plain prefix coding and
+distance-1 RLE on an experiment branch through
+`JXL_EXPERIMENT_SHARED_PREFIX`. The fixed-prefix experiment otherwise
+compares actual section sizes using its local prefix tables. libjxl v0.12
+does not expose this experiment.
+
+
 Where we pick a different algorithm or skip a libjxl path.
 
 ### D-harness: how a divergence in this section gets LOCALISED (T4, 2026-08-31)
