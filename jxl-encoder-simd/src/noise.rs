@@ -500,7 +500,7 @@ pub fn denoise_channel_wasm128(
                     let off = row_start + ((px as i32 + dx) as usize);
                     let v = f32x4::from_slice_t(token, &orig[off..]);
                     sum_v = sum_v + v;
-                    sum_sq_v = v.mul_add(v, sum_sq_v);
+                    sum_sq_v = v.mul_add_relaxed(v, sum_sq_v);
                 }
             }
 

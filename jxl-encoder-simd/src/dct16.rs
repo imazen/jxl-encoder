@@ -1257,7 +1257,7 @@ fn dct1d_4_batch_wasm128(token: archmage::Wasm128Token, v: &mut [magetypes::simd
     let s1 = s1 * wc4_1;
     let sh0 = s0 + s1;
     let sh1 = s0 - s1;
-    let sh0 = sqrt2.mul_add(sh0, sh1);
+    let sh0 = sqrt2.mul_add_relaxed(sh0, sh1);
 
     v[0] = fh0;
     v[1] = sh0;
@@ -1292,7 +1292,7 @@ fn dct1d_8_batch_wasm128(token: archmage::Wasm128Token, v: &mut [magetypes::simd
     let mut second_half = [s0, s1, s2, s3];
     dct1d_4_batch_wasm128(token, &mut second_half);
 
-    second_half[0] = sqrt2.mul_add(second_half[0], second_half[1]);
+    second_half[0] = sqrt2.mul_add_relaxed(second_half[0], second_half[1]);
     second_half[1] += second_half[2];
     second_half[2] += second_half[3];
 
@@ -1348,7 +1348,7 @@ pub(crate) fn dct1d_16_batch_wasm128(
     let mut second_half = [s0, s1, s2, s3, s4, s5, s6, s7];
     dct1d_8_batch_wasm128(token, &mut second_half);
 
-    second_half[0] = sqrt2.mul_add(second_half[0], second_half[1]);
+    second_half[0] = sqrt2.mul_add_relaxed(second_half[0], second_half[1]);
     second_half[1] += second_half[2];
     second_half[2] += second_half[3];
     second_half[3] += second_half[4];

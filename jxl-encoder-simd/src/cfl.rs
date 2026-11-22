@@ -521,8 +521,8 @@ pub fn find_best_multiplier_wasm128(
         let s = f32x4::from_slice_t(token, &values_s[i..]);
         let a = inv_cf * m;
         let b = base_v * m - s;
-        acc_aa = a.mul_add(a, acc_aa);
-        acc_ab = a.mul_add(b, acc_ab);
+        acc_aa = a.mul_add_relaxed(a, acc_aa);
+        acc_ab = a.mul_add_relaxed(b, acc_ab);
         i += 4;
     }
 

@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Upgrade `archmage` and `magetypes` to `0.9.33` (`jxl-encoder`, `jxl-encoder-simd`, `Cargo.lock`), advance `.github/sibling-revisions.tsv` `imazen/zensimx` pin to `abec986d` for `archmage-macros` compatibility, and migrate deprecated `magetypes` `mul_add` calls in `jxl-encoder-simd` WASM128 kernels to `mul_add_relaxed`.
+
 - Reject unsupported extra-channel counts before pixel work or header writes.
 - Forward lossy animation alpha distance/squeeze settings and select matching float-alpha header coding.
 - Bound specialized lossy alpha tree alphabets with HybridUint for large multipliers, preserving quantizers and alpha sample choices.

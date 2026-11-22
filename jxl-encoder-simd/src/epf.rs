@@ -1523,9 +1523,9 @@ pub fn epf_step2_wasm128(
                     (cx - nx).abs() * ch_w_x + (cy - ny).abs() * ch_w_y + (cb - nb).abs() * ch_w_b;
                 let w = (sad * eff_is + one).max(zero_v);
                 total_w += w;
-                sum_x = w.mul_add(nx, sum_x);
-                sum_y = w.mul_add(ny, sum_y);
-                sum_b = w.mul_add(nb, sum_b);
+                sum_x = w.mul_add_relaxed(nx, sum_x);
+                sum_y = w.mul_add_relaxed(ny, sum_y);
+                sum_b = w.mul_add_relaxed(nb, sum_b);
 
                 // Bottom
                 let nx = f32x4::from_slice_t(token, &in_x[rb + hx..]);
@@ -1535,9 +1535,9 @@ pub fn epf_step2_wasm128(
                     (cx - nx).abs() * ch_w_x + (cy - ny).abs() * ch_w_y + (cb - nb).abs() * ch_w_b;
                 let w = (sad * eff_is + one).max(zero_v);
                 total_w += w;
-                sum_x = w.mul_add(nx, sum_x);
-                sum_y = w.mul_add(ny, sum_y);
-                sum_b = w.mul_add(nb, sum_b);
+                sum_x = w.mul_add_relaxed(nx, sum_x);
+                sum_y = w.mul_add_relaxed(ny, sum_y);
+                sum_b = w.mul_add_relaxed(nb, sum_b);
 
                 // Left
                 let nx = f32x4::from_slice_t(token, &in_x[r0 + hx - 1..]);
@@ -1547,9 +1547,9 @@ pub fn epf_step2_wasm128(
                     (cx - nx).abs() * ch_w_x + (cy - ny).abs() * ch_w_y + (cb - nb).abs() * ch_w_b;
                 let w = (sad * eff_is + one).max(zero_v);
                 total_w += w;
-                sum_x = w.mul_add(nx, sum_x);
-                sum_y = w.mul_add(ny, sum_y);
-                sum_b = w.mul_add(nb, sum_b);
+                sum_x = w.mul_add_relaxed(nx, sum_x);
+                sum_y = w.mul_add_relaxed(ny, sum_y);
+                sum_b = w.mul_add_relaxed(nb, sum_b);
 
                 // Right
                 let nx = f32x4::from_slice_t(token, &in_x[r0 + hx + 1..]);
@@ -1559,9 +1559,9 @@ pub fn epf_step2_wasm128(
                     (cx - nx).abs() * ch_w_x + (cy - ny).abs() * ch_w_y + (cb - nb).abs() * ch_w_b;
                 let w = (sad * eff_is + one).max(zero_v);
                 total_w += w;
-                sum_x = w.mul_add(nx, sum_x);
-                sum_y = w.mul_add(ny, sum_y);
-                sum_b = w.mul_add(nb, sum_b);
+                sum_x = w.mul_add_relaxed(nx, sum_x);
+                sum_y = w.mul_add_relaxed(ny, sum_y);
+                sum_b = w.mul_add_relaxed(nb, sum_b);
 
                 let inv_tw = total_w.recip();
                 let out_arr_x: &mut [f32; 4] = (&mut orow_x[hx..hx + 4]).try_into().unwrap();
@@ -1799,9 +1799,9 @@ pub fn epf_step1_wasm128(
                     let nx = f32x4::from_slice_t(token, &in_x[r_m1 + hx..]);
                     let ny = f32x4::from_slice_t(token, &in_y[r_m1 + hx..]);
                     let nb = f32x4::from_slice_t(token, &in_b[r_m1 + hx..]);
-                    sum_x = w.mul_add(nx, sum_x);
-                    sum_y = w.mul_add(ny, sum_y);
-                    sum_b = w.mul_add(nb, sum_b);
+                    sum_x = w.mul_add_relaxed(nx, sum_x);
+                    sum_y = w.mul_add_relaxed(ny, sum_y);
+                    sum_b = w.mul_add_relaxed(nb, sum_b);
                 }
 
                 // Neighbor: bottom (dy=+1)
@@ -1815,9 +1815,9 @@ pub fn epf_step1_wasm128(
                     let nx = f32x4::from_slice_t(token, &in_x[r_p1 + hx..]);
                     let ny = f32x4::from_slice_t(token, &in_y[r_p1 + hx..]);
                     let nb = f32x4::from_slice_t(token, &in_b[r_p1 + hx..]);
-                    sum_x = w.mul_add(nx, sum_x);
-                    sum_y = w.mul_add(ny, sum_y);
-                    sum_b = w.mul_add(nb, sum_b);
+                    sum_x = w.mul_add_relaxed(nx, sum_x);
+                    sum_y = w.mul_add_relaxed(ny, sum_y);
+                    sum_b = w.mul_add_relaxed(nb, sum_b);
                 }
 
                 // Neighbor: left (dx=-1)
@@ -1831,9 +1831,9 @@ pub fn epf_step1_wasm128(
                     let nx = f32x4::from_slice_t(token, &in_x[r_0 + hx - 1..]);
                     let ny = f32x4::from_slice_t(token, &in_y[r_0 + hx - 1..]);
                     let nb = f32x4::from_slice_t(token, &in_b[r_0 + hx - 1..]);
-                    sum_x = w.mul_add(nx, sum_x);
-                    sum_y = w.mul_add(ny, sum_y);
-                    sum_b = w.mul_add(nb, sum_b);
+                    sum_x = w.mul_add_relaxed(nx, sum_x);
+                    sum_y = w.mul_add_relaxed(ny, sum_y);
+                    sum_b = w.mul_add_relaxed(nb, sum_b);
                 }
 
                 // Neighbor: right (dx=+1)
@@ -1847,9 +1847,9 @@ pub fn epf_step1_wasm128(
                     let nx = f32x4::from_slice_t(token, &in_x[r_0 + hx + 1..]);
                     let ny = f32x4::from_slice_t(token, &in_y[r_0 + hx + 1..]);
                     let nb = f32x4::from_slice_t(token, &in_b[r_0 + hx + 1..]);
-                    sum_x = w.mul_add(nx, sum_x);
-                    sum_y = w.mul_add(ny, sum_y);
-                    sum_b = w.mul_add(nb, sum_b);
+                    sum_x = w.mul_add_relaxed(nx, sum_x);
+                    sum_y = w.mul_add_relaxed(ny, sum_y);
+                    sum_b = w.mul_add_relaxed(nb, sum_b);
                 }
 
                 // Normalize and store

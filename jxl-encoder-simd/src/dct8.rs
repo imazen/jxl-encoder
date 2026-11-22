@@ -1310,7 +1310,7 @@ fn wasm128_dct1d_8(
 
     let d0 = b2 + b3;
     let d1 = b2 - b3;
-    let d0 = sqrt2.mul_add(d0, d1);
+    let d0 = sqrt2.mul_add_relaxed(d0, d1);
 
     let fh0 = c0;
     let fh1 = d0;
@@ -1335,14 +1335,14 @@ fn wasm128_dct1d_8(
 
     let g0 = e2 + e3;
     let g1 = e2 - e3;
-    let g0 = sqrt2.mul_add(g0, g1);
+    let g0 = sqrt2.mul_add_relaxed(g0, g1);
 
     let sh0 = f0;
     let sh1 = g0;
     let sh2 = f1;
     let sh3 = g1;
 
-    let sh0 = sqrt2.mul_add(sh0, sh1);
+    let sh0 = sqrt2.mul_add_relaxed(sh0, sh1);
     let sh1 = sh1 + sh2;
     let sh2 = sh2 + sh3;
 

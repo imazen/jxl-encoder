@@ -863,7 +863,7 @@ pub(crate) fn dct1d_64_batch_wasm128(
     }
     crate::dct32::dct1d_32_batch_wasm128(token, &mut s);
 
-    s[0] = sqrt2.mul_add(s[0], s[1]);
+    s[0] = sqrt2.mul_add_relaxed(s[0], s[1]);
     for i in 1..31 {
         s[i] += s[i + 1];
     }
