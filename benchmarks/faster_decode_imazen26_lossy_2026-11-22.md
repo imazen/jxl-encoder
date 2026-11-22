@@ -106,13 +106,50 @@ d4 photo grid, tier 4 reaches the guards on Zen and jxl-rs at distance
 
 Near d1, the 1007 finalist at distance 1.05 reduces bytes by 4.69%
 and misses Zen's Butteraugli guard. On 1019, the sampled d1 grid has
-no jxl-rs quality match within the 10% byte ceiling. The native-size
-trial above covers tier 1. Tier 4 remains a d4 candidate for the
-native and patch-heavy cases.
+no jxl-rs quality match within the 10% byte ceiling.
 
 The fine-grid and verification run used 0.55 GiB peak RSS over
 40 seconds. [Tier-4 timings and jxl-rs scores](faster_decode_imazen26_lossy_tier4_2026-11-22.tsv)
 and [Zen scores](faster_decode_imazen26_lossy_tier4_target_2026-11-22.tsv).
+
+At 12 MP near d4, candidate selection used both renderers before
+timing. Tier 4 measured **2.594× / 2.660×** median throughput at
+one and eight workers, for **+7.40%** median bytes. The textured photo
+1007 passed at d3.9 with +9.07% bytes, and smooth 1019 passed at d4.4
+with +5.74%. The median rate exceeds the 3% target. At d4, tier 4
+on 1007 improves Zen SSIMULACRA2 by 3.29 and increases Butteraugli
+by 0.1500, so that rung exceeds the 0.0882 Butteraugli allowance.
+
+The concurrent tier-1 filter controls measured 1.632× / 1.373×
+median throughput and +2.14% median bytes, including two EPF passes
+on 1007 and EPF off on 1019. The worst A/A p95 ratio was 1.062×
+across six source and worker cells. Nine timed streams render in
+both independent decoders, and all 27 Zen revision and worker-count
+comparisons are exact. The native run used 2.69 GiB peak RSS over
+354 seconds.
+[Native dual-endpoint quality grid](faster_decode_imazen26_lossy_tier4_native_grid_2026-11-22.tsv)
+and [timings](faster_decode_imazen26_lossy_tier4_native_2026-11-22.tsv).
+
+On smooth 1019, extending the search through d4.8 found a smaller
+eligible file at d4.55. It grows by **2.48%** and decodes **3.571× /
+3.404×** faster at one and eight workers. Both renderers pass the
+quality guards. Zen's changes are +0.0557 SSIMULACRA2 and −0.1741
+Butteraugli. The smaller d4.60 file misses the Butteraugli guard.
+
+Using this tier-4 file for 1019 and the measured tier-1 EPF2 file for
+1007 yields **+1.69%** median bytes and **2.395× / 2.269×** median
+throughput at one and eight workers, against each photo's d4 tier-0
+stream. Both tier-0 streams reproduce byte-for-byte with `--no-patches`.
+These are two per-image choices. A production selector still needs
+held-out evidence and patch-heavy controls. The two patch controls used
+1.26 GiB peak RSS over three seconds.
+
+Six overlapping renditions reproduced the bytes and both pairs of
+quality scores exactly. All five timed streams render in both
+independent decoders and pass 15 exact Zen revision and worker-count
+comparisons. The refinement used 2.61 GiB peak RSS over 192 seconds.
+[Fine quality grid](faster_decode_imazen26_lossy_tier4_native_refine_grid_2026-11-22.tsv)
+and [timings](faster_decode_imazen26_lossy_tier4_native_refine_2026-11-22.tsv).
 
 ## Repeated crop timings
 

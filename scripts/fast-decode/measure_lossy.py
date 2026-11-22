@@ -157,9 +157,25 @@ class Study:
         self.run(["taskset", "-c", "0-7", self.args.encoder, source, stream,
                   "--threads", 8, "-e", 7, "-d", distance, *POLICIES[policy]])
 
-    def measure_quality(self, cases):
+    def score_target(self, reference, row, rgb):
+        cmd = ["taskset", "-c", "2", str(self.args.scorer), str(row["width"]),
+               str(row["height"]), str(reference)]
+        print(json.dumps(cmd), file=self.commands)
+        with subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                              stderr=self.commands) as scorer:
+            try:
+                return score(scorer, rgb, row["file"])
+            finally:
+                scorer.stdin.close()
+                if code := scorer.wait():
+                    raise subprocess.CalledProcessError(code, cmd)
+
+    def measure_quality(self, cases, check_target=False):
         fields = ("id", "size", "width", "height", "policy", "distance", "bytes",
                   "ssim2", "butteraugli", "stream_sha256", "rgb_sha256", "file")
+        if check_target:
+            fields += ("target_ssim2", "target_butteraugli")
+        self.manifest["match_target_decoder"] = check_target
         with (self.out / "quality.tsv").open("x", newline="", buffering=1) as evidence:
             writer = csv.DictWriter(evidence, fieldnames=fields, delimiter="\t", lineterminator="\n")
             writer.writeheader()
@@ -179,6 +195,9 @@ class Study:
                             row = dict(zip(fields, (image_id, size, w, h, policy, d, stream.stat().st_size,
                                                     *scores, digest(stream),
                                                     hashlib.sha256(rgb).hexdigest(), name)))
+                            if check_target:
+                                target = self.read_rgb(stream, w, h, self.args.decoder)
+                                row["target_ssim2"], row["target_butteraugli"] = self.score_target(raw, row, target)
                             writer.writerow(row)
                             self.key[image_id, size, policy, d] = row
                     finally:
@@ -198,7 +217,8 @@ class Study:
                     arms = [r for (i, s, p, d), r in self.key.items()
                             if (i, s, p) == (image_id, size, policy)
                             and abs(d - band) <= (0.25 if band == 1 else 0.81)]
-                    feasible = [r for r in arms if quality_passes(base, r) and r["bytes"] <= 1.1 * base["bytes"]]
+                    feasible = [r for r in arms if quality_passes(base, r) and r["bytes"] <= 1.1 * base["bytes"]
+                                and ("target_ssim2" not in base or quality_passes(base, r, "target_"))]
                     if feasible:
                         candidates.append((policy, min(feasible, key=lambda r: (r["bytes"], abs(r["distance"] - band)))))
                 selected[image_id, size, band] = candidates
@@ -290,22 +310,18 @@ class Study:
                     writer.writerow((name, workers, *hashes))
                     if workers == 1:
                         reference = measured / f"{row['id']}-{row['size']}.rgb"
-                        cmd = ["taskset", "-c", "2", str(self.args.scorer), str(row["width"]),
-                               str(row["height"]), str(reference)]
-                        print(json.dumps(cmd), file=self.commands)
-                        with subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                              stderr=self.commands) as scorer:
-                            values = score(scorer, rgb[1], name)
-                            scorer.stdin.close()
-                            if code := scorer.wait():
-                                raise subprocess.CalledProcessError(code, cmd)
+                        values = self.score_target(reference, row, rgb[1])
+                        if "target_ssim2" in row and values != (row["target_ssim2"], row["target_butteraugli"]):
+                            raise ValueError(f"target quality scores changed during readback: {name}")
                         quality.writerow((name, *values))
         return len(unique) * len(PINS)
 
 
-def quality_passes(base, arm):
-    return (arm["ssim2"] - base["ssim2"] >= -0.25 and
-            arm["butteraugli"] - base["butteraugli"] <= max(0.01, 0.02 * base["butteraugli"]))
+def quality_passes(base, arm, prefix=""):
+    ssim2 = prefix + "ssim2"
+    butteraugli = prefix + "butteraugli"
+    return (arm[ssim2] - base[ssim2] >= -0.25 and
+            arm[butteraugli] - base[butteraugli] <= max(0.01, 0.02 * base[butteraugli]))
 
 
 def match_cases():
@@ -346,13 +362,29 @@ def tier4_cases():
         yield image_id, "1024", anchors + [("tier4", d) for d in distances]
 
 
+def native_tier4_cases(refine=False):
+    if refine:
+        images = ("1019",)
+        distances = (4.4, 4.42, 4.44, 4.46, 4.48, 4.5, 4.55, 4.6, 4.7, 4.8)
+    else:
+        images = ("1007", "1019")
+        distances = (3.8, 3.9, 4, 4.05, 4.1, 4.15, 4.2, 4.3, 4.4)
+    for image_id in images:
+        yield image_id, "native", [
+            ("base", 4), ("tier1", 4), ("tier1-epf2", 4),
+            ("tier1-epf2", 4.08), ("tier1-epf0", 4.08),
+            *(("tier4", d) for d in distances),
+        ]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("output", "cohort", "corpus", "encoder", "decoder", "baseline_decoder", "djxl", "jxl_rs", "scorer"):
         parser.add_argument(name, type=Path)
     parser.add_argument("--stage", choices=("match", "refine", "native", "ladder",
                                             "ladder-gaboff", "ladder-text", "ladder-tier4",
-                                            "tier4-match", "verify", "confirm"),
+                                            "tier4-match", "tier4-native", "tier4-native-refine",
+                                            "verify", "confirm"),
                         default="match")
     parser.add_argument("--measured", type=Path)
     parser.add_argument("--blocks", type=int, default=3)
@@ -362,7 +394,7 @@ def main():
     if args.blocks < 3:
         parser.error("--blocks requires at least three interleaved blocks")
     study = Study(args)
-    if args.stage in ("match", "refine", "native", "tier4-match"):
+    if args.stage in ("match", "refine", "native", "tier4-match", "tier4-native", "tier4-native-refine"):
         if args.stage == "match":
             study.measure_quality(match_cases())
             selected = study.prepare_timing(BANDS, FAST_POLICIES)
@@ -372,6 +404,12 @@ def main():
         elif args.stage == "tier4-match":
             study.measure_quality(tier4_cases())
             selected = study.prepare_timing(BANDS, ("tier4",))
+        elif args.stage in ("tier4-native", "tier4-native-refine"):
+            study.measure_quality(
+                native_tier4_cases(refine=args.stage == "tier4-native-refine"),
+                check_target=True,
+            )
+            selected = study.prepare_timing((4,), ("tier1-epf2", "tier1-epf0", "tier4"))
         else:
             study.measure_quality(native_cases())
             selected = study.prepare_timing(BANDS, FAST_POLICIES + GABORISH_POLICIES)

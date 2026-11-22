@@ -33,6 +33,11 @@ python3 scripts/fast-decode/summarize_lossy.py "$OUT" "$SUMMARY"
   provides the tier-4 diagnostic on all five shapes.
 - `tier4-match` refines the tier-4 distance around d1 and d4 on the
   two photos, then times the measured quality matches within the byte limit.
+- `tier4-native` refines d4 at 12 MP. Candidate selection requires both the
+  independent jxl-rs and the measured Zen RGB8 outputs to clear the guards.
+  The results also include the best measured tier-1 filter choices.
+- `tier4-native-refine` extends the smooth photo's d4 search to measure
+  how far tier 4 can reduce rate while holding quality.
 - `verify --measured MATCH_DIR` checks exact RGB8 for both timed decoder
   binaries across measured worker counts and scores the target decoder.
 - `confirm --measured MATCH_DIR --blocks 9` repeats the photo timing
