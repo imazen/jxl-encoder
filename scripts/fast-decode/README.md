@@ -38,6 +38,9 @@ python3 scripts/fast-decode/summarize_lossy.py "$OUT" "$SUMMARY"
   The results also include the best measured tier-1 filter choices.
 - `tier4-native-refine` extends the smooth photo's d4 search to measure
   how far tier 4 can reduce rate while holding quality.
+- `palette-grid` compares exact lossless graphics streams across Modular
+  group sizes, palette caps and channel compaction. It checks the source
+  pixels in three decoders before timing distinct streams.
 - `verify --measured MATCH_DIR` checks exact RGB8 for both timed decoder
   binaries across measured worker counts and scores the target decoder.
 - `confirm --measured MATCH_DIR --blocks 9` repeats the photo timing

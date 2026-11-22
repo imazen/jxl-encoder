@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-"""Summarize paired decode timings and quality guards for measured VarDCT streams."""
+"""Summarize paired decode timings and the measured JPEG XL streams."""
 
 import argparse
 from collections import defaultdict
@@ -28,8 +28,11 @@ def summary(measured):
             if row["arm"] in paired[key]:
                 raise ValueError(f"duplicate sample: {key} {row['arm']}")
             paired[key][row["arm"]] = row
-    fields = ["id", "size", "band", "arm", "distance", "bytes", "byte_ratio",
-              "ssim2_delta", "butteraugli_delta", "quality_pass", "sha256"]
+    lossless = manifest["stage"] == "palette-grid"
+    fields = ["id", "size", "band", "arm", "bytes", "byte_ratio", "sha256"]
+    if not lossless:
+        fields = ["id", "size", "band", "arm", "distance", "bytes", "byte_ratio",
+                  "ssim2_delta", "butteraugli_delta", "quality_pass", "sha256"]
     timing_fields = ["throughput", "paired_throughput_ratio", "p95_latency_ratio", "p95_us"]
     fields.extend(f"{name}_{workers}w" for workers in PINS for name in timing_fields)
     yield fields
@@ -59,11 +62,15 @@ def summary(measured):
                          tail / base_p95, tail)
                 by_arm[arm].extend(f"{value:.6f}" for value in items)
         for arm, row in expected.items():
-            yield [source, size, band, arm, row["distance"], row["bytes"],
-                   f"{row['bytes'] / base['bytes']:.6f}",
-                   f"{row['ssim2'] - base['ssim2']:.6f}",
-                   f"{row['butteraugli'] - base['butteraugli']:.6f}",
-                   int(quality_passes(base, row)), row["stream_sha256"], *by_arm[arm]]
+            values = [source, size, band, arm]
+            if not lossless:
+                values.append(row["distance"])
+            values.extend((row["bytes"], f"{row['bytes'] / base['bytes']:.6f}"))
+            if not lossless:
+                values.extend((f"{row['ssim2'] - base['ssim2']:.6f}",
+                               f"{row['butteraugli'] - base['butteraugli']:.6f}",
+                               int(quality_passes(base, row))))
+            yield [*values, row["stream_sha256"], *by_arm[arm]]
     if paired:
         raise ValueError("unmatched timing rows")
 

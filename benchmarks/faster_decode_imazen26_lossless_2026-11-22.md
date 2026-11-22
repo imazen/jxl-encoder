@@ -28,6 +28,36 @@ size, the aliased plot also exceeds the byte budget and the mixed web
 page misses the one-worker target. A single unconditional tier-1 policy
 therefore fails the compact cohort.
 
+### Palette caps and group size
+
+The effort-7 grid varies the palette cap and channel compaction independently,
+and compares 128, 256 and 512 px Modular groups. All 90 streams reproduce the
+source samples through Zen at one, four and eight workers and through both
+independent decoders. Each timed arm uses 25 individually recorded warm
+decodes at each worker count. The encoder is `f574a317`, the timing decoder is
+`88ce5198`, and A/A repeats the tier-0 stream.
+
+| Native graphic | Tier-1 choice | Byte growth | Throughput at 1 / 8 workers |
+|---|---|---:|---:|
+| 8457 terminal | 128 px, palette cap 4,096 | +6.53% | 6.851× / 2.096× |
+| 7026 plot | 128 px, stock palette cap | +35.47% | 2.024× / 1.774× |
+| 7026 plot | 256 px, stock palette cap | +13.14% | 1.374× / 1.433× |
+| 8106 mixed page | 128 px, stock palette cap | +16.84% | 1.945× / 2.134× |
+
+The 4,096-color cap meets the rate and throughput thresholds on the
+terminal at 128 px. Disabling palettes on the plot grows the 128 px file
+from 8,719 to 18,250 bytes, and changing a positive cap does not move
+its bytes. The mixed page has bit-identical native streams across all
+tested palette caps. The three 128 px selections have a median byte
+growth of 16.84% and p90 of 35.47%. Switching the plot to 256 px cuts
+the median byte growth to 13.14% and the one-worker throughput median
+to 1.945×. The complete graphics target remains open.
+
+[Exact stream grid](faster_decode_imazen26_palette_grid_2026-11-22.tsv)
+and [paired timing and p95](faster_decode_imazen26_palette_timing_2026-11-22.tsv).
+The grid ran for 117 seconds at 0.19 GiB peak RSS. The raw records and
+commands are in the `imazen26-lossy/palette-grid` run directory on i270.
+
 ## Throughput lossless
 
 The dedicated two-symbol decoder compared against its parent

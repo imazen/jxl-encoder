@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-"""Measure VarDCT filter candidates on pinned imazen-26 SDR inputs."""
+"""Measure JPEG XL decoding profiles on pinned imazen-26 SDR inputs."""
 
 import argparse
 import csv
@@ -33,6 +33,20 @@ POLICIES = {
 FAST_POLICIES = ("tier1-epf0", "tier1-epf1", "tier1-epf2")
 GABORISH_POLICIES = ("tier1-gaboff", "tier1-epf0-gaboff", "tier1-epf1-gaboff")
 QUALITY_LADDER = tuple(range(5, 100, 5)) + (99,)
+MODULAR_128 = ("--faster-decoding", "1", "-g", "0")
+MODULAR_PALETTE = {
+    "base": (),
+    "tier0-g128": ("-g", "0"),
+    "tier1-g128": MODULAR_128,
+    "tier1-g256": ("--faster-decoding", "1", "-g", "1"),
+    "tier1-g512": ("--faster-decoding", "1", "-g", "2"),
+    "palette-off": (*MODULAR_128, "--modular-palette-colors", "0"),
+    "palette64": (*MODULAR_128, "--modular-palette-colors", "64"),
+    "palette256": (*MODULAR_128, "--modular-palette-colors", "256"),
+    "palette4096": (*MODULAR_128, "--modular-palette-colors", "4096"),
+    "compact-off": (*MODULAR_128, "--modular-channel-colors-global-percent", "0",
+                    "--modular-channel-colors-group-percent", "0"),
+}
 
 
 def digest(path):
@@ -257,6 +271,68 @@ class Study:
                                                  name, row["file"], kind, pixels, parsed[2]))
                 print("timing complete", image_id, size, band, flush=True)
 
+    def exact_readbacks(self, stream, reference, width, height):
+        for decoder in (self.args.decoder, self.args.jxl_rs):
+            workers_to_check = PINS if decoder == self.args.decoder else (1,)
+            for workers in workers_to_check:
+                actual = self.read_rgb(stream, width, height,
+                                       decoder if decoder == self.args.decoder else None, workers)
+                if actual != reference:
+                    raise ValueError(f"source RGB8 mismatch: {stream} via {decoder} at {workers} workers")
+        cmd = ["taskset", "-c", "2", str(self.args.djxl), str(stream), "-",
+               "--output_format", "ppm", "--num_threads=0"]
+        print(json.dumps(cmd), file=self.commands)
+        result = subprocess.run(cmd, capture_output=True)
+        print(result.stderr.decode(errors="replace"), file=self.commands)
+        result.check_returncode()
+        header = re.match(rb"P6\s+(\d+)\s+(\d+)\s+(255|65535)\r?\n", result.stdout)
+        if not header or tuple(map(int, header.groups()[:2])) != (width, height):
+            raise ValueError(f"bad djxl readback: {stream}")
+        raster = result.stdout[header.end():]
+        if header[3] == b"65535":
+            exact = raster[::2] == raster[1::2] == reference
+        else:
+            exact = raster == reference
+        if not exact:
+            raise ValueError(f"djxl source RGB8 mismatch: {stream}")
+
+    def measure_palette_grid(self):
+        self.manifest["policies"] = MODULAR_PALETTE
+        fields = ("id", "size", "width", "height", "policy", "bytes", "stream_sha256", "file")
+        selected = {}
+        with (self.out / "palette.tsv").open("x", newline="", buffering=1) as output:
+            writer = csv.DictWriter(output, fieldnames=fields, delimiter="\t", lineterminator="\n")
+            writer.writeheader()
+            for image_id in ("8457", "7026", "8106"):
+                for size in ("64", "256", "native"):
+                    rows = {}
+                    src, raw, w, h = self.source(image_id, size)
+                    reference = raw.read_bytes()
+                    for policy, flags in MODULAR_PALETTE.items():
+                        name = f"{image_id}-{size}-{policy}.jxl"
+                        stream = self.streams / name
+                        self.run(["taskset", "-c", "0-7", self.args.encoder, src, stream,
+                                  "--threads", 8, "-e", 7, "-d", 0, "--lossless", *flags])
+                        self.exact_readbacks(stream, reference, w, h)
+                        row = dict(zip(fields, (image_id, size, w, h, policy, stream.stat().st_size,
+                                                digest(stream), name)))
+                        writer.writerow(row)
+                        rows[policy] = row
+                    best_palette = min((name for name in rows if name.startswith("palette") or name == "compact-off"),
+                                       key=lambda name: rows[name]["bytes"])
+                    policies = ("base", "tier0-g128", "tier1-g128", "tier1-g256", "tier1-g512", best_palette)
+                    arms = []
+                    hashes = set()
+                    for policy in policies:
+                        row = rows[policy]
+                        if row["stream_sha256"] not in hashes:
+                            arms.append((policy, row))
+                            hashes.add(row["stream_sha256"])
+                    selected[image_id, size, 0] = arms
+                    print("lossless grid exact", image_id, size, len(rows), flush=True)
+                    (self.out / "manifest.json").write_text(json.dumps(self.manifest, indent=2) + "\n")
+        return selected
+
     def confirm_photos(self, measured):
         self.streams = measured / "streams"
         candidates = json.loads((measured / "finalists.json").read_text())
@@ -384,7 +460,7 @@ def main():
     parser.add_argument("--stage", choices=("match", "refine", "native", "ladder",
                                             "ladder-gaboff", "ladder-text", "ladder-tier4",
                                             "tier4-match", "tier4-native", "tier4-native-refine",
-                                            "verify", "confirm"),
+                                            "palette-grid", "verify", "confirm"),
                         default="match")
     parser.add_argument("--measured", type=Path)
     parser.add_argument("--blocks", type=int, default=3)
@@ -429,6 +505,13 @@ def main():
             sizes += [("8457", "text256")]
         ladder = [(policy, quality_to_distance(q)) for q in QUALITY_LADDER for policy in policies]
         study.measure_quality((i, s, ladder) for i, s in sizes)
+    elif args.stage == "palette-grid":
+        selected = study.measure_palette_grid()
+        (study.out / "finalists.json").write_text(json.dumps(
+            {f"{i}-{s}-{d}": rows for (i, s, d), rows in selected.items()}, indent=2) + "\n")
+        study.measure_time(selected)
+        (study.out / "complete").write_text(f"{len(selected) * len(MODULAR_PALETTE)} exact streams\n")
+        return
     elif args.stage == "confirm":
         count = study.confirm_photos(args.measured)
         (study.out / "complete").write_text(f"{count} photo timing cells\n")
