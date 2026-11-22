@@ -282,3 +282,29 @@ holdout took 425 seconds at 2.51 GiB peak RSS under `run-heavy`.
 [Paired timing and p95](faster_decode_imazen26_lossy_night_timing_2026-11-22.tsv).
 The quality grid, raw timing and commands are in
 `imazen26-lossy/night-photo-holdout` on i270.
+
+### Native photo rate brackets
+
+Keeping both rendered-quality guards, a finer d4 bracket on smooth
+photo 1019 selects tier 1 with EPF off at distance 4.10. It costs
++2.76% bytes and reaches 2.033× / 1.655× throughput at one and eight
+workers. Replacing its previous d4 selection gives the three native
+photo originals +2.76% median byte growth and 1.531× / 1.411×
+median throughput, with all three using fast settings. The largest
+growth is +6.62%. This is a result for per-image selections on the
+compact cohort.
+
+At d1, adding six intermediate EPF-off distances on night photo 1069
+keeps the same selected stream and +3.69% byte growth. A separate
+trial retaining EPF 1 on 1069 and coarsening the Gaborish-off rendition
+on 1019 finds zero settings within +3% bytes that satisfy both quality
+guards. Both use tier 0 under that tighter per-image trial. The
+frozen d1 policy still clears throughput and exceeds the 3% median
+rate goal on the three native photos.
+
+Both trials retain the reference distance, scores from the two RGB8
+decoders, patched-path permission and the same 1/4/8-worker warm
+interleaved timing method. The native bracket and retained-EPF wrappers
+ran for 187 and 143 seconds at 2.64 and 2.62 GiB peak RSS, respectively.
+[Candidate quality, costs and hashes](faster_decode_imazen26_lossy_photo_brackets_quality_2026-11-22.tsv).
+[Paired timings and fallbacks](faster_decode_imazen26_lossy_photo_brackets_timing_2026-11-22.tsv).

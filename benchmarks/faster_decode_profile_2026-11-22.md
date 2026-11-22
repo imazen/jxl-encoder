@@ -2,11 +2,11 @@
 
 ## Qualification goal
 
-Ship opt-in faster-decode Modular lossless and VarDCT lossy profiles plus
-bit-exact decoder gains. Preserve default bytes, effort control and
-conformance. Measure exclusively on i270 at 1, 4 and 8 workers with the
-direct paired harness. Start with the
-[seven feature-specific imazen-26 inputs](faster_decode_imazen26.tsv).
+Ship opt-in JPEG XL profiles that decode photographs faster. Qualify each
+photo profile independently on throughput, rate and conformance. Graphics
+retain their own settings or fall back to tier 0. Measure only on i270 at
+1, 4 and 8 workers with the direct paired harness and a small
+[feature-specific imazen-26 cohort](faster_decode_imazen26.tsv).
 
 | Profile | Median throughput at 1 / 8 workers | Rate and quality |
 |---|---|---|
