@@ -819,3 +819,42 @@ Encoding and readback take 186 s at 0.58 GiB peak RSS.
 [Per-file rates and hashes](faster_decode_imazen26_balanced_128_tree_shape_2026-11-22.tsv).
 The binary, full commands, raw streams and manifest are under
 `imazen26-lossless/balanced-128-tree-shape` on i270.
+
+#### Warm photo timing on the four-original panel
+
+The 12-property, 192-bucket Gradient setting passes the four-photo rate
+and warm allocating timing bars at fixed 128 px and effort 7. File growth
+is 5.74% median and 7.19% p90 versus ordinary tier 0. The stock tier-1
+comparison uses the same group width.
+
+| Setting | Paired speedup at 1 / 4 / 8 workers | Class p95 latency ratio at 1 / 4 / 8 workers |
+|---|---:|---:|
+| Stock tier 1 | 2.751× / 2.473× / 2.406× | 0.398 / 0.449 / 0.476 |
+| Finer Gradient tree | 2.334× / 2.110× / 2.069× | 0.500 / 0.555 / 0.571 |
+
+On the same tier-0 files, current Zen gives 1.139× and 1.108×
+median speedups over historical Zen at one and eight workers. The
+whole-system comparison gives 2.646× and 2.243× for the finer tree.
+The four selected outputs are source-exact in Zen at 1/4/8 workers,
+jxl-rs and djxl v0.12. The four historical tier-0 inputs also pass
+exact Zen RGB8 at each worker count.
+
+The candidate's one-worker result on crystal display 1012 is
+1.985×. The cohort medians clear 2.00× and 1.75× at one and eight
+workers. The largest pooled A/A p95 ratio is 1.001×. The backlit
+photo 1237 has a one-worker A/A p95 of 1.114× in the individual
+samples. The historical decoder rows retain their separate speed
+and tail results. [Per-file timings and hashes](faster_decode_imazen26_balanced_128_photo_warm_2026-11-24.tsv)
+and [cohort results](faster_decode_imazen26_balanced_128_photo_warm_cohort_2026-11-24.tsv).
+
+Only finished image cells enter these medians. Each cell uses
+three interleaved blocks of five samples per arm and worker count.
+The first run completes three images and its unfinished 1619
+block is invalidated before an independent full replay of 1619.
+The two segments take 558 s at 1.18 GiB, including the rebuild,
+and 196 s at 0.15 GiB under `run-heavy`. Exact readback also
+passes for the two additional test photos 1459 and 2009. Their
+selected files grow by 4.26% and 7.43%. Their performance, cold
+allocation, caller-owned reuse and the graphics timing remain open.
+The runs and raw samples are under
+`imazen26-lossless/balanced-128-tree-timing-2026-11-24`.
