@@ -18,7 +18,7 @@ pub(super) fn encoding(color: HdrColorEncoding) -> Result<ColorEncoding, EncodeE
         TransferFunction::Linear => 8,
         TransferFunction::Srgb => 13,
         TransferFunction::Pq => 16,
-        TransferFunction::Hlg => 18,
+        TransferFunction::Hlg(_) => 18,
         _ => {
             return Err(invalid(
                 "hdr-gainmap: unsupported source transfer function".into(),
@@ -63,7 +63,7 @@ pub(super) struct GainSpace {
 pub(super) fn base_white_nits(color: HdrColorEncoding) -> f32 {
     match color.transfer {
         TransferFunction::Pq => 10_000.0,
-        TransferFunction::Hlg => 1_000.0,
+        TransferFunction::Hlg(_) => 1_000.0,
         _ => 255.0,
     }
 }
@@ -89,10 +89,10 @@ pub(super) fn linear_rgba(
     }
     let light_scale = match color.transfer {
         TransferFunction::Pq => 10_000.0 / target.white_nits,
-        TransferFunction::Hlg => 1_000.0 / target.white_nits,
+        TransferFunction::Hlg(_) => 1_000.0 / target.white_nits,
         _ => 1.0,
     };
-    let hlg = (color.transfer == TransferFunction::Hlg).then(|| {
+    let hlg = (matches!(color.transfer, TransferFunction::Hlg(_))).then(|| {
         (
             crate::api::hlg_ootf_luminances(source_encoding.primaries),
             crate::api::hlg_ootf_gamma(1000.0).expect("1000-nit HLG has non-unity system gamma"),
@@ -167,7 +167,7 @@ pub(super) fn linear_rgba(
                     TransferFunction::Linear => *value,
                     TransferFunction::Srgb => ultrahdr_core::color::transfer::srgb_eotf(*value),
                     TransferFunction::Pq => ultrahdr_core::color::transfer::pq_eotf(*value),
-                    TransferFunction::Hlg => crate::api::hlg_to_linear_f(*value),
+                    TransferFunction::Hlg(_) => crate::api::hlg_to_linear_f(*value),
                     _ => unreachable!("validated transfer function"),
                 };
             }

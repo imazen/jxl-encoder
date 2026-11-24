@@ -36,6 +36,10 @@ bench = false
 # Keep the source overrides aligned with the parent workspace. These are
 # build-time siblings; CI fetches the revisions in .github/sibling-revisions.tsv.
 [patch.crates-io]
+zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "42a0c5c83c5c418950eb528d92d57788f6700bcf" }
+zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "42a0c5c83c5c418950eb528d92d57788f6700bcf" }
+garb = { git = "https://github.com/imazen/garb", rev = "457ff8b9153e9d675a39dc098052b2ffeb6206fa" }
+linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "ae83f19426737635fee3dd16f228681019f52585" }
 
 jxl-oxide = { git = "https://github.com/imazen/jxl-oxide.git", rev = "fd4e2c3" }
 jxl-color = { git = "https://github.com/imazen/jxl-oxide.git", rev = "fd4e2c3" }

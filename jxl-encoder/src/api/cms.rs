@@ -5,10 +5,98 @@
 use crate::EncodeError;
 use crate::budget::{BudgetGuard, MemoryBudget};
 use alloc::{sync::Arc, vec::Vec};
+use moxcms_extended as mox;
+#[cfg(feature = "cms-lcms")]
 use zenpixels_convert::{
-    CmsRequest, CmsSupport, ColorPrimaries, ColorProfileSource, ConvertOptions, GamutPolicy,
-    PixelFormat, PluggableCms, TransferFunction,
+    AlphaMode, CmsBackend, ColorSpace, ImageSpec, RenderingIntent, SampleLayout,
 };
+
+struct FloatRgbTransform {
+    inner: Arc<dyn mox::TransformExecutor<f32> + Send + Sync>,
+    gamma: Option<f32>,
+}
+
+fn build_extended(profile: &[u8]) -> Result<FloatRgbTransform, mox::CmsError> {
+    let mut source = mox::ColorProfile::new_from_cicp(mox::CicpProfile {
+        color_primaries: mox::CicpColorPrimaries::Bt709,
+        transfer_characteristics: mox::TransferCharacteristics::Linear,
+        matrix_coefficients: mox::MatrixCoefficients::Identity,
+        full_range: true,
+    });
+    // Preserve the established linear RGB profile's exact PCS white.
+    let (r, g, b) = (
+        source.red_colorant,
+        source.green_colorant,
+        source.blue_colorant,
+    );
+    let scale = [
+        0.9642 / (r.x + g.x + b.x),
+        1.0 / (r.y + g.y + b.y),
+        0.8249 / (r.z + g.z + b.z),
+    ];
+    for colorant in [
+        &mut source.red_colorant,
+        &mut source.green_colorant,
+        &mut source.blue_colorant,
+    ] {
+        colorant.x *= scale[0];
+        colorant.y *= scale[1];
+        colorant.z *= scale[2];
+    }
+
+    let mut target = mox::ColorProfile::new_from_slice(profile)?;
+    target.cicp = None;
+    if target.red_trc.is_none() && target.gray_trc.is_none() {
+        if target.lut_b_to_a_colorimetric.is_none() {
+            target.lut_b_to_a_colorimetric = target.lut_b_to_a_perceptual.clone();
+        }
+        if target.lut_a_to_b_colorimetric.is_none() {
+            target.lut_a_to_b_colorimetric = target.lut_a_to_b_perceptual.clone();
+        }
+    }
+    let shared_curve = target.red_trc == target.green_trc && target.red_trc == target.blue_trc;
+    let options = mox::TransformOptions {
+        rendering_intent: mox::RenderingIntent::RelativeColorimetric,
+        allow_use_cicp_transfer: false,
+        barycentric_weight_scale: mox::BarycentricWeightScale::High,
+        interpolation_method: mox::InterpolationMethod::Tetrahedral,
+        prefer_fixed_point: false,
+        allow_extended_range_rgb_xyz: shared_curve,
+        ..Default::default()
+    };
+    // The backend's fast power evaluator can produce a finite value when
+    // the exact result overflows. Keep the native float gamma check.
+    let has_luts = target.lut_a_to_b_perceptual.is_some()
+        || target.lut_a_to_b_colorimetric.is_some()
+        || target.lut_a_to_b_saturation.is_some()
+        || target.lut_b_to_a_perceptual.is_some()
+        || target.lut_b_to_a_colorimetric.is_some()
+        || target.lut_b_to_a_saturation.is_some();
+    let gamma = if shared_curve && !has_luts && target.color_space == mox::DataColorSpace::Rgb {
+        match target.red_trc.as_ref() {
+            Some(mox::ToneReprCurve::Lut(curve)) => match curve.as_slice() {
+                [g] if *g != 0 => Some(256.0 / f32::from(*g)),
+                _ => None,
+            },
+            Some(mox::ToneReprCurve::Parametric(curve)) => match curve.as_slice() {
+                [g] if g.is_finite() && *g > 0.0 => Some(1.0 / g),
+                _ => None,
+            },
+            _ => None,
+        }
+    } else {
+        None
+    };
+    if gamma.is_some() {
+        let linear = Some(mox::ToneReprCurve::Lut(Vec::new()));
+        target.red_trc = linear.clone();
+        target.green_trc = linear.clone();
+        target.blue_trc = linear;
+    }
+    let inner =
+        source.create_transform_f32(mox::Layout::Rgb, &target, mox::Layout::Rgb, options)?;
+    Ok(FloatRgbTransform { inner, gamma })
+}
 
 pub(super) struct RgbRows<'a> {
     pub pixels: &'a [f32],
@@ -46,44 +134,41 @@ pub(super) fn rgb_to_icc(
         return Err(invalid("ICC input rows are incomplete"));
     }
     let width = u32::try_from(input.width).map_err(|_| invalid("ICC row width exceeds u32"))?;
-    #[cfg(feature = "cms-lcms")]
-    let sdr_backend: &dyn PluggableCms = &zenpixels_convert::Lcms;
-    #[cfg(not(feature = "cms-lcms"))]
-    let sdr_backend: &dyn PluggableCms = &zenpixels_convert::MoxCms;
-    // The established HDR path detects overflow in extended linear-light
-    // values. Little CMS can return a finite result for the same input.
-    let backend = if input.source_hdr {
-        &zenpixels_convert::MoxCms
-    } else {
-        sdr_backend
+    let config_error = |error: &dyn core::fmt::Display| EncodeError::InvalidConfig {
+        message: format!("source-to-ICC conversion: {error}"),
     };
 
-    let format = PixelFormat::RgbF32.descriptor();
-    let request = CmsRequest::new(
-        ColorProfileSource::PrimariesTransferPair {
-            primaries: ColorPrimaries::Bt709,
-            transfer: TransferFunction::Linear,
-        },
-        ColorProfileSource::Icc(profile),
-        format,
-        format,
-        ConvertOptions::retain_channels().with_gamut_policy(GamutPolicy::PreserveExtended),
-    );
-    let config_error =
-        |error: whereat::At<zenpixels_convert::CmsPluginError>| EncodeError::InvalidConfig {
-            message: format!("source-to-ICC conversion: {error}"),
-        };
-    let mut transform = backend.build(&request).map_err(config_error)?;
-    match &mut transform {
-        CmsSupport::Declined => {
-            return Err(EncodeError::InvalidConfig {
-                message: "requested source-to-ICC conversion is unavailable".into(),
-            });
-        }
-        CmsSupport::Owned(worker) => worker.prepare(width),
-        CmsSupport::Shared(worker) => worker.prepare(width),
-    }
-    .map_err(config_error)?;
+    // Little CMS can return a finite result for an extended input whose
+    // output curve overflows. The HDR contract requires detecting that.
+    #[cfg(feature = "cms-lcms")]
+    let lcms = if input.source_hdr {
+        None
+    } else {
+        let dst = ImageSpec::new(
+            SampleLayout::RGBF32,
+            ColorSpace::Icc {
+                profile: Arc::from(profile),
+                channels: 3,
+                alpha: AlphaMode::None,
+                intent: RenderingIntent::RelativeColorimetric,
+            },
+        );
+        Some(
+            zenpixels_convert::Lcms
+                .build_transform(&ImageSpec::rgbf32_linear(), &dst)
+                .map_err(|e| config_error(&e))?,
+        )
+    };
+    #[cfg(not(feature = "cms-lcms"))]
+    let _ = (width, input.source_hdr);
+    #[cfg(feature = "cms-lcms")]
+    let use_mox = lcms.is_none();
+    #[cfg(not(feature = "cms-lcms"))]
+    let use_mox = true;
+    let mox = use_mox
+        .then(|| build_extended(profile))
+        .transpose()
+        .map_err(|e| config_error(&e))?;
     let output_guard =
         MemoryBudget::reserve_opt(Some(budget), length as u64).map_err(EncodeError::from)?;
     let mut output = crate::budget::vec_with_capacity_fallible::<u8>(fallible, length)
@@ -132,16 +217,30 @@ pub(super) fn rgb_to_icc(
                 "source-to-ICC conversion needs finite source samples",
             ));
         }
-        let src = bytemuck::cast_slice(source);
-        let dst = bytemuck::cast_slice_mut(&mut converted);
-        match &mut transform {
-            CmsSupport::Owned(worker) => worker.try_transform_row(src, dst, width),
-            CmsSupport::Shared(worker) => worker.try_transform_row(src, dst, width),
-            CmsSupport::Declined => unreachable!(),
-        }
-        .map_err(|error| EncodeError::InvalidInput {
+        let row_error = |error: &dyn core::fmt::Display| EncodeError::InvalidInput {
             message: format!("source-to-ICC row conversion: {error}"),
-        })?;
+        };
+        #[cfg(feature = "cms-lcms")]
+        if let Some(transform) = &lcms {
+            transform
+                .transform_row(
+                    bytemuck::cast_slice(source),
+                    bytemuck::cast_slice_mut(&mut converted),
+                    width,
+                )
+                .map_err(|e| row_error(&e))?;
+        }
+        if let Some(transform) = &mox {
+            transform
+                .inner
+                .transform(source, &mut converted)
+                .map_err(|e| row_error(&e))?;
+            if let Some(gamma) = transform.gamma {
+                for value in &mut converted {
+                    *value = value.abs().powf(gamma).copysign(*value);
+                }
+            }
+        }
         for (destination, &sample) in output[y * row_len..][..row_len].iter_mut().zip(&converted) {
             if !sample.is_finite() {
                 return Err(invalid(

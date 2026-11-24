@@ -15,7 +15,7 @@ fn color_prepare_strided_rows_match_packed_without_reading_padding() {
             TransferFunction::Linear,
             TransferFunction::Srgb,
             TransferFunction::Pq,
-            TransferFunction::Hlg,
+            TransferFunction::Hlg(zenpixels_convert::HlgMode::Scene),
         ] {
             let (width, rows) = (9_u32, 2_u32);
             let row = width as usize * layout.bytes_per_pixel();
@@ -362,7 +362,7 @@ fn color_prepare_matches_native_hlg_color_components() {
             HdrPixelLayout::RgbaF32,
             HdrColorEncoding {
                 primaries: ColorPrimaries::Bt2020,
-                transfer: TransferFunction::Hlg,
+                transfer: TransferFunction::Hlg(zenpixels_convert::HlgMode::Scene),
             },
             GainSpace {
                 primaries: ColorPrimaries::Bt2020,
@@ -401,7 +401,7 @@ fn color_prepare_absolute_transfers_share_the_base_white_units() {
                 4e-6_f32,
             ),
             "hlg1000-bt2020" => (
-                TransferFunction::Hlg,
+                TransferFunction::Hlg(zenpixels_convert::HlgMode::Scene),
                 1000.0,
                 [values[0], values[1], values[2]],
                 [values[3], values[4], values[5]],
@@ -488,7 +488,10 @@ fn color_prepare_linear_stays_relative_and_validates_the_white() {
         (TransferFunction::Linear, 255.0),
         (TransferFunction::Srgb, 255.0),
         (TransferFunction::Pq, 10000.0),
-        (TransferFunction::Hlg, 1000.0),
+        (
+            TransferFunction::Hlg(zenpixels_convert::HlgMode::Scene),
+            1000.0,
+        ),
     ] {
         assert_eq!(
             base_white_nits(HdrColorEncoding {

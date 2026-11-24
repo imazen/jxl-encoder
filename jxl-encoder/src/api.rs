@@ -6939,9 +6939,9 @@ impl<'a> EncodeRequest<'a> {
         if matches!(self.config, ConfigRef::Lossy(cfg) if cfg.canonicalize_input) {
             let canonical = canonicalize::prepare(&self, pixels, &preflight.budget)?;
             if let Some((buffer, layout, _guard)) = canonical {
-                let view = buffer.as_slice();
+                let view = buffer.as_view();
                 let mut metadata = self.metadata.cloned().unwrap_or_default();
-                metadata.icc_profile = view.color_context().and_then(|context| context.icc());
+                metadata.icc_profile = buffer.origin().icc.as_deref();
                 let bits_per_sample = if self.layout.is_16bit() && !layout.is_16bit() {
                     None
                 } else {
