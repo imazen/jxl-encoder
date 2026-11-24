@@ -62,7 +62,6 @@ fn build_extended(profile: &[u8]) -> Result<FloatRgbTransform, mox::CmsError> {
         interpolation_method: mox::InterpolationMethod::Tetrahedral,
         prefer_fixed_point: false,
         allow_extended_range_rgb_xyz: shared_curve,
-        ..Default::default()
     };
     // The backend's fast power evaluator can produce a finite value when
     // the exact result overflows. Keep the native float gamma check.
