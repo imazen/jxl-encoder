@@ -216,7 +216,8 @@ fn rgb_sampling_refusal_reaches_bare_recompression_and_nested_callers() {
     let metadata = ultrahdr_core::serialize_iso21496_fmt(
         &ultrahdr_core::GainMapParams::default(),
         ultrahdr_core::Iso21496Format::JxlJhgm,
-    );
+    )
+    .expect("serialize valid ISO gain-map metadata");
     let namespace = b"urn:iso:std:iso:ts:21496:-1\0";
     for (label, input) in [
         ("relative420", rgb_subsampled()),

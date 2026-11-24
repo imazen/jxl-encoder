@@ -240,7 +240,8 @@ fn with_iso_metadata(jpeg: &[u8]) -> Vec<u8> {
     let metadata = ultrahdr_core::serialize_iso21496_fmt(
         &ultrahdr_core::GainMapParams::default(),
         ultrahdr_core::Iso21496Format::JxlJhgm,
-    );
+    )
+    .expect("serialize valid ISO gain-map metadata");
     let mut out = jpeg[..2].to_vec();
     out.extend([0xff, 0xe2]);
     out.extend(

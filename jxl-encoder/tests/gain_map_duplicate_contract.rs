@@ -110,7 +110,8 @@ fn duplicate_gain_map_append_preserves_the_existing_file() {
     let metadata = ultrahdr_core::serialize_iso21496_fmt(
         &ultrahdr_core::GainMapParams::default(),
         ultrahdr_core::Iso21496Format::JxlJhgm,
-    );
+    )
+    .expect("serialize valid ISO gain-map metadata");
     let gain = LosslessConfig::new()
         .with_effort(1)
         .encode(&[42; 15], 5, 3, PixelLayout::Gray8)
@@ -280,7 +281,8 @@ fn malformed_container_boundaries_fail_without_changing_input() {
     let metadata = ultrahdr_core::serialize_iso21496_fmt(
         &ultrahdr_core::GainMapParams::default(),
         ultrahdr_core::Iso21496Format::JxlJhgm,
-    );
+    )
+    .expect("serialize valid ISO gain-map metadata");
     let gain = LosslessConfig::new()
         .with_effort(1)
         .encode(&[42; 15], 5, 3, PixelLayout::Gray8)

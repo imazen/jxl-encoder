@@ -9,7 +9,7 @@ publish = false
 [dependencies]
 jxl-encoder = { path = "../../jxl-encoder", default-features = false, features = ["std", "convenience"] }
 zensim-decoder = { package = "zenjxl-decoder", version = "0.4.0" }
-zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "42a0c5c83c5c418950eb528d92d57788f6700bcf" }
+zenpixels-convert = { version = ">=0.5.0, <0.6.0", features = ["icc-db"] }
 jxl-oxide = "0.12.6"
 enough = "0.4.3"
 
@@ -20,17 +20,17 @@ path = "../../jxl-encoder/tests/animation_contract.rs"
 [patch.crates-io]
 garb = { git = "https://github.com/imazen/garb", rev = "457ff8b9153e9d675a39dc098052b2ffeb6206fa" }
 linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "ae83f19426737635fee3dd16f228681019f52585" }
-zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "42a0c5c83c5c418950eb528d92d57788f6700bcf" }
-zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "42a0c5c83c5c418950eb528d92d57788f6700bcf" }
+zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "e0dba0052a839ecfe17e4c911a3761e793605adf" }
+zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "e0dba0052a839ecfe17e4c911a3761e793605adf" }
 zenjxl-decoder = { git = "https://github.com/imazen/zenjxl-decoder", rev = "e1c366b089b29511ef66f1b5af5d9e208dbff5d1" }
-ultrahdr-core = { git = "https://github.com/imazen/ultrahdr", rev = "607614ce9b1027edac600b52e61c99fe18f5cb46" }
-zenjpeg = { git = "https://github.com/imazen/zenjpeg", rev = "20237e62be7713d405ed471b66a87e715cd5ca41" }
-zenpng = { git = "https://github.com/imazen/zenpng", rev = "b6e759468691c8906b686a8d64732136f5a63518" }
+ultrahdr-core = { git = "https://github.com/imazen/ultrahdr", rev = "a9e3eabc0884b03d2d0ef22627b1b41c03b09589" }
+zenjpeg = { git = "https://github.com/imazen/zenjpeg", rev = "0714703dfe94cb20f2bbd84b10a9aab5949782a6" }
+zenpng = { git = "https://github.com/imazen/zenpng", rev = "1dd8248fa6683d5c3e22eb946a97b1f93996371a" }
 zenflate = { git = "https://github.com/imazen/zenflate", rev = "a0ea03637a2cc9a193e343018ae2cfb1a6c31edd" }
 butteraugli = { git = "https://github.com/imazen/butteraugli", rev = "554a42f832ceffe7a70303d43f3cddcd5a8cd275" }
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "037ef59b57ae003f853a5b6624b173edfee22d6a" }
-zenmeta = { git = "https://github.com/imazen/zencodec", rev = "037ef59b57ae003f853a5b6624b173edfee22d6a" }
-zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "037ef59b57ae003f853a5b6624b173edfee22d6a" }
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "093211c276fbb1781bec1601d7cb6b0fb92f245a" }
+zenmeta = { git = "https://github.com/imazen/zencodec", rev = "093211c276fbb1781bec1601d7cb6b0fb92f245a" }
+zencodec-testkit = { git = "https://github.com/imazen/zencodec", rev = "093211c276fbb1781bec1601d7cb6b0fb92f245a" }
 jxl-oxide = { git = "https://github.com/imazen/jxl-oxide.git", rev = "08395e61c1789f70bd1890fb29682e5aca274efa" }
 jxl-color = { git = "https://github.com/imazen/jxl-oxide.git", rev = "08395e61c1789f70bd1890fb29682e5aca274efa" }
 jxl-image = { git = "https://github.com/imazen/jxl-oxide.git", rev = "08395e61c1789f70bd1890fb29682e5aca274efa" }

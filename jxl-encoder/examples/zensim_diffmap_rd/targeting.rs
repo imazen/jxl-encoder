@@ -12,7 +12,9 @@ use std::{
     path::{Path, PathBuf},
     time::Instant,
 };
-use zenpixels_convert::PixelBufferConvertTypedExt;
+use zenpixels_convert::{
+    AlphaMode, ColorSpace, ConvertPolicy, ImageSpec, PeakSource, SampleLayout, convert_buf,
+};
 use zensim::{BakeScorer, RgbSlice};
 use zensim_target::{
     CodecKind, SeedCurve, TargetSpec, codec::CodecBackend, target_search_with_backend_and_bake,
@@ -326,7 +328,16 @@ pub(super) fn read_png(path: &Path, source: bool) -> Result<(Vec<u8>, u32, u32)>
             "native instrument source metadata is outside opaque sRGB8 contract"
         );
     }
-    let rgba = decoded.pixels.to_rgba8().copy_to_contiguous_bytes();
+    let rgba: Vec<u8> = convert_buf(
+        &decoded.pixels.as_view(),
+        ImageSpec::new(
+            SampleLayout::RGBA8,
+            ColorSpace::SRGB.with_alpha(AlphaMode::Straight),
+        ),
+        &ConvertPolicy::default(),
+        PeakSource::Measured,
+    )?
+    .try_into_vec()?;
     ensure!(
         rgba.as_chunks::<4>().0.iter().all(|p| p[3] == 255),
         "native instrument requires opaque sources"

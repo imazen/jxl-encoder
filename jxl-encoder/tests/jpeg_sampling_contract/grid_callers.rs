@@ -217,7 +217,8 @@ fn partial_absolute_grid_embedded_gain_map_keeps_nonzero_samples_and_tail() {
     let metadata = ultrahdr_core::serialize_iso21496_fmt(
         &ultrahdr_core::GainMapParams::default(),
         ultrahdr_core::Iso21496Format::JxlJhgm,
-    );
+    )
+    .expect("serialize valid ISO gain-map metadata");
     let namespace = b"urn:iso:std:iso:ts:21496:-1\0";
     for transpose in [false, true] {
         for (h, v) in [(2, 1), (1, 2), (2, 2)] {

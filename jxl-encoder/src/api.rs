@@ -8574,6 +8574,8 @@ impl<'a> EncodeRequest<'a> {
         let w = self.width as usize;
         let h = self.height as usize;
 
+        #[cfg(feature = "__env_var_diagnostics")]
+        let _t_conv = crate::clock::Instant::now();
         let LossyPixels {
             mut linear_rgb,
             alpha,

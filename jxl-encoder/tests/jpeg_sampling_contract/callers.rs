@@ -111,7 +111,8 @@ fn embedded_grayscale_gain_map_keeps_sampling_and_original_jpeg_tail() {
     let metadata = ultrahdr_core::serialize_iso21496_fmt(
         &ultrahdr_core::GainMapParams::default(),
         ultrahdr_core::Iso21496Format::JxlJhgm,
-    );
+    )
+    .expect("serialize valid ISO gain-map metadata");
     let namespace = b"urn:iso:std:iso:ts:21496:-1\0";
     let mut rows = Vec::new();
     for (h, v) in [(1, 1), (2, 1), (1, 2), (2, 2)] {

@@ -455,7 +455,8 @@ fn unrelated_app0_embedded_gain_map_preserves_rgb_samples_and_jpeg_tail() {
     let metadata = ultrahdr_core::serialize_iso21496_fmt(
         &ultrahdr_core::GainMapParams::default(),
         ultrahdr_core::Iso21496Format::JxlJhgm,
-    );
+    )
+    .expect("serialize valid ISO gain-map metadata");
     let namespace = b"urn:iso:std:iso:ts:21496:-1\0";
     let input = insert_app0(baseline, b"Private APP0 data");
     let mut secondary = input[..2].to_vec();

@@ -447,7 +447,8 @@ impl<'a> HdrFromSdrRequest<'a> {
         let iso21496 = ultrahdr_core::serialize_iso21496_fmt(
             &metadata,
             ultrahdr_core::Iso21496Format::JxlJhgm,
-        );
+        )
+        .map_err(|err| invalid(format!("hdr-gainmap: {err}")))?;
 
         // Part 2 9.11: alternate color describes reconstructed HDR samples;
         // gain values themselves retain their separate lossless coding.

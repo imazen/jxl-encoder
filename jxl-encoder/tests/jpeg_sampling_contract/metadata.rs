@@ -498,7 +498,8 @@ fn empty_app_list_and_gain_map_secondary_prefixes_use_shared_admission() {
     let metadata = ultrahdr_core::serialize_iso21496_fmt(
         &ultrahdr_core::GainMapParams::default(),
         ultrahdr_core::Iso21496Format::JxlJhgm,
-    );
+    )
+    .expect("serialize valid ISO gain-map metadata");
     let namespace = b"urn:iso:std:iso:ts:21496:-1\0";
     for (name, prefix) in [
         ("Exif", b"Exif\0\0".as_slice()),

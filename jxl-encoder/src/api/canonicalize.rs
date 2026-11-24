@@ -111,14 +111,17 @@ pub(super) fn prepare(
     let facts = scan_facts(&view);
     let gray_icc = output_icc(icc);
     let collapse = source.order.is_rgb_family()
-        && facts.exact.all_grayscale
+        && facts.all_grayscale
         && (icc.is_none()
             || matches!(
                 gray_icc,
                 Some(SynthesizedIcc::Profile(_) | SynthesizedIcc::NotNeeded)
             ));
-    let remove_alpha = source.order.has_alpha_slot() && facts.exact.all_opaque;
-    let narrow = source.sample == SampleType::U16 && facts.exact.effective_bits == 8;
+    let remove_alpha = source.order.has_alpha_slot() && facts.all_opaque;
+    let narrow = source.sample == SampleType::U16
+        && facts
+            .depth
+            .is_some_and(|depth| depth.color_exact_at(8) && depth.alpha_exact_at(8));
     if !collapse && !remove_alpha && !narrow {
         return Ok(None);
     }
