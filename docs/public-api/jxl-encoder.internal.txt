@@ -490,7 +490,7 @@ pub fn api::LossyConfig::with_perceptual_target_score(self, core::option::Option
 pub fn api::LossyConfig::with_pixel_domain_loss(self, bool) -> Self
 pub fn api::LossyConfig::with_quant_ac_rescale(self, core::option::Option<f32>) -> Self
 pub fn api::LossyConfig::with_strategy_overrides(self, api::StrategyOverrides) -> Self
-pub fn append_gain_map_box(&[u8], &[u8]) -> alloc::vec::Vec<u8>
+pub fn append_gain_map_box(&[u8], &[u8]) -> core::result::Result<alloc::vec::Vec<u8>, api::EncodeError>
 pub fn encode_threading_info(bool, u8) -> ThreadingInfo
 pub fn estimate_encode(u32, u32, u8, bool, bool, u8) -> core::option::Option<EncodeEstimate>
 pub fn estimate_encode_threaded(u32, u32, u8, bool, bool, u8, usize) -> core::option::Option<EncodeEstimate>

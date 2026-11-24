@@ -86,17 +86,11 @@ pub(super) fn prepare(
         .reserve(bytes)
         .map_err(|e| at(EncodeError::from(e)))?;
     let aligned;
-    let view = match PixelView::new(
-        pixels,
-        request.width,
-        request.height,
-        stride,
-        source_spec.clone(),
-    ) {
+    let view = match PixelView::new(pixels, request.width, request.height, stride, &source_spec) {
         Ok(view) => view,
         Err(_) => {
             // EncodeRequest accepts byte addresses and strides without sample alignment.
-            let mut copy = PixelBuf::new(request.width, request.height, source_spec)
+            let mut copy = PixelBuf::new(request.width, request.height, source_spec.clone())
                 .map_err(canonicalization_error)?;
             let mut out = copy.as_view_mut();
             for y in 0..request.height {

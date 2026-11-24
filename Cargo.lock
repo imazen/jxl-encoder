@@ -2367,7 +2367,7 @@ checksum = "e2db585e1d738fc771bf08a151420d3ed193d9d895a36df7f6f8a9456b911ddc"
 [[package]]
 name = "lcms"
 version = "0.0.0"
-source = "git+https://github.com/imazen/lcms?branch=main#0a62f2e8f305b739fe60ea1642ceff8338a267cb"
+source = "git+https://github.com/imazen/lcms?rev=e1d336ba7dd56b396e520eaa4a1425e3bd8cfcde#e1d336ba7dd56b396e520eaa4a1425e3bd8cfcde"
 dependencies = [
  "archmage",
  "bytemuck",
@@ -3983,7 +3983,7 @@ checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
 [[package]]
 name = "ultrahdr-core"
 version = "0.6.0"
-source = "git+https://github.com/imazen/ultrahdr?rev=a9e3eabc0884b03d2d0ef22627b1b41c03b09589#a9e3eabc0884b03d2d0ef22627b1b41c03b09589"
+source = "git+https://github.com/imazen/ultrahdr?rev=5220840ec1098ab00905c3bc758e6fe36ff58d5c#5220840ec1098ab00905c3bc758e6fe36ff58d5c"
 dependencies = [
  "archmage",
  "bytemuck",
@@ -4822,7 +4822,7 @@ dependencies = [
 [[package]]
 name = "zencodec"
 version = "0.3.0"
-source = "git+https://github.com/imazen/zencodec?rev=093211c276fbb1781bec1601d7cb6b0fb92f245a#093211c276fbb1781bec1601d7cb6b0fb92f245a"
+source = "git+https://github.com/imazen/zencodec?rev=3a10011b6b05d2269e29db5e40db71888d0fcfce#3a10011b6b05d2269e29db5e40db71888d0fcfce"
 dependencies = [
  "almost-enough",
  "bytemuck",
@@ -4987,7 +4987,7 @@ dependencies = [
 [[package]]
 name = "zenjpeg"
 version = "0.9.0"
-source = "git+https://github.com/imazen/zenjpeg?rev=0714703dfe94cb20f2bbd84b10a9aab5949782a6#0714703dfe94cb20f2bbd84b10a9aab5949782a6"
+source = "git+https://github.com/imazen/zenjpeg?rev=8d9d2e96b003f911ef385fc9acafd0f68b7afdd9#8d9d2e96b003f911ef385fc9acafd0f68b7afdd9"
 dependencies = [
  "aligned-vec",
  "archmage",
@@ -5009,7 +5009,7 @@ dependencies = [
  "zencodec",
  "zenmeta",
  "zenpixels 0.5.0",
- "zenyuv 0.1.3 (git+https://github.com/imazen/zenjpeg?rev=0714703dfe94cb20f2bbd84b10a9aab5949782a6)",
+ "zenyuv 0.1.3 (git+https://github.com/imazen/zenjpeg?rev=8d9d2e96b003f911ef385fc9acafd0f68b7afdd9)",
 ]
 
 [[package]]
@@ -5037,23 +5037,25 @@ dependencies = [
 [[package]]
 name = "zenjxl-decoder"
 version = "0.4.0"
-source = "git+https://github.com/imazen/zenjxl-decoder?rev=e1c366b089b29511ef66f1b5af5d9e208dbff5d1#e1c366b089b29511ef66f1b5af5d9e208dbff5d1"
+source = "git+https://github.com/imazen/zenjxl-decoder?rev=e58a4838725704e37d90f2acd1d11dcccd7ab98a#e58a4838725704e37d90f2acd1d11dcccd7ab98a"
 dependencies = [
  "aligned-vec",
+ "archmage",
  "array-init",
  "atomic_refcell",
  "brotli 9.0.0",
  "bytemuck",
  "byteorder",
  "enough",
+ "magetypes",
  "num-derive 0.5.1",
  "num-traits",
- "paste",
+ "pastey 0.2.3",
  "smallvec",
  "thiserror 2.0.21",
  "whereat",
- "zenjxl-decoder-macros 0.3.9 (git+https://github.com/imazen/zenjxl-decoder?rev=e1c366b089b29511ef66f1b5af5d9e208dbff5d1)",
- "zenjxl-decoder-simd 0.3.9 (git+https://github.com/imazen/zenjxl-decoder?rev=e1c366b089b29511ef66f1b5af5d9e208dbff5d1)",
+ "zenjxl-decoder-macros 0.3.9 (git+https://github.com/imazen/zenjxl-decoder?rev=e58a4838725704e37d90f2acd1d11dcccd7ab98a)",
+ "zenjxl-decoder-simd 0.3.9 (git+https://github.com/imazen/zenjxl-decoder?rev=e58a4838725704e37d90f2acd1d11dcccd7ab98a)",
 ]
 
 [[package]]
@@ -5071,7 +5073,7 @@ dependencies = [
 [[package]]
 name = "zenjxl-decoder-macros"
 version = "0.3.9"
-source = "git+https://github.com/imazen/zenjxl-decoder?rev=e1c366b089b29511ef66f1b5af5d9e208dbff5d1#e1c366b089b29511ef66f1b5af5d9e208dbff5d1"
+source = "git+https://github.com/imazen/zenjxl-decoder?rev=e58a4838725704e37d90f2acd1d11dcccd7ab98a#e58a4838725704e37d90f2acd1d11dcccd7ab98a"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5091,10 +5093,10 @@ dependencies = [
 [[package]]
 name = "zenjxl-decoder-simd"
 version = "0.3.9"
-source = "git+https://github.com/imazen/zenjxl-decoder?rev=e1c366b089b29511ef66f1b5af5d9e208dbff5d1#e1c366b089b29511ef66f1b5af5d9e208dbff5d1"
+source = "git+https://github.com/imazen/zenjxl-decoder?rev=e58a4838725704e37d90f2acd1d11dcccd7ab98a#e58a4838725704e37d90f2acd1d11dcccd7ab98a"
 dependencies = [
  "archmage",
- "paste",
+ "pastey 0.2.3",
 ]
 
 [[package]]
@@ -5126,7 +5128,7 @@ dependencies = [
 [[package]]
 name = "zenmeta"
 version = "0.2.0"
-source = "git+https://github.com/imazen/zencodec?rev=093211c276fbb1781bec1601d7cb6b0fb92f245a#093211c276fbb1781bec1601d7cb6b0fb92f245a"
+source = "git+https://github.com/imazen/zencodec?rev=3a10011b6b05d2269e29db5e40db71888d0fcfce#3a10011b6b05d2269e29db5e40db71888d0fcfce"
 dependencies = [
  "zencodec",
  "zenpixels 0.5.0",
@@ -5153,7 +5155,7 @@ dependencies = [
 [[package]]
 name = "zenpixels"
 version = "0.5.0"
-source = "git+https://github.com/imazen/zenpixels?rev=e0dba0052a839ecfe17e4c911a3761e793605adf#e0dba0052a839ecfe17e4c911a3761e793605adf"
+source = "git+https://github.com/imazen/zenpixels?rev=9686936bfa49df370a1e71666b252b9f48f744b4#9686936bfa49df370a1e71666b252b9f48f744b4"
 dependencies = [
  "bytemuck",
  "imgref",
@@ -5181,7 +5183,7 @@ dependencies = [
 [[package]]
 name = "zenpixels-convert"
 version = "0.5.0"
-source = "git+https://github.com/imazen/zenpixels?rev=e0dba0052a839ecfe17e4c911a3761e793605adf#e0dba0052a839ecfe17e4c911a3761e793605adf"
+source = "git+https://github.com/imazen/zenpixels?rev=9686936bfa49df370a1e71666b252b9f48f744b4#9686936bfa49df370a1e71666b252b9f48f744b4"
 dependencies = [
  "archmage",
  "bytemuck",
@@ -5203,7 +5205,7 @@ dependencies = [
 [[package]]
 name = "zenpng"
 version = "0.2.0"
-source = "git+https://github.com/imazen/zenpng?rev=1dd8248fa6683d5c3e22eb946a97b1f93996371a#1dd8248fa6683d5c3e22eb946a97b1f93996371a"
+source = "git+https://github.com/imazen/zenpng?rev=b0205a1b72864ad047f5ec465f1900f167496484#b0205a1b72864ad047f5ec465f1900f167496484"
 dependencies = [
  "almost-enough",
  "archmage",
@@ -5335,7 +5337,7 @@ dependencies = [
 [[package]]
 name = "zenyuv"
 version = "0.1.3"
-source = "git+https://github.com/imazen/zenjpeg?rev=0714703dfe94cb20f2bbd84b10a9aab5949782a6#0714703dfe94cb20f2bbd84b10a9aab5949782a6"
+source = "git+https://github.com/imazen/zenjpeg?rev=8d9d2e96b003f911ef385fc9acafd0f68b7afdd9#8d9d2e96b003f911ef385fc9acafd0f68b7afdd9"
 dependencies = [
  "archmage",
  "imgref",

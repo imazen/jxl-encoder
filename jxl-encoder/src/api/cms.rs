@@ -154,7 +154,7 @@ pub(super) fn rgb_to_icc(
         );
         Some(
             zenpixels_convert::Lcms
-                .build_transform(&ImageSpec::rgbf32_linear(), &dst)
+                .build_transform(&zenpixels_convert::specs::RGBF32_LINEAR, &dst)
                 .map_err(|e| config_error(&e))?,
         )
     };

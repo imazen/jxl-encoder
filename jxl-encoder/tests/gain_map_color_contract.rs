@@ -931,7 +931,10 @@ fn gain_map_source_transfer_layout_pairs_preserve_base_and_gain() {
         (8, ultrahdr_core::TransferFunction::Linear),
         (13, ultrahdr_core::TransferFunction::Srgb),
         (16, ultrahdr_core::TransferFunction::Pq),
-        (18, ultrahdr_core::TransferFunction::Hlg),
+        (
+            18,
+            ultrahdr_core::TransferFunction::Hlg(zenpixels_convert::HlgMode::Scene),
+        ),
     ] {
         let mut baseline = None;
         for sdr_layout in layouts {
