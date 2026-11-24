@@ -858,3 +858,33 @@ selected files grow by 4.26% and 7.43%. Their performance, cold
 allocation, caller-owned reuse and the graphics timing remain open.
 The runs and raw samples are under
 `imazen26-lossless/balanced-128-tree-timing-2026-11-24`.
+
+#### Independent photo endpoints
+
+The same finer Gradient recipe passes on two additional imazen-26
+originals, portrait 2009 and snow scene 1459. Median file growth
+versus effort-7 tier 0 is 5.85% and p90 is 7.43%. The unmodified
+tier 1 at 128 px grows by a median 7.21% on these originals.
+[Portrait](https://codec-corpus.r2.imazen.org/imazen-26-png-v3/2000-unsplash-people/2009_people_by-ellen-qin-l0wmb86ymi8-unsplash_2304x4096.sdr.png)
+and [snow scene](https://codec-corpus.r2.imazen.org/imazen-26-png-v3/1400-lilith-nature/1459_nature_person-on-snowy-slope_colorado_s23u_iso10-f1p7_20240103-131940-0_3000x4000.sdr.png).
+
+| RGB8 endpoint on i270 | Paired speedup at 1 / 4 / 8 workers | Class p95 latency ratio at 1 / 4 / 8 workers |
+|---|---:|---:|
+| Cold allocating | 2.357× / 2.151× / 2.052× | 0.427 / 0.517 / 0.527 |
+| Warm allocating | 2.363× / 2.168× / 2.066× | 0.470 / 0.509 / 0.530 |
+| Warm caller-owned | 2.379× / 2.172× / 2.064× | 0.466 / 0.506 / 0.514 |
+
+Three blocks of five paired samples at each endpoint verify both
+speed bars. The largest pooled A/A p95 is 1.010×. The prototype
+rebuild reproduces the recorded binary SHA256. All six encodes pass
+source-exact RGB8 in Zen at 1/4/8 workers, jxl-rs and djxl v0.12.
+The caller-owned runner additionally checks exact pixels against
+the allocating decode and ordinary tier 0. The cold and caller-owned
+run takes 310 s at 0.26 GiB peak RSS. Warm allocation takes 368 s
+at 0.15 GiB peak RSS.
+
+[Endpoint rates, throughputs and tails](faster_decode_imazen26_balanced_128_independent_endpoints_2026-11-24.tsv).
+Raw samples and pinned commands remain in
+`imazen26-lossless/balanced-128-tree-timing-2026-11-24`.
+The retained probe patch, Cargo.lock and build command are under
+`imazen26-lossless/balanced-128-tree-shape`.
