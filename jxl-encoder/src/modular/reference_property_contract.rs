@@ -435,16 +435,10 @@ use super::contract_pfm as pfm;
 #[test]
 #[ignore = "explicit native float color and extra-channel buffers"]
 fn selected_reference_property_floating_alpha_and_public_depth() {
-    let oracle = std::path::PathBuf::from(
-        std::env::var_os("LIBJXL_ORIGINAL_PROFILE_ORACLE")
-            .expect("explicit pinned v0.12 original-profile float oracle"),
+    let (oracle, version) = crate::test_helpers::native_libjxl_oracle(
+        "LIBJXL_ORIGINAL_PROFILE_ORACLE",
+        "original-profile",
     );
-    let version = std::process::Command::new(&oracle)
-        .arg("--version")
-        .output()
-        .unwrap();
-    assert!(version.status.success());
-    assert!(String::from_utf8_lossy(&version.stdout).contains("12000"));
     let root = crate::test_helpers::output_dir("reference-property-extra");
     std::fs::create_dir_all(&root).unwrap();
     let root = (0..)

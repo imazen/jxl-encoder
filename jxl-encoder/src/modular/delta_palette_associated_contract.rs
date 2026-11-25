@@ -16,16 +16,9 @@ fn all_offered_delta_palette_float_associated_alpha() {
             }
         })
         .unwrap();
-    let oracle = std::env::var_os("LIBJXL_ORIGINAL_PROFILE_ORACLE")
-        .expect("pinned original-profile float observer");
-    let version = std::process::Command::new(&oracle)
-        .arg("--version")
-        .output()
-        .unwrap();
-    assert!(version.status.success());
-    assert_eq!(
-        String::from_utf8(version.stdout).unwrap().trim(),
-        "libjxl original-profile oracle 12000"
+    let (oracle, _) = crate::test_helpers::native_libjxl_oracle(
+        "LIBJXL_ORIGINAL_PROFILE_ORACLE",
+        "original-profile",
     );
     let alpha = half(0x3bff);
     assert!(alpha < 1.0);

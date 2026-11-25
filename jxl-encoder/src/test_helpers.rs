@@ -86,6 +86,42 @@ fn reference_version_matches(banner: &str) -> bool {
     banner.split_ascii_whitespace().nth(1) == Some(REQUIRED_LIBJXL_VERSION)
 }
 
+/// Require a caller-supplied native oracle linked to the same release as djxl.
+#[cfg(all(
+    test,
+    any(all(feature = "__expert", feature = "std"), feature = "rate-control")
+))]
+pub(crate) fn native_libjxl_oracle(
+    env_key: &str,
+    kind: &str,
+) -> (std::path::PathBuf, std::process::Output) {
+    let path = std::path::PathBuf::from(
+        std::env::var_os(env_key)
+            .unwrap_or_else(|| panic!("set {env_key} to the pinned {kind} oracle")),
+    );
+    let version = REQUIRED_LIBJXL_VERSION[1..]
+        .split('.')
+        .fold(0_u32, |id, field| id * 1000 + field.parse::<u32>().unwrap());
+    let output = std::process::Command::new(&path)
+        .arg("--version")
+        .output()
+        .unwrap_or_else(|error| panic!("{env_key}={}: {error}", path.display()));
+    let banner = std::str::from_utf8(&output.stdout).unwrap().trim();
+    assert_eq!(
+        banner,
+        format!("libjxl {kind} oracle {version}"),
+        "{env_key}={}",
+        path.display()
+    );
+    assert!(
+        output.status.success(),
+        "{env_key}={}: {}",
+        path.display(),
+        output.status
+    );
+    (path, output)
+}
+
 /// Reports the `--version` line of a libjxl tool, or `None` if it will not run.
 #[cfg(test)]
 fn libjxl_tool_version(path: &str) -> Option<String> {

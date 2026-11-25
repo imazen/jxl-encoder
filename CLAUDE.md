@@ -832,6 +832,19 @@ checklist) were archived to [docs/CODE-HISTORY.md](docs/CODE-HISTORY.md)
 
 ## Resolved Bugs
 
+### RESOLVED 2026-11-25: live native tests retained v0.12 oracle banners
+
+CI run 45544042836 stopped at stale v0.12 banner assertions in three
+rate-control checks and five modular reconstruction checks after installing
+the v0.13.0 original-profile and CMYK raw-frame oracles. These assertions
+run before pixel comparisons. The Rust library tests now derive the exact
+native banner from the same release pin as the CLI resolvers.
+
+On i270, the CI selections pass all 19 rate-control and 15 modular and
+reconstruction tests. A v0.12 original-profile binary still fails the
+version check. The sample checks, tolerances and ignore annotations are
+unchanged. The local wrapper completed in 317 seconds at 2.84 GiB peak RSS.
+
 ### RESOLVED 2026-11-22: deprecation errors with magetypes 0.9.32
 
 The pinned dependency made the generic SIMD `mul_add` spelling deprecated.

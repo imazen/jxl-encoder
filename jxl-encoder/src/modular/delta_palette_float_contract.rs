@@ -34,16 +34,9 @@ fn check(policies: Vec<Policy>) {
             }
         })
         .unwrap();
-    let oracle = std::env::var_os("LIBJXL_ORIGINAL_PROFILE_ORACLE")
-        .expect("caller must supply the pinned v0.12 original-profile float oracle");
-    let version = std::process::Command::new(&oracle)
-        .arg("--version")
-        .output()
-        .unwrap();
-    assert!(version.status.success());
-    assert_eq!(
-        String::from_utf8(version.stdout).unwrap().trim(),
-        "libjxl original-profile oracle 12000"
+    let (oracle, _) = crate::test_helpers::native_libjxl_oracle(
+        "LIBJXL_ORIGINAL_PROFILE_ORACLE",
+        "original-profile",
     );
     let mut journal = std::fs::File::create(root.join("observed.tsv")).unwrap();
     let mut selected = [false; 2];
@@ -416,16 +409,9 @@ fn all_offered_delta_palette_float_with_public_integer_depth() {
             }
         })
         .unwrap();
-    let oracle = std::env::var_os("LIBJXL_ORIGINAL_PROFILE_ORACLE")
-        .expect("pinned original-profile float oracle");
-    let version = std::process::Command::new(&oracle)
-        .arg("--version")
-        .output()
-        .unwrap();
-    assert!(version.status.success());
-    assert_eq!(
-        String::from_utf8(version.stdout).unwrap().trim(),
-        "libjxl original-profile oracle 12000"
+    let (oracle, _) = crate::test_helpers::native_libjxl_oracle(
+        "LIBJXL_ORIGINAL_PROFILE_ORACLE",
+        "original-profile",
     );
     let mut journal = std::fs::File::create(root.join("completed.tsv")).unwrap();
     for (policy, strategy, mode) in policies() {

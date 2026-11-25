@@ -358,16 +358,9 @@ fn request_rate_control_refuses_subsampling_that_bypasses_its_controller() {
 fn request_rate_control_keeps_icc_boxes_orientation_and_requested_depth() {
     use std::io::Write;
     let root = directory();
-    let oracle = std::env::var_os("LIBJXL_ORIGINAL_PROFILE_ORACLE")
-        .expect("caller-selected pinned native original-profile observer");
-    let version = std::process::Command::new(&oracle)
-        .arg("--version")
-        .output()
-        .unwrap();
-    assert!(version.status.success());
-    assert_eq!(
-        String::from_utf8(version.stdout).unwrap().trim(),
-        "libjxl original-profile oracle 12000"
+    let (oracle, _) = crate::test_helpers::native_libjxl_oracle(
+        "LIBJXL_ORIGINAL_PROFILE_ORACLE",
+        "original-profile",
     );
     let profile = zenpixels_convert::icc_profiles::DISPLAY_P3_V4;
     let exif = b"II\x2a\x00\x08\x00\x00\x00\x00\x00\x00\x00\x00\x00";
@@ -693,16 +686,9 @@ fn request_rate_control_observes_late_stop_and_preserves_the_destination() {
 fn request_rate_control_keeps_swizzled_float_and_explicit_hdr_units() {
     use std::io::Write;
     let root = directory();
-    let oracle = std::env::var_os("LIBJXL_ORIGINAL_PROFILE_ORACLE")
-        .expect("caller-selected original-profile native float observer");
-    let version = std::process::Command::new(&oracle)
-        .arg("--version")
-        .output()
-        .unwrap();
-    assert!(version.status.success());
-    assert_eq!(
-        String::from_utf8(version.stdout).unwrap().trim(),
-        "libjxl original-profile oracle 12000"
+    let (oracle, _) = crate::test_helpers::native_libjxl_oracle(
+        "LIBJXL_ORIGINAL_PROFILE_ORACLE",
+        "original-profile",
     );
     let mut journal = std::fs::File::create(root.join("typed-layouts.tsv")).unwrap();
     for (policy, strategy, mode) in policies::policies() {
@@ -967,17 +953,8 @@ fn request_rate_control_refuses_an_external_scorer_before_callback_work() {
 #[test]
 fn request_rate_control_keeps_cmyk_profile_physical_color_and_exact_extras() {
     let root = directory();
-    let oracle = std::env::var_os("CMYK_RAW_FRAME_ORACLE")
-        .expect("caller-selected pinned native linear/extra observer");
-    let version = std::process::Command::new(&oracle)
-        .arg("--version")
-        .output()
-        .unwrap();
-    assert!(version.status.success());
-    assert_eq!(
-        String::from_utf8(version.stdout).unwrap().trim(),
-        "libjxl CMYK raw-frame oracle 12000"
-    );
+    let (oracle, _) =
+        crate::test_helpers::native_libjxl_oracle("CMYK_RAW_FRAME_ORACLE", "CMYK raw-frame");
     let profile: Vec<u8> = include_str!("../../tests/fixtures/ps_cmyk.hex")
         .split_whitespace()
         .flat_map(|line| {
