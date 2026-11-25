@@ -233,9 +233,9 @@ fn valid(
             if policy == "libjxl" && name != "signed-start-delta" {
                 use sha2::{Digest, Sha256};
                 let expected = if name == "one-point" {
-                    "b6b1edadeac8d8af51706c0642a698c6dc72fbcee4e02a95cc8493b0078739d1"
+                    "7eaba77cc02bb4769690dd04cdda3232a98941b9d5b4aea699b15595449dfacc"
                 } else {
-                    "e3b9e79748abdb0ea040058cd749f6e4b50a8236ab5eb3d9463ae73f1b293710"
+                    "4c4ade4d56e84ea3f29b5503e00f877d7c5c35fab8c6c1f3d4892bbe97b9f187"
                 };
                 assert_eq!(
                     Sha256::digest(&bytes)
@@ -243,7 +243,7 @@ fn valid(
                         .map(|v| format!("{v:02x}"))
                         .collect::<String>(),
                     expected,
-                    "unchanged legal strict stream retained before the admission fix"
+                    "strict spline stream with the compact default context map"
                 );
             }
             assert_eq!(

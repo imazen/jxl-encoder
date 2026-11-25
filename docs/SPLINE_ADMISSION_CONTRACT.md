@@ -48,12 +48,21 @@ These are preserved failing tests, not skipped cases.
 | Internal defense | Invalid section shapes and manual frame requests leave a prefixed writer untouched |
 
 Full displayed samples are checked through the primary Rust decoder and pinned
-native v0.12. Positive manual streams must actually contain the spline flag.
-Selected lossy decoder agreement uses a 0.001 bound; it is not exact source
-color recovery. Two legal strict controls retain their pre-fix SHA256s:
+native v0.13.0. Positive manual streams must actually contain the spline flag.
+Selected lossy decoder agreement uses a 0.001 bound. The v0.13 compact default
+context map changes two strict fingerprints:
 
-- One point, 135 bytes: `b6b1edadeac8d8af51706c0642a698c6dc72fbcee4e02a95cc8493b0078739d1`.
-- Rounded boundary, 143 bytes: `e3b9e79748abdb0ea040058cd749f6e4b50a8236ab5eb3d9463ae73f1b293710`.
+| Fixture | Historical bytes | Current bytes | Current SHA-256 |
+|---|---:|---:|---|
+| One point | 135 | 113 | `7eaba77cc02bb4769690dd04cdda3232a98941b9d5b4aea699b15595449dfacc` |
+| Rounded boundary | 143 | 120 | `4c4ade4d56e84ea3f29b5503e00f877d7c5c35fab8c6c1f3d4892bbe97b9f187` |
+
+The old 183-bit map becomes one bit in both files. All other frame payload bits
+match after alignment. Both before/after pairs render identical float RGB in
+djxl v0.13.0 and identical RGB16 in jxl-rs main at `f370be42`.
+The old and new streams, hashes and readbacks are retained with the
+[v0.13 migration replay](../benchmarks/libjxl_v013_photo_replay_2026-11-25.md)
+under `spline-compact-map-control` on i270.
 
 The final public/component profile run passes (`spline-final-evidence-v2.log`,
 rc0, 106 seconds; run-heavy peak RSS 2.04 GiB, minimum available 17,885 MiB).
