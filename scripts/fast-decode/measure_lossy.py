@@ -14,6 +14,10 @@ import subprocess
 
 from PIL import Image
 
+REFERENCE_DJXL = {
+    ("djxl", "v0.12.0", "a7a9c78"),
+    ("djxl", "v0.13.0", "5a7da83"),
+}
 BANDS = (1, 4)
 PINS = {1: "2", 4: "2,3,0,1", 8: "0-7"}
 CLI_RATE = re.compile(r"Decoded (\d+) pixels in [\d.]+ seconds: ([\d.]+) MP/s")
@@ -107,7 +111,7 @@ class Study:
             "timing_blocks": args.blocks,
         }
         version = self.run([args.djxl, "--version"])
-        if "v0.12.0 a7a9c78" not in version:
+        if tuple(version.split()[:3]) not in REFERENCE_DJXL:
             raise ValueError(f"wrong libjxl reference: {version}")
         self.manifest["djxl_version"] = version.strip()
 

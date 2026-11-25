@@ -13,12 +13,16 @@ cargo build --locked --release --manifest-path scripts/fast-decode/score-rgb8/Ca
 ```
 
 Run the driver on i270 through the local resource wrapper. Supply the
-release binaries and paths explicitly. The output directory must be new.
+release binaries and paths explicitly. The current reference is
+[libjxl v0.13.0](https://github.com/libjxl/libjxl/releases/tag/v0.13.0) at
+`5a7da83`. Use the v0.12.0 source-tag build at `a7a9c78` to replay the
+historical runs. The manifest records the decoder binary hash and banner.
+The output directory must be new.
 
 ```sh
 python3 scripts/fast-decode/measure_lossy.py \
   "$OUT" benchmarks/faster_decode_imazen26.tsv "$CORPUS" \
-  "$ENCODER" "$ZEN_CURRENT" "$ZEN_BASELINE" "$DJXL_V012" "$JXL_RS" "$SCORER" \
+  "$ENCODER" "$ZEN_CURRENT" "$ZEN_BASELINE" "$DJXL" "$JXL_RS" "$SCORER" \
   --stage match
 python3 scripts/fast-decode/summarize_lossy.py "$OUT" "$SUMMARY"
 ```
@@ -107,7 +111,7 @@ and rate limits leave no eligible candidate.
 python3 scripts/fast-decode/encode_photo.py photo.png output.jxl \
     --profile throughput --distance 1 --effort 7 --threads 8 \
     --encoder "$CJXL_RS" --decoder "$ZENJXL" --jxl-rs "$JXL_RS" \
-    --djxl "$DJXL_V012" --scorer "$SCORE_RGB8"
+    --djxl "$DJXL" --scorer "$SCORE_RGB8"
 ```
 
 The search operates on opaque SDR RGB8 sources with sRGB samples, including
@@ -138,7 +142,7 @@ binaries for the comparison.
 python3 scripts/fast-decode/replay_ladder.py \
     "$OUT" "$LADDER" "$GABOFF" "$TEXT" "$TIER4" \
     --encoder "$FROZEN_ENCODER" --decoder "$ZEN_CURRENT" \
-    --baseline-decoder "$ZEN_BASELINE" --djxl "$DJXL_V012" \
+    --baseline-decoder "$ZEN_BASELINE" --djxl "$DJXL" \
     --jxl-rs "$JXL_RS" --scorer "$SCORER"
 python3 scripts/fast-decode/summarize_lossy.py "$OUT" "$SUMMARY"
 ```

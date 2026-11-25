@@ -70,9 +70,19 @@ fn decode_djxl(path: &Path) -> Result<Rgba16, String> {
         .arg("--version")
         .output()
         .map_err(|e| format!("djxl ({djxl}): {e}"))?;
-    let version = String::from_utf8_lossy(&version.stdout).into_owned();
-    if !version.contains("v0.12") {
-        return Err(format!("djxl ({djxl}) is not v0.12: {}", version.trim()));
+    let stdout = String::from_utf8_lossy(&version.stdout);
+    let stderr = String::from_utf8_lossy(&version.stderr);
+    let pinned = [&stdout, &stderr].into_iter().any(|banner| {
+        let mut tokens = banner.split_ascii_whitespace();
+        tokens.next() == Some("djxl") && tokens.next() == Some("v0.13.0")
+    });
+    if !version.status.success() || !pinned {
+        return Err(format!(
+            "djxl ({djxl}) did not report v0.13.0 ({}): {} {}",
+            version.status,
+            stdout.trim(),
+            stderr.trim()
+        ));
     }
     let out = std::env::temp_dir().join(format!(
         "decoder-conformance-{}-{}.png",

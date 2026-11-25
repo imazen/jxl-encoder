@@ -10,8 +10,8 @@
 #   scripts/libjxl_parity_sweep.sh <outdir> [fixture-dir]
 #
 # Env:
-#   CJXL     path to reference cjxl              (default: `command -v cjxl`)
-#   CJXL_VERSION           expected first cjxl version (default: v0.12.0)
+#   CJXL     path to reference cjxl (default: CJXL_PATH or .ci-libjxl/tools/cjxl)
+#   CJXL_VERSION           expected first cjxl version (default: v0.13.0)
 #   OURS                   path to our CLI (default: target/release/cjxl-rs)
 #   COMPARE_CJXL           compare a second cjxl in place of our encoder
 #   COMPARE_CJXL_VERSION   expected second cjxl version (default: v0.13.0)
@@ -28,7 +28,7 @@ OUT=${1:?usage: libjxl_parity_sweep.sh <outdir> [fixture-dir]}
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(dirname "$HERE")"
 FIX=${2:-$OUT/fixtures}
-CJXL=${CJXL:-$(command -v cjxl || true)}
+CJXL=${CJXL:-${CJXL_PATH:-$ROOT/.ci-libjxl/tools/cjxl}}
 OURS=${OURS:-$ROOT/target/release/cjxl-rs}
 EFFORTS=${EFFORTS:-"3 5 7"}
 DISTS=${DISTS:-"0.5 1.0 4.0"}
@@ -48,12 +48,12 @@ cjxl_version() {
 }
 
 [ -x "$CJXL" ] || { echo "cjxl not found (set CJXL=)" >&2; exit 2; }
-ref_version=$(cjxl_version "$CJXL" "${CJXL_VERSION:-v0.12.0}")
+ref_version=$(cjxl_version "$CJXL" "${CJXL_VERSION:-v0.13.0}")
 
 if [[ -n ${COMPARE_CJXL:-} ]]; then
   compare=$COMPARE_CJXL
   compare_version=$(cjxl_version "$compare" "${COMPARE_CJXL_VERSION:-v0.13.0}")
-  a_label=${CJXL_VERSION:-v0.12.0}
+  a_label=${CJXL_VERSION:-v0.13.0}
   b_label=${COMPARE_CJXL_VERSION:-v0.13.0}
   compare_args=(--num_threads=0)
 else
