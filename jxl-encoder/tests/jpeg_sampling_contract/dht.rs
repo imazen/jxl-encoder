@@ -56,7 +56,13 @@ fn check_unusual(
         let result = std::process::Command::new(jxl_encoder::test_helpers::cjxl_path())
             .arg(&input_path)
             .arg(&reference_path)
-            .args(["--lossless_jpeg=1", "--num_threads=1", "-e", "3"])
+            .args([
+                "--lossless_jpeg=1",
+                "--jpeg_reconstruction_lfs=0",
+                "--num_threads=1",
+                "-e",
+                "3",
+            ])
             .output()
             .unwrap();
         std::fs::write(
@@ -252,7 +258,13 @@ fn empty_segment_and_unused_zero_symbol_dc0_reconstruct_their_distinct_bytes() {
         let result = std::process::Command::new(jxl_encoder::test_helpers::cjxl_path())
             .arg(&path)
             .arg(&reference_path)
-            .args(["--lossless_jpeg=1", "--num_threads=1", "-e", "3"])
+            .args([
+                "--lossless_jpeg=1",
+                "--jpeg_reconstruction_lfs=0",
+                "--num_threads=1",
+                "-e",
+                "3",
+            ])
             .output()
             .unwrap();
         std::fs::write(

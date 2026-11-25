@@ -93,7 +93,7 @@ ratio guard use their established policies. A synthetic histogram pair
 exercises the new floor. On i270 all 66 tested RGB profiles produce the
 same stream as before, and djxl v0.13.0 recovers every profile byte.
 
-The JPEG transcode matrix compares the existing unsmoothed render policy
+The JPEG CfL and Huffman-table matrices compare the unsmoothed render policy
 against cjxl v0.13.0 with `--jpeg_reconstruction_lfs=0`. The new upstream
 4:4:4 default enables LF smoothing. On the progressive 520×392 roof photo
 at effort 7, the explicit off mode reproduces the v0.12 stream exactly.
