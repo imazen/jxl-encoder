@@ -36,7 +36,7 @@ class DistanceGateTest(unittest.TestCase):
 
     def fake_tool(self, name, behavior):
         path = self.root / name
-        path.write_text(f'#!/bin/sh\nif [ "$1" = --version ]; then echo "{name} v0.12.0"; exit 0; fi\n' + behavior)
+        path.write_text(f'#!/bin/sh\nif [ "$1" = --version ]; then echo "{name} v0.13.0"; exit 0; fi\n' + behavior)
         path.chmod(0o755)
         self.env[name.upper() + "_PATH"] = str(path)
 

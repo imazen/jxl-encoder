@@ -124,7 +124,7 @@ fn render_with_profile(
     assert!(version.status.success());
     assert_eq!(
         String::from_utf8(version.stdout).unwrap().trim(),
-        "libjxl original-profile oracle 12000"
+        "libjxl original-profile oracle 13000"
     );
     let result = std::process::Command::new(oracle)
         .arg(path)

@@ -26,7 +26,7 @@ No model is promoted; see the sibling zensim report for independent RD diagnosti
 `tools/conformance-sweep` encodes random real-image cells (corpus crop, size
 1x1 to 2049-wide, 24 layouts, lossless or lossy, effort, distance, option
 set, streaming, ICC, EXIF/XMP) and checks each with **three decoders**:
-djxl v0.12, upstream jxl-rs (crates.io `jxl`, latest release) and
+djxl v0.13, upstream jxl-rs (crates.io `jxl`, latest release) and
 zenjxl-decoder (sibling checkout). Every cell derives from `(seed, index)`;
 replay with `--seed S --only N` and the same `--images`/`--icc` inputs.
 Verdicts: `FAIL` = ours (all decoders agree, djxl fails, or both Rust
@@ -76,53 +76,22 @@ correctness verification, but is no longer the reference for quality comparisons
 
 ## Reference Implementations
 
-> **THE REFERENCE IS libjxl v0.12, AND ONLY v0.12 (user directive 2026-09-06).**
-> Never compare against v0.11.x. The packaged `/usr/bin/cjxl` and `/usr/bin/djxl`
-> on this box are **v0.11.1** and must never be used as a reference: v0.11.x
-> switches to the iterative 2x downsampler between effort 5 and 7, where v0.12
-> restricts it to `speed_tier <= kGlacier` (effort 10-11). A differential run
-> against the packaged binary made our correct, v0.12-matching resampling look
-> ~35 % worse than libjxl; re-run against v0.12 the same measurement is at
-> parity (ours 8.4365 vs cjxl 8.4619 at e7; 6.3907 vs 6.3278 at e10) — issue
-> #102. A wrong-version reference is worse than no reference, because it yields
-> a plausible number instead of an error.
->
-> **First: check whether you already have them.** On the macOS checkout there
-> is a correct `cjxl`/`djxl` **v0.12.0 (`a7a9c78`)** at `.ci-libjxl/tools/`
-> (gitignored), and the justfile passes it explicitly via `CJXL_PATH` /
-> `DJXL_PATH` (lines 230/257/293/307/316/332/351). `cjxl_path()`'s candidate
-> list is Linux-only (`/home/lilith/...`), so **on macOS the justfile is the
-> only route** — drive reference comparisons through `just`, or set those two
-> env vars yourself.
->
-> **Only if you must build them** (the in-tree `build/tools/*` cannot load
-> `libIlmImf-2_5.so.25`, which is what made the resolver fall through to the
-> packaged binary in the first place):
-> ```
-> # MANDATORY: ~/work/jxl-efforts/libjxl has MOVED TO THE v0.13 DEV LINE.
-> # HEAD (d089091) builds as cjxl v0.13.0, which the resolver rejects.
-> # Check out the tag first (fetch it if absent — the local clone has no tags:
-> #   git fetch --tags origin 'refs/tags/v0.12*:refs/tags/v0.12*')
-> git -C ~/work/jxl-efforts/libjxl checkout v0.12.0
-> ~/work/jxl-efforts/libjxl/deps.sh   # fetches skcms; cmake fails without it
-> cmake -S ~/work/jxl-efforts/libjxl -B ~/tmp/libjxl-v012-build \
->   -DCMAKE_BUILD_TYPE=Release -DJPEGXL_ENABLE_OPENEXR=OFF -DBUILD_TESTING=OFF
-> cmake --build ~/tmp/libjxl-v012-build --target cjxl djxl -j 12
-> ```
-> (Verified 2026-09-08: the pre-correction recipe silently produced a v0.13.0
-> binary at a path named `v012`. The resolver refuses it, so nothing measured
-> the wrong thing — but the recipe no longer did what it said. Note also that
-> for the float/bit-depth work the five files that matter —
-> `lib/jxl/{enc_modular.cc,dec_modular.cc,encode.cc,image_metadata.h,image_metadata.cc}`
-> — are byte-identical between `v0.12.0` and `d089091`, so source READING at
-> HEAD is safe for those; binaries are not.)
-> **Enforcement**: `jxl_encoder::test_helpers::{cjxl_path, djxl_path}` accept
-> only `REQUIRED_LIBJXL_VERSION` and panic naming every candidate and its
-> version otherwise; `/usr/bin` is deliberately absent from their candidate
-> lists. `scripts/generate_cjxl_reference.sh` refuses to regenerate the
-> committed reference CSV with anything else. Pinned by
-> `test_helpers::libjxl_version_guard_tests`. Resolve every new cjxl/djxl call
-> site through those helpers — never `Command::new("cjxl")`.
+The live reference is [libjxl v0.13.0](https://github.com/libjxl/libjxl/releases/tag/v0.13.0)
+at `5a7da83447212fe4900fc29ce97430b881caa67e`. CI verifies the release
+archives or builds tools from the pinned tag. Set `CJXL_PATH` and
+`DJXL_PATH` to the verified tools when running tests locally. A build
+under `~/tmp/libjxl-v013-build/tools/` is also discovered on Linux.
+
+Resolve runtime calls through `jxl_encoder::test_helpers::{cjxl_path, djxl_path}`.
+Both require the exact release token and report the tool path and raw banner
+when version probing fails. The packaged v0.11.1 tools are unsuitable for
+the current gates. They use a different 2x downsampling policy, which
+distorted the earlier issue-102 comparison.
+
+Historical v0.12.0 native object oracles, frozen reference CSVs and
+benchmark replays retain their own pins. The envelope sweep accepts both
+release paths explicitly. Record the actual banner because the v0.12.0
+Linux release archive and source tag report different commit IDs.
 
 - **libjxl (C++)**: `~/work/jxl-efforts/libjxl` - **PRIMARY** reference encoder/decoder
   - Use cjxl for quality comparisons and RD benchmarks

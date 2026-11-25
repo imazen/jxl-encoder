@@ -51,7 +51,7 @@ def main():
     run(binary, corpus, existing, base, False, args.out / "existing.log")
     assert existing.read_text() == "preserve this output\n"
     fake = args.out / "djxl-fails"
-    fake.write_text('#!/bin/sh\nif [ "$1" = --version ]; then echo "djxl v0.12.0"; exit 0; fi\necho injected-decoder-failure >&2\nexit 37\n')
+    fake.write_text('#!/bin/sh\nif [ "$1" = --version ]; then echo "djxl v0.13.0"; exit 0; fi\necho injected-decoder-failure >&2\nexit 37\n')
     fake.chmod(0o755)
     failed_output = args.out / "decoder-failure.tsv"
     with (args.out / "decoder-failure.log").open("x") as log:

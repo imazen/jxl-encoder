@@ -517,14 +517,14 @@ fn all_offered_spline_precision_and_group_edges() {
     use jxl_encoder::ProgressiveMode;
     let oracle = std::path::PathBuf::from(
         std::env::var_os("LIBJXL_ORIGINAL_PROFILE_ORACLE")
-            .expect("explicit pinned v0.12 original-profile float oracle"),
+            .expect("explicit pinned v0.13 original-profile float oracle"),
     );
     let version = std::process::Command::new(&oracle)
         .arg("--version")
         .output()
         .unwrap();
     assert!(version.status.success());
-    assert!(String::from_utf8_lossy(&version.stdout).contains("12000"));
+    assert!(String::from_utf8_lossy(&version.stdout).contains("13000"));
     let root = directory();
     let fixture = image::load_from_memory(include_bytes!("images/frymire-srgb.png"))
         .unwrap()

@@ -365,12 +365,12 @@ fn explicit_blend_policy_mode_and_entry_matrix() {
 #[test]
 fn accepted_blend_layouts_keep_original_profile_addition() {
     let oracle = std::env::var_os("LIBJXL_ORIGINAL_PROFILE_ORACLE")
-        .expect("caller-selected v0.12 original-profile float oracle");
+        .expect("caller-selected v0.13 original-profile float oracle");
     let version = Command::new(&oracle).arg("--version").output().unwrap();
     assert!(version.status.success());
     assert_eq!(
         String::from_utf8(version.stdout).unwrap().trim(),
-        "libjxl original-profile oracle 12000"
+        "libjxl original-profile oracle 13000"
     );
     let layouts = [
         PixelLayout::Rgb8,

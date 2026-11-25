@@ -21,7 +21,7 @@ parser.add_argument("--djxl", required=True, type=Path)
 parser.add_argument("artifacts", type=Path)
 args = parser.parse_args()
 version = subprocess.check_output([str(args.djxl), "--version"], stderr=subprocess.STDOUT, text=True)
-if not re.search(r"v0\.12\.", version):
+if not re.search(r"v0\.13\.", version):
     raise SystemExit(f"libjxl 0.12 required, got {version}")
 files = sorted(args.artifacts.glob("*.jxl"))
 if len(files) != 24:

@@ -1,7 +1,7 @@
 name: Weekly conformance sweep
 
 # Random real-image encodes (tools/conformance-sweep) checked by three
-# decoders: libjxl v0.12 djxl, upstream jxl-rs (latest release) and
+# decoders: libjxl v0.13 djxl, upstream jxl-rs (latest release) and
 # zenjxl-decoder at the pinned sibling revision. The seed is the week number,
 # so coverage rotates; every failure replays with `--seed S --only N`.
 #
@@ -65,7 +65,7 @@ jobs:
       - name: Fetch real-world ICC profiles
         run: scripts/fetch_icc_profiles.sh "$RUNNER_TEMP/icc"
 
-      - name: Set up libjxl v0.12 reference tools
+      - name: Set up libjxl v0.13 reference tools
         uses: ./.github/actions/setup-libjxl
 
       - name: Install Rust

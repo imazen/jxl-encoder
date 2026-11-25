@@ -1,5 +1,5 @@
 name: Set up libjxl reference tools
-description: Provide pinned v0.12 cjxl and djxl for reference tests, including cross containers.
+description: Provide pinned v0.13.0 cjxl and djxl for reference tests, including cross containers.
 runs:
   using: composite
   steps:
@@ -7,7 +7,7 @@ runs:
       id: tools
       with:
         path: .ci-libjxl/tools
-        key: libjxl-v0.12.0-${{ runner.os }}-${{ runner.arch }}-cmyk-v1-${{ hashFiles('scripts/libjxl_original_profile.*', 'scripts/cmyk_raw_frame_oracle.cc') }}
+        key: libjxl-v0.13.0-${{ runner.os }}-${{ runner.arch }}-cmyk-v1-${{ hashFiles('scripts/libjxl_original_profile.*', 'scripts/cmyk_raw_frame_oracle.cc') }}
 
     - name: Download static Linux x64 reference tools
       if: steps.tools.outputs.cache-hit != 'true' && runner.os == 'Linux' && runner.arch == 'X64'
@@ -17,18 +17,18 @@ runs:
         mkdir -p .ci-libjxl/tools
         sudo apt-get update
         sudo apt-get install -y lzip
-        curl --fail --location --retry 3 https://github.com/libjxl/libjxl/releases/download/v0.12.0/jxl-linux-x86_64-static.tar.lz -o .ci-libjxl/linux.tar.lz
-        echo '5318a1ea40adad76d023e0c17a03d4627f8282f83cb2b575e69be8e74f1ff456  .ci-libjxl/linux.tar.lz' | sha256sum --check
-        tar --lzip -xf .ci-libjxl/linux.tar.lz -C .ci-libjxl/tools
+        curl --fail --location --retry 3 https://github.com/libjxl/libjxl/releases/download/v0.13.0/jxl-linux-x86_64-static.tar.lz -o .ci-libjxl/linux.tar.lz
+        echo '637599dae477dbb4e6d6ee71b0554e8a65c20dc25fd2892cf2bebb935d54d527  .ci-libjxl/linux.tar.lz' | sha256sum --check
+        tar --lzip -xf .ci-libjxl/linux.tar.lz -C .ci-libjxl/tools --strip-components=1 tools/cjxl tools/djxl
 
     - name: Download static Windows reference tools
       if: steps.tools.outputs.cache-hit != 'true' && runner.os == 'Windows' && runner.arch == 'X64'
       shell: pwsh
       run: |
         New-Item -ItemType Directory -Force .ci-libjxl/tools | Out-Null
-        Invoke-WebRequest https://github.com/libjxl/libjxl/releases/download/v0.12.0/jxl-x64-windows-static.zip -OutFile .ci-libjxl/windows.zip
+        Invoke-WebRequest https://github.com/libjxl/libjxl/releases/download/v0.13.0/jxl-x64-windows-static.zip -OutFile .ci-libjxl/windows.zip
         $digest = (Get-FileHash .ci-libjxl/windows.zip -Algorithm SHA256).Hash.ToLowerInvariant()
-        if ($digest -ne '3025d7e308390796d20492322e606bc92decaee7b6bc99d3f7547870ae5db7de') { throw 'libjxl archive checksum mismatch' }
+        if ($digest -ne 'e394519c05ea9e5b83947f89b40afbf1ea7c631a608406c5de945a4c5bdcdcb7') { throw 'libjxl archive checksum mismatch' }
         Expand-Archive .ci-libjxl/windows.zip -DestinationPath .ci-libjxl/tools
 
     - name: Check out pinned source for native reference oracles
@@ -36,7 +36,7 @@ runs:
       uses: actions/checkout@v7
       with:
         repository: libjxl/libjxl
-        ref: v0.12.0
+        ref: 5a7da83447212fe4900fc29ce97430b881caa67e
         path: .ci-libjxl/source
         submodules: recursive
         persist-credentials: false
@@ -115,7 +115,8 @@ runs:
             echo "$tool --version failed with exit status $status" >&2
             exit "$status"
           fi
-          if [[ "$version" != *v0.12.* ]]; then echo 'Incorrect libjxl version' >&2; exit 1; fi
+          read -r name release _ <<< "$version"
+          if [[ "$name" != "$tool" || "$release" != v0.13.0 ]]; then echo 'Incorrect libjxl version' >&2; exit 1; fi
           if [[ "$RUNNER_OS" == Windows ]]; then tool_path=$(cygpath -m "$tool_path"); fi
           if [[ "$tool" == cjxl ]]; then key=CJXL_PATH; else key=DJXL_PATH; fi
           echo "$key=$tool_path" >> "$GITHUB_ENV"

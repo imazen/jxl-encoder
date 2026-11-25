@@ -241,7 +241,7 @@ fn check(
     assert!(version.status.success());
     assert_eq!(
         String::from_utf8(version.stdout).unwrap().trim(),
-        "libjxl CMYK raw-frame oracle 12000"
+        "libjxl CMYK raw-frame oracle 13000"
     );
     let mut journal = std::fs::File::create(out.join("completed.tsv")).unwrap();
     for (policy, strategy, mode) in policies {

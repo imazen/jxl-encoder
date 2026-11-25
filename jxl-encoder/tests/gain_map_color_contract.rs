@@ -578,7 +578,7 @@ fn gain_map_input_contract_refuses_unrepresentable_pairs() {
 fn gain_map_shapes_scaling_luminance_and_alpha_use_the_declared_gamut() {
     let root = directory();
     let oracle = std::env::var_os("LIBJXL_ORIGINAL_PROFILE_ORACLE")
-        .expect("caller must provide the pinned v0.12 float oracle");
+        .expect("caller must provide the pinned v0.13 float oracle");
     let version = std::process::Command::new(&oracle)
         .arg("--version")
         .output()
@@ -586,7 +586,7 @@ fn gain_map_shapes_scaling_luminance_and_alpha_use_the_declared_gamut() {
     assert!(version.status.success());
     assert_eq!(
         String::from_utf8(version.stdout).unwrap().trim(),
-        "libjxl original-profile oracle 12000"
+        "libjxl original-profile oracle 13000"
     );
     let mut journal = std::fs::File::create(root.join("shapes.tsv")).unwrap();
     let layouts = [
@@ -1368,7 +1368,7 @@ fn gain_map_ordered_transfer_pairs_use_the_same_base_white() {
     assert!(version.status.success());
     assert_eq!(
         String::from_utf8(version.stdout).unwrap().trim(),
-        "libjxl original-profile oracle 12000"
+        "libjxl original-profile oracle 13000"
     );
     let transfer_rows = include_str!("fixtures/gain_map_transfer_v012.tsv");
     let pq: f64 = transfer_rows

@@ -144,7 +144,7 @@ fn render_case(
         std::panic::catch_unwind(|| decoded_extras::decode_current_frames(bytes, "source-white"));
     let reference = if animation {
         let oracle = std::env::var_os("LIBJXL_ORIGINAL_PROFILE_ORACLE")
-            .expect("source-color animation requires caller-selected v0.12 source-fields oracle");
+            .expect("source-color animation requires caller-selected v0.13 source-fields oracle");
         let version = std::process::Command::new(&oracle)
             .arg("--version")
             .output()
@@ -152,7 +152,7 @@ fn render_case(
         assert!(version.status.success());
         assert_eq!(
             String::from_utf8(version.stdout).unwrap().trim(),
-            "libjxl original-profile oracle 12000"
+            "libjxl original-profile oracle 13000"
         );
         let native = std::process::Command::new(oracle)
             .arg(out.join("output.jxl"))

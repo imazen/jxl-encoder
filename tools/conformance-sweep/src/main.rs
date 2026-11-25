@@ -2,7 +2,7 @@
 // Licensed under AGPL-3.0-or-later. Commercial licenses at https://www.imazen.io/pricing
 
 //! Weekly conformance sweep: random real-image encodes checked by three
-//! decoders, libjxl v0.12's djxl, upstream jxl-rs (crates.io `jxl`, latest
+//! decoders, libjxl v0.13's djxl, upstream jxl-rs (crates.io `jxl`, latest
 //! release) and our fork zenjxl-decoder.
 //!
 //! Each cell is derived from `(seed, index)` alone, so a failure replays with

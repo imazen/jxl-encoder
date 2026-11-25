@@ -85,7 +85,7 @@ jobs:
           CODEC_CORPUS_DIR: ${{ runner.temp }}/codec-corpus
         run: ./scripts/hunt/fetch_imazen26_gate_files.sh
 
-      - name: Set up libjxl v0.12 reference tools
+      - name: Set up libjxl v0.13 reference tools
         uses: ./.github/actions/setup-libjxl
 
       - name: Install Rust
@@ -169,7 +169,7 @@ jobs:
         # setup-libjxl action above, which locates the binaries with `find`
         # and version-checks them. Setting them here would OVERRIDE those
         # verified paths with a guess -- which is exactly how the first version
-        # of this step failed, panicking in the v0.12 version guard.
+        # of this step failed, panicking in the v0.13 version guard.
         env:
           CODEC_CORPUS_DIR: ${{ runner.temp }}/codec-corpus
           JXL_PROBE_BUILD_COMMIT: ${{ github.sha }}
@@ -187,7 +187,7 @@ jobs:
         # setup-libjxl action above, which locates the binaries with `find`
         # and version-checks them. Setting them here would OVERRIDE those
         # verified paths with a guess -- which is exactly how the first version
-        # of this step failed, panicking in the v0.12 version guard.
+        # of this step failed, panicking in the v0.13 version guard.
         env:
           CODEC_CORPUS_DIR: ${{ runner.temp }}/codec-corpus
         run: |

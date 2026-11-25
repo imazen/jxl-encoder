@@ -675,7 +675,7 @@ fn original_icc_orientation_control() {
     assert!(version.status.success());
     assert_eq!(
         String::from_utf8(version.stdout).unwrap().trim(),
-        "libjxl original-profile oracle 12000"
+        "libjxl original-profile oracle 13000"
     );
     let reference = |data: &[u8], name: &str| {
         let dir = oracle_directory();

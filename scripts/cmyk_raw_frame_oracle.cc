@@ -52,8 +52,8 @@ static JXL_BOOL RawRun(void* data,size_t,const float* source,float* destination,
 static void RawDestroy(void* data) {delete static_cast<RawState*>(data);}
 
 int main(int argc,char**argv) {
-  if (argc==2 && std::string(argv[1])=="--version") { std::cout<<"libjxl CMYK raw-frame oracle "<<JxlDecoderVersion()<<'\n'; return JxlDecoderVersion()==12000?0:2; }
-  if (argc!=4 || JxlDecoderVersion()!=12000) return 2;
+  if (argc==2 && std::string(argv[1])=="--version") { std::cout<<"libjxl CMYK raw-frame oracle "<<JxlDecoderVersion()<<'\n'; return JxlDecoderVersion()==13000?0:2; }
+  if (argc!=4 || JxlDecoderVersion()!=13000) return 2;
   const std::string mode=argv[3];
   const bool layers=mode=="raw-cmy-layers" || mode=="linear-layers" || mode=="srgb-layers";
   const bool srgb=mode=="srgb-layers";

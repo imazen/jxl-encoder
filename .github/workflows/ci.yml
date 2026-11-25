@@ -47,7 +47,7 @@ jobs:
       - name: Clone sibling path-dep repos
         uses: ./.github/actions/clone-siblings
 
-      - name: Set up libjxl v0.12 reference tools
+      - name: Set up libjxl v0.13 reference tools
         uses: ./.github/actions/setup-libjxl
 
       - name: Install Rust
@@ -195,7 +195,7 @@ jobs:
       - name: Clone sibling path-dep repos
         uses: ./.github/actions/clone-siblings
 
-      - name: Set up libjxl v0.12 reference tools
+      - name: Set up libjxl v0.13 reference tools
         uses: ./.github/actions/setup-libjxl
 
       - name: Install Rust
@@ -371,7 +371,7 @@ jobs:
       - name: Clone sibling path-dep repos
         uses: ./.github/actions/clone-siblings
 
-      - name: Set up libjxl v0.12 reference tools
+      - name: Set up libjxl v0.13 reference tools
         if: matrix.run_tests
         uses: ./.github/actions/setup-libjxl
 
@@ -496,7 +496,7 @@ jobs:
       - name: Clone sibling path-dep repos
         uses: ./.github/actions/clone-siblings
 
-      - name: Set up libjxl v0.12 reference tools
+      - name: Set up libjxl v0.13 reference tools
         uses: ./.github/actions/setup-libjxl
 
       - name: Install Rust
@@ -546,7 +546,7 @@ jobs:
       - name: Clone sibling path-dep repos
         uses: ./.github/actions/clone-siblings
 
-      - name: Set up libjxl v0.12 reference tools
+      - name: Set up libjxl v0.13 reference tools
         uses: ./.github/actions/setup-libjxl
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable

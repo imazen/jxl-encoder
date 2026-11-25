@@ -3,7 +3,7 @@ use super::*;
 use jxl_encoder::{ChromaSubsampling, ImageMetadata};
 
 // Native LCMS -> RGB8 -> cjpeg q100 controls retain their independent JPEG
-// coefficients. Decode those with the selected v0.12 tools so the reference
+// coefficients. Decode those with the selected v0.13 tools so the reference
 // includes the same runtime CMS and floating-point implementation as the cell.
 fn reference_sha256(data: &[u8]) -> String {
     use sha2::{Digest, Sha256};
@@ -183,7 +183,7 @@ fn check_primary_profile_pixels(
         return;
     }
     let oracle = std::env::var_os("LIBJXL_ORIGINAL_PROFILE_ORACLE")
-        .expect("optional ICC controls require the caller-selected v0.12 original-profile oracle");
+        .expect("optional ICC controls require the caller-selected v0.13 original-profile oracle");
     let version = std::process::Command::new(&oracle)
         .arg("--version")
         .output()
@@ -191,7 +191,7 @@ fn check_primary_profile_pixels(
     assert!(version.status.success());
     assert_eq!(
         String::from_utf8(version.stdout).unwrap().trim(),
-        "libjxl original-profile oracle 12000"
+        "libjxl original-profile oracle 13000"
     );
     let native = std::process::Command::new(oracle)
         .arg(out.join("output.jxl"))

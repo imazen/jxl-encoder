@@ -16,16 +16,18 @@ start = text.index('    - name: Verify versions and export reference paths\n')
 start = text.index('      run: |\n', start) + len('      run: |\n')
 script = textwrap.dedent(text[start:])
 # The remaining action covers oracle and temporary-directory setup separately.
-script = script[:script.index('if [[ "$RUNNER_OS" == Linux && "$RUNNER_ARCH" == ARM64 ]]; then')]
-for name, version, status in [('success', 'v0.12.0 fixture', 0),
+script = script[:script.index('for binding in jxl-original-profile:')]
+for name, version, status in [('success', 'cjxl v0.13.0 fixture', 0),
                               ('native-error', 'fixture native error detail', 23),
-                              ('wrong-version', 'v0.11.1 fixture', 0)]:
+                              ('wrong-version', 'cjxl v0.12.0 fixture', 0),
+                              ('version-prefix', 'cjxl v0.13.00 fixture', 0)]:
     root = a.output / name
     tools = root / '.ci-libjxl/tools'
     tools.mkdir(parents=True)
     for tool in ['cjxl', 'djxl']:
+        banner = version.replace('cjxl', tool)
         path = tools / tool
-        path.write_text('#!/bin/sh\nprintf "%s\\n" "' + version + '" >&2\nexit ' + str(status) + '\n')
+        path.write_text('#!/bin/sh\nprintf "%s\\n" "' + banner + '" >&2\nexit ' + str(status) + '\n')
         path.chmod(0o755)
     envfile = root.resolve() / 'exports.env'
     result = subprocess.run(['bash', '-c', script], cwd=root,
@@ -38,7 +40,7 @@ for name, version, status in [('success', 'v0.12.0 fixture', 0),
         assert result.returncode == status, (name, result.returncode)
         assert version in result.stdout and 'exit status 23' in result.stdout, name
         assert not envfile.exists(), name
-    elif name == 'wrong-version':
+    elif name in ('wrong-version', 'version-prefix'):
         assert result.returncode == 1 and 'Incorrect libjxl version' in result.stdout, name
         assert not envfile.exists(), name
     else:

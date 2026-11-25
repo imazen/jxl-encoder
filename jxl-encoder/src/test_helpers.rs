@@ -79,16 +79,12 @@ macro_rules! skip_without_binary {
 /// historical libjxl build whose OpenEXR 2.5 shared libs left the system, so
 /// existence checks pass while every invocation fails. Probing once per test
 /// process makes the helper immune to any single build tree rotting.
-/// The ONLY libjxl version this encoder is validated against.
-///
-/// Our port targets libjxl v0.12. Comparing against any other version silently
-/// measures the wrong thing: v0.11.x, for instance, switches to the iterative
-/// 2x downsampler between effort 5 and 7, where v0.12 restricts it to
-/// `speed_tier <= kGlacier` (effort 10-11). A differential run against a
-/// v0.11.1 binary made our (correct, v0.12-matching) resampling look ~35 %
-/// worse than libjxl; against v0.12 the same measurement is at parity
-/// (issue #102). Hence: refuse anything that is not v0.12.
-pub const REQUIRED_LIBJXL_VERSION: &str = "v0.12";
+/// Released libjxl version used by the current reference tests.
+pub const REQUIRED_LIBJXL_VERSION: &str = "v0.13.0";
+
+fn reference_version_matches(banner: &str) -> bool {
+    banner.split_ascii_whitespace().nth(1) == Some(REQUIRED_LIBJXL_VERSION)
+}
 
 /// Reports the `--version` line of a libjxl tool, or `None` if it will not run.
 #[cfg(test)]
@@ -128,7 +124,7 @@ fn first_running(env_key: &str, candidates: &[&str]) -> String {
     let mut seen: Vec<String> = Vec::new();
     let mut check = |c: &str| -> Option<String> {
         match libjxl_tool_probe(c) {
-            Ok(v) if v.contains(REQUIRED_LIBJXL_VERSION) => Some(c.to_string()),
+            Ok(v) if reference_version_matches(&v) => Some(c.to_string()),
             Ok(v) => {
                 seen.push(alloc::format!("{c}: {v}"));
                 None
@@ -160,13 +156,7 @@ fn first_running(env_key: &str, candidates: &[&str]) -> String {
          On macOS this repo already ships one at .ci-libjxl/tools/ (gitignored) \
          and the justfile passes it via CJXL_PATH/DJXL_PATH — run through \
          `just` instead of cargo directly, or set {env_key} to it.\n  \
-         To build one, CHECK OUT THE TAG FIRST: ~/work/jxl-efforts/libjxl has \
-         moved to the v0.13 dev line and its HEAD builds as v0.13.0.\n  \
-         git -C ~/work/jxl-efforts/libjxl checkout v0.12.0\n  \
-         ~/work/jxl-efforts/libjxl/deps.sh\n  \
-         cmake -S ~/work/jxl-efforts/libjxl -B ~/tmp/libjxl-v012-build \
-         -DCMAKE_BUILD_TYPE=Release -DJPEGXL_ENABLE_OPENEXR=OFF -DBUILD_TESTING=OFF\n  \
-         cmake --build ~/tmp/libjxl-v012-build --target cjxl djxl -j 12\n\
+         Use the {REQUIRED_LIBJXL_VERSION} release archive or build cjxl/djxl from the release tag.\n  \
          then set {env_key} to it.",
         seen.join("\n  ")
     );
@@ -204,7 +194,7 @@ mod libjxl_version_guard_tests {
                 continue; // not installed on this machine; nothing to guard against
             };
             assert!(
-                !v.contains(REQUIRED_LIBJXL_VERSION),
+                !reference_version_matches(&v),
                 "{sys} reports {v}, which IS the required version — this test \
                  assumes the packaged binary is the wrong one; re-point it"
             );
@@ -224,7 +214,7 @@ mod libjxl_version_guard_tests {
             let v = libjxl_tool_version(&path)
                 .unwrap_or_else(|| panic!("{name} resolved to {path}, which does not run"));
             assert!(
-                v.contains(REQUIRED_LIBJXL_VERSION),
+                reference_version_matches(&v),
                 "{name} resolved to {path} reporting {v}, not {REQUIRED_LIBJXL_VERSION}"
             );
         }
@@ -240,11 +230,11 @@ pub fn djxl_path() -> String {
         first_running(
             "DJXL_PATH",
             &[
-                // v0.12 out-of-tree build (see the panic message in
+                // v0.13 out-of-tree build (see the panic message in
                 // `first_running` for how to produce it) FIRST; the in-tree
                 // build second. `/usr/bin` is deliberately absent: the
                 // packaged binary is v0.11.x and must never be selected.
-                "/home/lilith/tmp/libjxl-v012-build/tools/djxl",
+                "/home/lilith/tmp/libjxl-v013-build/tools/djxl",
                 "/home/lilith/work/jxl-efforts/libjxl/build/tools/djxl",
                 "/home/lilith/work/libjxl-build/tools/djxl",
             ],
@@ -262,10 +252,10 @@ pub fn cjxl_path() -> String {
         first_running(
             "CJXL_PATH",
             &[
-                // v0.12 out-of-tree build first; in-tree build second.
+                // v0.13 out-of-tree build first; in-tree build second.
                 // `/usr/bin` is deliberately absent: the packaged binary is
                 // v0.11.x and must never be selected (issue #102).
-                "/home/lilith/tmp/libjxl-v012-build/tools/cjxl",
+                "/home/lilith/tmp/libjxl-v013-build/tools/cjxl",
                 "/home/lilith/work/jxl-efforts/libjxl/build/tools/cjxl",
                 "/home/lilith/work/libjxl-build/tools/cjxl",
             ],

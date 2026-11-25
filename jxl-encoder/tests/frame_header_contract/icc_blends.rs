@@ -9,7 +9,7 @@ fn original_icc_addition_preserves_profile_and_domain() {
     assert!(version.status.success());
     assert_eq!(
         String::from_utf8(version.stdout).unwrap().trim(),
-        "libjxl original-profile oracle 12000"
+        "libjxl original-profile oracle 13000"
     );
     let root = run_dir("original-icc-blends");
     let profile = zenpixels_convert::icc_profiles::DISPLAY_P3_V4;

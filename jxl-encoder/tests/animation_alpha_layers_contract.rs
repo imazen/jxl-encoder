@@ -54,7 +54,7 @@ fn verify(out: &Path, bytes: &[u8], dims: (usize, usize), max: u16, expected: &[
     assert!(version.status.success());
     assert_eq!(
         String::from_utf8(version.stdout).unwrap().trim(),
-        "libjxl original-profile oracle 12000"
+        "libjxl original-profile oracle 13000"
     );
     let result = std::process::Command::new(oracle)
         .arg(out.join("input.jxl"))

@@ -28,13 +28,13 @@ int main(int argc, char **argv) {
   if (argc == 2 && std::string(argv[1]) == "--version") {
     std::cout << "libjxl original-profile oracle " << JxlDecoderVersion()
               << "\n";
-    return JxlDecoderVersion() == 12000 ? 0 : 2;
+    return JxlDecoderVersion() == 13000 ? 0 : 2;
   }
   const bool original_float = argc == 4 && std::string(argv[3]) == "--original-profile-float";
   const bool source_fields_float = argc == 4 && std::string(argv[3]) == "--source-fields-float";
   const bool source_float = source_fields_float || original_float;
   const bool source_fields = source_fields_float || (argc == 4 && std::string(argv[3]) == "--source-fields");
-  if ((argc != 3 && !source_fields && !original_float) || JxlDecoderVersion() != 12000)
+  if ((argc != 3 && !source_fields && !original_float) || JxlDecoderVersion() != 13000)
     return 2;
   std::ifstream in(argv[1], std::ios::binary);
   if (!in)

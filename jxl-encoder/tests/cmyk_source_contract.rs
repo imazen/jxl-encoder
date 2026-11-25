@@ -103,7 +103,7 @@ fn tagged_cmyk_lossless_keeps_every_source_code_in_primary_and_native_decoders()
     assert!(version.status.success());
     assert_eq!(
         String::from_utf8(version.stdout).unwrap().trim(),
-        "libjxl CMYK raw-frame oracle 12000"
+        "libjxl CMYK raw-frame oracle 13000"
     );
     let mut journal = std::fs::File::create(out.join("samples.tsv")).unwrap();
     for (policy, strategy, mode) in encoder_policies::policies() {

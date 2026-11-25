@@ -37,10 +37,10 @@ MUST update this table. Adding a divergence: new row. Changing one: update exist
 ### v0.13.0 transition baseline
 
 The transition targets [libjxl v0.13.0](https://github.com/libjxl/libjxl/releases/tag/v0.13.0),
-commit `5a7da83447212fe4900fc29ce97430b881caa67e`. The existing
-reference gates still identify the v0.12 series. The transition sweep takes
+commit `5a7da83447212fe4900fc29ce97430b881caa67e`. The live reference
+gates use this release. The transition sweep takes
 explicit paths and records the full version banners. The checksum-verified
-v0.12.0 Linux release archive used by the current CI recipe reports
+v0.12.0 Linux release archive used by the earlier CI recipe reports
 `4128790`. The v0.12.0 source tag points at `a7a9c78`. Keep archive and
 source-build evidence labeled with the actual binary identity.
 

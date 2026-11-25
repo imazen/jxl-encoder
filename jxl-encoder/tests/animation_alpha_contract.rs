@@ -1,4 +1,4 @@
-//! Animation alpha controls against independently encoded v0.12 alpha planes.
+//! Animation alpha controls against independently encoded v0.13 alpha planes.
 #![cfg(feature = "__expert")]
 use jxl_encoder::{AnimationFrame, AnimationParams, BlendMode, LossyConfig, PixelLayout};
 use std::path::{Path, PathBuf};
@@ -80,7 +80,7 @@ fn check(root: &Path, label: &str, config: LossyConfig, layout: PixelLayout, dim
     let primary = decoded_frames::decode_current_frames(&bytes, label);
     assert_eq!(primary.len(), 2);
     let oracle = std::env::var_os("LIBJXL_ORIGINAL_PROFILE_ORACLE")
-        .expect("caller-selected v0.12 float color/extra-plane oracle");
+        .expect("caller-selected v0.13 float color/extra-plane oracle");
     let version = std::process::Command::new(&oracle)
         .arg("--version")
         .output()
@@ -88,7 +88,7 @@ fn check(root: &Path, label: &str, config: LossyConfig, layout: PixelLayout, dim
     assert!(version.status.success());
     assert_eq!(
         String::from_utf8(version.stdout).unwrap().trim(),
-        "libjxl original-profile oracle 12000"
+        "libjxl original-profile oracle 13000"
     );
     let native = std::process::Command::new(oracle)
         .arg(out.join("input.jxl"))
