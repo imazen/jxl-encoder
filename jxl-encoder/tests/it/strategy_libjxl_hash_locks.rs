@@ -25,7 +25,7 @@
 //!
 //! ```sh
 //! UPDATE_LIBJXL_SIZES=1 cargo test --features __expert \
-//!     --test strategy_libjxl_hash_locks -- --test-threads=1
+//!     --test it libjxl_pinned_fixtures -- --nocapture
 //! ```
 
 #![cfg(feature = "__expert")]
@@ -267,8 +267,8 @@ const LIBJXL_PINS: &[LibjxlPin] = &[
         // all reconstruct identically here (cjxl's error images are
         // bitwise-equal too). Now **byte-identical to cjxl v0.12**
         // (171 B).
-        size: 171,
-        hash: 0xde2865119ee7fb36,
+        size: 148,
+        hash: 0x58d03010f66b59f1,
     },
     LibjxlPin {
         name: "libjxl_gradient_rgb_32x32_d4",
@@ -293,8 +293,8 @@ const LIBJXL_PINS: &[LibjxlPin] = &[
         // drift — `epf_dispatch` `AlwaysSelect` + EPF `kMinSigma`
         // gate (see _d1 note). Now **byte-identical to cjxl v0.12**
         // (121 B).
-        size: 121,
-        hash: 0x540fb242c6fc0d7c,
+        size: 98,
+        hash: 0x26f14a9767ccfe8b,
     },
     LibjxlPin {
         name: "libjxl_gradient_rgb_32x32_d1_e5",
@@ -312,8 +312,8 @@ const LIBJXL_PINS: &[LibjxlPin] = &[
         // drift — tree-stream `uint_method` kFast under
         // `extra_dc_precision` (see _d1 note). Now **byte-identical
         // to cjxl v0.12** (167 B).
-        size: 167,
-        hash: 0x189dbfd81990f715,
+        size: 144,
+        hash: 0x94f8360e1b29dec4,
     },
     LibjxlPin {
         name: "libjxl_gradient_rgb_32x32_d1_e3",
@@ -338,8 +338,8 @@ const LIBJXL_PINS: &[LibjxlPin] = &[
         // (0,0,0), matching cjxl v0.12 exactly on this cell (261 B).
         // W45-RECON part 13 (2026-09-23): 261 → 264 (+3 B), hash
         // drift (see _d1 note).
-        size: 264,
-        hash: 0x9e59746bdd568773,
+        size: 241,
+        hash: 0x71ef92217ca782a1,
     },
     LibjxlPin {
         name: "libjxl_noise_rgb_48x48_d1",
@@ -417,8 +417,8 @@ const LIBJXL_PINS: &[LibjxlPin] = &[
         // drift — tree-stream `uint_method` kFast under
         // `extra_dc_precision` (see _d1 note). Now **byte-identical
         // to cjxl v0.12** (3220 B).
-        size: 3220,
-        hash: 0xd3cc6a1999cc16c0,
+        size: 3198,
+        hash: 0xd9d751bda9ebb7ae,
     },
 ];
 

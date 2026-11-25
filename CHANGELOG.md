@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+- Track libjxl v0.13.0 in the reference tools and CI (`86289164`).
+- Charge singleton merges in forced-prefix ICC clustering (`8fe03b13`).
+- Write the default VarDCT block context map with its one-bit code.
+
 - Upgrade `archmage` and `magetypes` to `0.9.33` (`jxl-encoder`, `jxl-encoder-simd`, `Cargo.lock`), advance `.github/sibling-revisions.tsv` `imazen/zensimx` pin to `abec986d` for `archmage-macros` compatibility, and migrate deprecated `magetypes` `mul_add` calls in `jxl-encoder-simd` WASM128 kernels to `mul_add_relaxed`.
 
 - Reject unsupported extra-channel counts before pixel work or header writes.

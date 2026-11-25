@@ -63,26 +63,38 @@ and 8.
   with five exact lossless and ten lossy rendering comparisons per upstream
   reference.
 
-Start the source transition with default block-context-map signaling. Its
-22–23-byte effect can be tested independently of rate or perceptual tuning.
-Then compare the lossless LZ77, prefix clustering, fixed-tree predictor and
-squeeze changes as separate steps. Retune Zenjxl on per-band photo rate and
-decode-time curves once the new base qualifies. Include Butteraugli and
-independent decoded-quality scores, exact lossless samples and the established
-1/4/8-worker endpoints.
+The shared VarDCT and JPEG writer emits the one-bit default code for the
+full 39-entry map when all DC and quantizer threshold lists are empty.
+The [upstream change](https://github.com/libjxl/libjxl/pull/5001) saves the
+explicit map header. On i270, the Rust before/after grid covers the same
+five images at efforts 5 and 7 and distances 0, 1 and 4 for both strategies.
+All 60 pairs render identical RGB8 within djxl and within jxl-rs. Four
+strict graphics streams shrink by 22–23 bytes, and every sampled Zenjxl
+stream is byte-identical. The strict-mode fingerprints track the new
+streams. The Zenjxl fingerprint gate retains its existing values.
+
+The release's [LZ77 bucket matcher](https://github.com/libjxl/libjxl/pull/4928)
+already contributes a candidate to the lossless keep-best selector. The
+[archived differential](../benchmarks/lz77_upstream_2026-09-27.md) shows why
+selection matters for repeat-heavy sources. The fixed-tree predictor fix
+addresses the upstream tool's caller-provided placeholder image. Rust's
+weighted-mode searches use real image channels for learned trees. The
+Rust delta-palette writer currently emits a single palette transform,
+while the release can combine delta palette and squeeze when explicitly
+requested.
 
 The [forced-prefix clustering change](https://github.com/libjxl/libjxl/pull/5002)
 now applies to enhanced ICC histogram seeding and assignment when an LZ77
 parse is selected. The distance is at least one bit per count from any
 singleton that gains another symbol. The small-alphabet ICC path already uses
 actual Huffman lengths, and automatic VarDCT prefix selection retains its
-existing costs. The Rust keep-best clustering refinements and the ICC
-ratio guard retain their prior decisions. A synthetic histogram pair
+existing costs. The Rust Huffman pair refinement and the ICC
+ratio guard use their established policies. A synthetic histogram pair
 exercises the new floor. On i270 all 66 tested RGB profiles produce the
 same stream as before, and djxl v0.13.0 recovers every profile byte.
 
 To reproduce the envelope grid, set `CJXL` to the v0.12.0 tool,
-`COMPARE_CJXL` to the v0.13.0 tool, `EFFORTS="5 7 9"`,
+`CJXL_VERSION=v0.12.0`, `COMPARE_CJXL` to the v0.13.0 tool, `EFFORTS="5 7 9"`,
 `DISTS="0 0.5 1.0 2.0 4.0 8.0"`, and `KEEP_STREAMS=1`, then use
 `just libjxl-envelope-sweep OUT FIXTURES`. For the Rust lane, set `OURS`
 to the built CLI and leave `COMPARE_CJXL` unset. Set `CJXL_VERSION=v0.13.0`

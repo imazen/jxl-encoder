@@ -29,7 +29,7 @@
 //!   actionable info — the assertion message tells you exactly which
 //!   cell drifted.
 //! - Regen: `UPDATE_LIBJXL_BYTE_LOCK=1 cargo test --features __expert \
-//!     --test strategy_libjxl_byte_lock`. This emits the new golden
+//!     --test it libjxl_per_cell_byte_lock`. This emits the new golden
 //!   content to stdout AND rewrites the golden file in-place.
 //!
 //! ## Coverage
@@ -68,7 +68,7 @@
 //! distance would have seen neither.
 //! 2. Add the cell name to the golden file with hash `0..` (placeholder).
 //! 3. Run `UPDATE_LIBJXL_BYTE_LOCK=1 cargo test --features __expert \
-//!    --test strategy_libjxl_byte_lock` — emits + rewrites the golden.
+//!    --test it libjxl_per_cell_byte_lock` — emits + rewrites the golden.
 //! 4. Commit both the new test code + updated golden file.
 
 #![cfg(feature = "__expert")]
@@ -463,7 +463,7 @@ fn libjxl_per_cell_byte_lock() {
         panic!(
             "Failed to read golden file at {:?}: {e}\n\
              Run `UPDATE_LIBJXL_BYTE_LOCK=1 cargo test --features __expert \
-             --test strategy_libjxl_byte_lock` to create it.",
+             --test it libjxl_per_cell_byte_lock` to create it.",
             golden_path
         )
     });
@@ -517,7 +517,7 @@ fn libjxl_per_cell_byte_lock() {
         msg.push_str(&format!(
             "\n\nGolden file: {:?}\n\
              To accept the new bytes (after MANUAL review that the change is intentional):\n  \
-             UPDATE_LIBJXL_BYTE_LOCK=1 cargo test --features __expert --test strategy_libjxl_byte_lock\n",
+             UPDATE_LIBJXL_BYTE_LOCK=1 cargo test --features __expert --test it libjxl_per_cell_byte_lock\n",
             golden_path
         ));
         panic!("{}", msg);

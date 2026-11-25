@@ -6,7 +6,7 @@
 //!
 //! Ported from libjxl-tiny enc_frame.cc
 
-use super::ac_context::BlockCtxMap;
+use super::ac_context::{BlockCtxMap, LIBJXL_DEFAULT_CTX_MAP};
 use super::common::{ceil_log2_nonzero, pack_signed};
 use crate::bit_writer::BitWriter;
 #[cfg(feature = "debug-tokens")]
@@ -1180,6 +1180,15 @@ pub fn write_block_ctx_map_adaptive_with_mode(
     #[cfg(feature = "debug-tokens")]
     let start_bits = writer.bits_written();
 
+    // libjxl v0.13 uses the default code for the full 39-entry map.
+    // The flag also implies zero DC and quantizer thresholds.
+    if ctx_map.ctx_map == LIBJXL_DEFAULT_CTX_MAP
+        && ctx_map.qf_thresholds.is_empty()
+        && ctx_map.dc_thresholds.iter().all(Vec::is_empty)
+    {
+        return writer.write(1, 1);
+    }
+
     // Non-default BlockCtxMap
     writer.write(1, 0)?;
 
@@ -1532,6 +1541,23 @@ mod tests {
         let result = write_block_ctx_map_adaptive(&map, &mut writer);
         assert!(result.is_ok());
         assert!(writer.bits_written() > 0);
+    }
+
+    #[test]
+    fn libjxl_default_block_ctx_map_uses_the_one_bit_code() {
+        for jpeg_mode in [false, true] {
+            let mut map = BlockCtxMap::libjxl_default();
+            let mut writer = BitWriter::new();
+            write_block_ctx_map_adaptive_with_mode(&map, jpeg_mode, &mut writer).unwrap();
+            assert_eq!(writer.bits_written(), 1);
+            assert_eq!(writer.finish_with_padding()[0] & 1, 1);
+
+            map.ctx_map.swap(0, 1);
+            let mut writer = BitWriter::new();
+            write_block_ctx_map_adaptive_with_mode(&map, jpeg_mode, &mut writer).unwrap();
+            assert!(writer.bits_written() > 1);
+            assert_eq!(writer.finish_with_padding()[0] & 1, 0);
+        }
     }
 
     #[test]
