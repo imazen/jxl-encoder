@@ -1,7 +1,7 @@
 # Photo fast-decode replay with libjxl v0.13.0
 
-The existing lossy photo tiers clear the throughput and rate targets on i270
-at both quality bands. All 60 settings shared with the earlier native sweep
+The existing lossy photo tiers clear the warm allocating throughput and
+rate targets on i270 at both quality bands. All 60 settings shared with the earlier native sweep
 reproduce their stream hashes and both renderers' Butteraugli and
 SSIMULACRA2 scores. The full search scores 88 candidates across four sRGB
 originals. The Display P3 original retains its tier-0 result and is counted
@@ -26,6 +26,24 @@ the P3 fallback. The full ICC-and-photo command takes 1,208 seconds at
 2.61 GiB peak RSS, including the encoder builds.
 [Photo tier definitions and gates](faster_decode_profile_2026-11-22.md).
 
+The same selected streams also run in fresh processes with zero warmup and
+with warm caller-owned output. Each candidate and control retains its own
+quality-matched pixels. The caller-owned runner checks every stream
+against its allocating readback.
+
+| Band | Tier | Cold allocating speedup at 1 / 4 / 8 workers | Warm caller-owned speedup at 1 / 4 / 8 workers |
+|---|---|---:|---:|
+| d1 | Balanced | 1.219× / 1.464× / 1.420× | 1.230× / 1.274× / 1.296× |
+| d1 | Throughput | 1.219× / 1.518× / 1.484× | 1.187× / 1.472× / 1.499× |
+| d4 | Balanced | 1.362× / 1.240× / 1.211× | 1.393× / 1.321× / 1.350× |
+| d4 | Throughput | 1.366× / 1.226× / 1.217× | 1.388× / 1.322× / 1.330× |
+
+Balanced clears both lossy speed targets in all three measured modes.
+Throughput falls below the 1.20× target at d1 with one worker and
+caller-owned output. Balanced provides the qualified choice for that
+endpoint. Both tiers clear all measured eight-worker targets. The cold
+and caller-owned passes take 480 seconds at 0.38 GiB peak RSS.
+
 ## Native lossless photos
 
 The combined encoder reproduces all twelve pre-migration stream hashes on
@@ -41,8 +59,21 @@ source sample in Zen at 1, 4 and 8 workers, jxl-rs main, and djxl.
 The warm allocating medians clear both lossless speed and rate gates on
 this feature panel. The throughput setting saves 8.76%, 27.52% and 34.50%
 on the three files. Its one-worker ratios are 1.038×, 1.356× and 1.856×.
-These are warm allocating results. Cold allocating and caller-owned
-measurements have separate controls.
+The cold and caller-owned replay uses the same source-exact streams.
+Both lossless settings clear their targets at these endpoints on the
+three-photo panel.
+
+| Setting | Endpoint | Paired median speedup at 1 / 4 / 8 workers | Median MP/s at 1 / 4 / 8 workers |
+|---|---|---:|---:|
+| Fixed Gradient, prefix and selected RLE | Cold allocating | 1.358× / 1.429× / 1.351× | 159.77 / 422.42 / 616.88 |
+| Fixed Gradient, prefix and selected RLE | Warm caller-owned | 1.391× / 1.508× / 1.449× | 184.86 / 559.83 / 822.94 |
+| Tier 1, 128 px groups with patches | Cold allocating | 2.692× / 2.381× / 2.258× | 29.14 / 96.76 / 176.57 |
+| Tier 1, 128 px groups with patches | Warm caller-owned | 2.744× / 2.448× / 2.295× | 29.87 / 100.74 / 181.25 |
+
+The cold pass verifies each profile against its baseline at 1, 4 and 8
+workers before timing. The caller-owned pass verifies reuse against the
+allocating output and checks exact samples across streams. The two endpoint
+replays take 402 seconds at 0.27 GiB peak RSS.
 [Earlier endpoint and holdout results](faster_decode_imazen26_lossless_2026-11-22.md).
 
 The lossless command takes 458 seconds at 0.58 GiB peak RSS. It encodes at

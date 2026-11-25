@@ -134,7 +134,9 @@
 
 The release migration leaves all 60 shared lossy photo settings and all
 12 paired native lossless streams byte-identical. The refreshed lossy
-qualification clears both quality bands with the existing tiers. The
-native lossless feature panel clears the warm allocating speed and rate
-gates. Keep the existing profile settings for those endpoints.
+qualification clears both quality bands across allocating and
+caller-owned endpoints with Balanced. Throughput reaches 1.187× with one
+worker and caller-owned output at d1. The native lossless feature panel
+clears the speed and rate gates across all three measured modes. Keep
+the current settings and use Balanced for the single-worker d1 reuse case.
 [Measurements and decoder pins](../benchmarks/libjxl_v013_photo_replay_2026-11-25.md).

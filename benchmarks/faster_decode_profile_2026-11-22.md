@@ -41,7 +41,7 @@ three interleaved blocks of at least five samples, and A/A controls.
 Cover tiny and group-boundary crops, ≥1 MP and native sizes, with a dense
 lossy ladder. Keep imazen-26 test originals grouped across crops. Verify
 lossless source pixels, decoder and worker-count parity, full rendering
-with jxl-rs and djxl v0.12, and existing locks and format contracts for
+with jxl-rs and djxl v0.13.0, and existing locks and format contracts for
 strides, streaming, progressive, alpha, HDR and metadata. Retain per-image
 rate, quality, timing, hashes and commands and verify landed changes on main.
 
