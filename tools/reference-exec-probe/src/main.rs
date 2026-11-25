@@ -9,8 +9,12 @@ fn main() {
             eprintln!("stderr={}", String::from_utf8_lossy(&output.stderr));
             assert!(output.status.success());
             assert!(
-                String::from_utf8_lossy(&output.stdout).contains("v0.12.")
-                    || String::from_utf8_lossy(&output.stderr).contains("v0.12.")
+                [&output.stdout, &output.stderr].into_iter().any(|bytes| {
+                    let banner = String::from_utf8_lossy(bytes);
+                    let mut tokens = banner.split_ascii_whitespace();
+                    tokens.next() == Some("djxl") && tokens.next() == Some("v0.13.0")
+                }),
+                "expected the libjxl v0.13.0 reference"
             );
         }
         Err(error) => panic!("reference spawn failed: {error:?}"),
