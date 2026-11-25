@@ -1768,6 +1768,18 @@ separate queue items. Broad/coverage/remote verdicts must be read independently.
 
 ## Known Bugs (ACTIVE)
 
+### RESOLVED 2026-11-25: JPEG render oracle selected upstream LF smoothing
+
+libjxl v0.13 enables LF smoothing by default for 4:4:4 JPEG transcodes.
+That changed the reference float pixels in the progressive roof-photo
+fixture. Pass `--jpeg_reconstruction_lfs=0` in the CfL render matrix to
+match the encoder's unsmoothed JPEG render contract. For the failing cell,
+the explicit v0.13 mode matches the v0.12 stream hash and the Rust float
+readback in each decoder. All four controls reconstruct the original JPEG
+bytes. The original exact render and reconstruction assertions pass.
+[Reference policy and controls](docs/LIBJXL_DIVERGENCES.md#v0130-transition-baseline).
+
+
 ### RESOLVED 2026-11-22: Zensim Profile B attribution and signed steering
 
 The pinned [Zensim repair](https://github.com/imazen/zensimx/commit/ef588fcc30b0bde3c4469aa0f2a298b38070cce5)

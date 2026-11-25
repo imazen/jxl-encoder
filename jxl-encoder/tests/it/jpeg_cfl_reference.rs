@@ -42,7 +42,12 @@ fn jpeg_cfl_reference_pixels_match_at_color_tile_boundaries() {
             let result = std::process::Command::new(jxl_encoder::test_helpers::cjxl_path())
                 .arg(dir.join("input.jpg"))
                 .arg(dir.join("reference.jxl"))
-                .args(["--lossless_jpeg=1", "--num_threads=1", "-e"])
+                .args([
+                    "--lossless_jpeg=1",
+                    "--jpeg_reconstruction_lfs=0",
+                    "--num_threads=1",
+                    "-e",
+                ])
                 .arg(effort.to_string())
                 .output()
                 .unwrap();
@@ -112,9 +117,9 @@ fn assert_bits_eq(actual: &[f32], expected: &[f32], label: &str) {
 /// progressive and baseline — and pins the two properties a JPEG transcode
 /// owes its caller:
 ///
-/// 1. Its rendered pixels equal libjxl v0.12's `cjxl --lossless_jpeg=1`
-///    transcode of the same JPEG, bit for bit, through jxl-rs, jxl-oxide and
-///    djxl. The JPEG XL render of a recompressed JPEG is defined by the
+/// 1. Its rendered pixels equal the libjxl v0.13 transcode of the same
+///    JPEG with LF smoothing explicitly disabled, bit for bit, through
+///    jxl-rs, jxl-oxide and djxl. The JPEG XL render of a recompressed JPEG is defined by the
 ///    decoder (default AC quant bias, floating-point chroma-from-luma, no
 ///    per-sample clamp before YCbCr->RGB), so it is NOT a bit-exact JPEG
 ///    decode in libjxl either; matching the reference render is the
@@ -207,7 +212,12 @@ fn jpeg_cfl_reference_zenjpeg_styles_match_libjxl_render_and_reconstruct() {
                             std::process::Command::new(jxl_encoder::test_helpers::cjxl_path())
                                 .arg(dir.join("input.jpg"))
                                 .arg(dir.join("reference.jxl"))
-                                .args(["--lossless_jpeg=1", "--num_threads=1", "-e"])
+                                .args([
+                                    "--lossless_jpeg=1",
+                                    "--jpeg_reconstruction_lfs=0",
+                                    "--num_threads=1",
+                                    "-e",
+                                ])
                                 .arg(effort.to_string())
                                 .output()
                                 .unwrap();

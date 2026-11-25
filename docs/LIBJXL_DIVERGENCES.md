@@ -93,6 +93,15 @@ ratio guard use their established policies. A synthetic histogram pair
 exercises the new floor. On i270 all 66 tested RGB profiles produce the
 same stream as before, and djxl v0.13.0 recovers every profile byte.
 
+The JPEG transcode matrix compares the existing unsmoothed render policy
+against cjxl v0.13.0 with `--jpeg_reconstruction_lfs=0`. The new upstream
+4:4:4 default enables LF smoothing. On the progressive 520×392 roof photo
+at effort 7, the explicit off mode reproduces the v0.12 stream exactly.
+Within each decoder, the Rust, v0.12 and v0.13-off streams give identical
+float output. The v0.13-default float output differs. All four streams
+reconstruct the original JPEG bytes.
+[Upstream JPEG LF smoothing change](https://github.com/libjxl/libjxl/pull/4932).
+
 To reproduce the envelope grid, set `CJXL` to the v0.12.0 tool,
 `CJXL_VERSION=v0.12.0`, `COMPARE_CJXL` to the v0.13.0 tool, `EFFORTS="5 7 9"`,
 `DISTS="0 0.5 1.0 2.0 4.0 8.0"`, and `KEEP_STREAMS=1`, then use
