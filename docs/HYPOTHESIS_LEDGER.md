@@ -129,3 +129,12 @@
 - The eight-photo rerun qualifies the resulting throughput choices near d1
   and d4. The three-photo replay confirms the gain with both allocating
   and caller-owned endpoints. [Profile qualification](../benchmarks/faster_decode_imazen26_lossy_2026-11-22.md#expanded-photo-search).
+
+## November 25: libjxl v0.13 photo replay
+
+The release migration leaves all 60 shared lossy photo settings and all
+12 paired native lossless streams byte-identical. The refreshed lossy
+qualification clears both quality bands with the existing tiers. The
+native lossless feature panel clears the warm allocating speed and rate
+gates. Keep the existing profile settings for those endpoints.
+[Measurements and decoder pins](../benchmarks/libjxl_v013_photo_replay_2026-11-25.md).

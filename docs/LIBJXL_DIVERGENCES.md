@@ -108,8 +108,8 @@ Full evidence and SHA-256 identities are under
 resource wrapper reported 0.29 GiB peak RSS for the release comparison,
 1.56 GiB for the Rust build and comparison, and 0.05 GiB for dual readback.
 The run covers 8-bit RGB fixtures on one host and reports size and pixel
-identity. Throughput and changed production defaults require separate
-validation.
+identity. The native photo replay measures the retained speed profiles separately.
+[Matched-quality and exact lossless measurements](../benchmarks/libjxl_v013_photo_replay_2026-11-25.md).
 
 ---
 
