@@ -3359,3 +3359,7 @@ extra-count-faults manifest output coverage_env:
 
 extra-count-regions output llvm +archives:
     python3 scripts/color_admission_coverage.py {{quote(llvm)}} {{quote(output)}} {{archives}} --extra-count
+
+# Compare envelope fields and section sizes with explicitly selected reference tools.
+libjxl-envelope-sweep out fixtures:
+    bash scripts/libjxl_parity_sweep.sh "{{out}}" "{{fixtures}}"

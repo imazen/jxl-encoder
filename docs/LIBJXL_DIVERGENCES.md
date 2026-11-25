@@ -33,6 +33,62 @@ MUST update this table. Adding a divergence: new row. Changing one: update exist
 - KNOWN-BUG — divergence creates measurable RD/quality loss, awaiting fix
 - RESOLVED — was divergent, now at libjxl parity (commit SHA recorded)
 
+
+### v0.13.0 transition baseline
+
+The transition targets [libjxl v0.13.0](https://github.com/libjxl/libjxl/releases/tag/v0.13.0),
+commit `5a7da83447212fe4900fc29ce97430b881caa67e`. The existing
+reference gates still identify the v0.12 series. The transition sweep takes
+explicit paths and records the full version banners. The checksum-verified
+v0.12.0 Linux release archive used by the current CI recipe reports
+`4128790`. The v0.12.0 source tag points at `a7a9c78`. Keep archive and
+source-build evidence labeled with the actual binary identity.
+
+On i270, the two published Linux archives were compared on imazen-26
+detail, architecture/sky and low-light photo crops, plus text and line art.
+The grid used efforts 5, 7 and 9 and requested distances 0, 0.5, 1, 2, 4
+and 8.
+
+- All 45 lossy photo pairs are byte-identical. Eight of nine lossless photo
+  pairs are byte-identical. The detail crop at effort 9 grows by 138 bytes.
+- Eighteen of 30 lossy graphics pairs shrink by 22 or 23 bytes. The parser
+  sees the default block-context-map flag flip in 12 of those pairs. The
+  remaining six start with a reference-only frame beyond the parser's current
+  first-frame prefix coverage.
+- Both djxl v0.13.0 and jxl-rs fully render every stream. Within each
+  decoder, all 90 upstream pairs give identical RGB8 samples. The additional
+  current strict Rust controls comprise 15 pairs against each C++ binary.
+  Across both decoder endpoints all 100 lossless readbacks in the complete
+  grid reproduce the source. The selected Rust controls exercise compatibility,
+  with five exact lossless and ten lossy rendering comparisons per upstream
+  reference.
+
+Start the source transition with default block-context-map signaling. Its
+22–23-byte effect can be tested independently of rate or perceptual tuning.
+Then compare the lossless LZ77, prefix clustering, fixed-tree predictor and
+squeeze changes as separate steps. Retune Zenjxl on per-band photo rate and
+decode-time curves once the new base qualifies. Include Butteraugli and
+independent decoded-quality scores, exact lossless samples and the established
+1/4/8-worker endpoints.
+
+To reproduce the envelope grid, set `CJXL` to the v0.12.0 tool,
+`COMPARE_CJXL` to the v0.13.0 tool, `EFFORTS="5 7 9"`,
+`DISTS="0 0.5 1.0 2.0 4.0 8.0"`, and `KEEP_STREAMS=1`, then use
+`just libjxl-envelope-sweep OUT FIXTURES`. For the Rust lane, set `OURS`
+to the built CLI and leave `COMPARE_CJXL` unset. Set `CJXL_VERSION=v0.13.0`
+when choosing the new release as that lane's reference. Verify the retained
+files with `scripts/check_libjxl_envelope_readbacks.py` using explicit
+decoder paths. Parser diagnostics are recorded with each affected cell and
+section sizes are emitted only when the accounted bytes are consistent.
+
+Full evidence and SHA-256 identities are under
+`/mnt/v/output/jxl-encoder/libjxl-v013-transition-2026-11-25/`. The
+resource wrapper reported 0.29 GiB peak RSS for the release comparison,
+1.56 GiB for the Rust build and comparison, and 0.05 GiB for dual readback.
+The run covers 8-bit RGB fixtures on one host and reports size and pixel
+identity. Throughput and changed production defaults require separate
+validation.
+
 ---
 
 ## 0. Parity-gating policy (2026-09-17)

@@ -1,7 +1,40 @@
 """Regression checks for the independent codestream envelope parser."""
+import io
 import unittest
+from contextlib import redirect_stdout
+from types import SimpleNamespace
+from unittest.mock import patch
 
-from jxl_bitstream_diff import BitReader, Parser
+from jxl_bitstream_diff import BitReader, Parser, cmd_tsv
+
+
+class TableAlignmentTest(unittest.TestCase):
+    def render_table(self, left, right):
+        output = io.StringIO()
+        with patch("jxl_bitstream_diff.parse_file", side_effect=[(left, b"a"), (right, b"b")]):
+            with redirect_stdout(output):
+                self.assertEqual(cmd_tsv("a.jxl", "b.jxl"), 0)
+        return [line.split("\t") for line in output.getvalue().splitlines()]
+
+    def test_table_aligns_section_names_across_toc_shapes(self):
+        left = SimpleNamespace(fields=[], note=[], toc={
+            "labels": ["all-in-one"], "entries": [9], "payload_start": 7,
+        })
+        right = SimpleNamespace(fields=[], note=[], toc={
+            "labels": ["LfGlobal", "HfGlobal"], "entries": [5, 8], "payload_start": 10,
+        })
+        rows = self.render_table(left, right)
+        self.assertIn(["section", "all-in-one", "9", ""], rows)
+        self.assertIn(["section", "LfGlobal", "", "5"], rows)
+        self.assertIn(["section", "HfGlobal", "", "8"], rows)
+
+    def test_inconsistent_section_table_is_omitted_with_diagnostic(self):
+        toc = {"labels": ["all-in-one"], "entries": [9], "payload_start": 7}
+        left = SimpleNamespace(fields=[], note=[], toc=toc)
+        right = SimpleNamespace(fields=[], note=["PARSE INCONSISTENT: first frame only"], toc=toc)
+        rows = self.render_table(left, right)
+        self.assertIn(["diagnostic", "parse_note", "", right.note[0]], rows)
+        self.assertFalse(any(row[0] == "section" for row in rows))
 
 
 class ReferenceFrameHeaderTest(unittest.TestCase):

@@ -835,11 +835,14 @@ def cmd_tsv(pa, pb):
         if st == "=":
             continue
         print(f"field\t{name_a or name_b}\t{va}\t{vb}")
-    if a.toc and b.toc:
-        for i, lab in enumerate(a.toc["labels"]):
-            sa = a.toc["entries"][i]
-            sb = b.toc["entries"][i] if i < len(b.toc["entries"]) else ""
-            print(f"section\t{lab}\t{sa}\t{sb}")
+    notes = {name: "; ".join(p.note) for name, p in (("a", a), ("b", b)) if p.note}
+    if notes:
+        print(f"diagnostic\tparse_note\t{notes.get('a', '')}\t{notes.get('b', '')}")
+    if a.toc and b.toc and not any("PARSE INCONSISTENT" in note for note in notes.values()):
+        left = dict(zip(a.toc["labels"], a.toc["entries"]))
+        right = dict(zip(b.toc["labels"], b.toc["entries"]))
+        for label in dict.fromkeys((*left, *right)):
+            print(f"section\t{label}\t{left.get(label, '')}\t{right.get(label, '')}")
         print(f"section\theader_and_toc\t{a.toc['payload_start']}\t{b.toc['payload_start']}")
     return 0
 
