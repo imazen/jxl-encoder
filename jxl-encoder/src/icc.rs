@@ -9,7 +9,9 @@
 //! then entropy-coded using Huffman with 41 contexts.
 
 use crate::bit_writer::BitWriter;
-use crate::entropy_coding::encode::{OwnedEntropyCode, build_entropy_code_with_options};
+use crate::entropy_coding::encode::{
+    OwnedEntropyCode, build_entropy_code_with_options, build_icc_entropy_code_with_lz77,
+};
 use crate::entropy_coding::lz77::{Lz77Method, Lz77Params, apply_lz77, write_lz77_header};
 use crate::entropy_coding::token::Token;
 use crate::error::Result;
@@ -795,12 +797,7 @@ pub fn write_icc(icc: &[u8], writer: &mut BitWriter) -> Result<()> {
     )?;
 
     if let Some((lz77_tokens, params)) = lz77_result {
-        let code = build_entropy_code_with_options(
-            &lz77_tokens,
-            NUM_ICC_CONTEXTS + 1,
-            false,
-            Some(&params),
-        );
+        let code = build_icc_entropy_code_with_lz77(&lz77_tokens, NUM_ICC_CONTEXTS + 1, &params);
         if icc_prefixes_within_decoder_ratio(enc.len(), &lz77_tokens, Some(&params), &code)? {
             return write_icc_stream(&lz77_tokens, Some(&params), &code, writer);
         }

@@ -1234,6 +1234,42 @@ pub fn build_entropy_code_from_token_groups_with_clustering(
     uint_method: UintConfigMethod,
     max_histograms: usize,
 ) -> OwnedEntropyCode {
+    build_prefix_entropy_code(
+        groups,
+        num_contexts,
+        clustering,
+        lz77,
+        uint_method,
+        max_histograms,
+        false,
+    )
+}
+
+pub(crate) fn build_icc_entropy_code_with_lz77(
+    tokens: &[Token],
+    num_contexts: usize,
+    lz77: &Lz77Params,
+) -> OwnedEntropyCode {
+    build_prefix_entropy_code(
+        &[tokens],
+        num_contexts,
+        PrefixClustering::Legacy,
+        Some(lz77),
+        UintConfigMethod::None,
+        8,
+        true,
+    )
+}
+
+fn build_prefix_entropy_code(
+    groups: &[&[Token]],
+    num_contexts: usize,
+    clustering: PrefixClustering,
+    lz77: Option<&Lz77Params>,
+    uint_method: UintConfigMethod,
+    max_histograms: usize,
+    forced_prefix: bool,
+) -> OwnedEntropyCode {
     // Compute the required alphabet size. Most streams fit in ALPHABET_SIZE (64),
     // but large hybrid-uint values overflow it — e.g. VarDCT near-lossless DC
     // residuals at distance < ~0.03 reach token symbols 64-66 (#94). Size the
@@ -1333,7 +1369,8 @@ pub fn build_entropy_code_from_token_groups_with_clustering(
         (context_map, counts, totals)
     } else {
         use crate::entropy_coding::cluster::{
-            ClusteringType, EntropyType, cluster_histograms as enhanced_cluster,
+            ClusteringType, EntropyType, cluster_forced_prefix_histograms,
+            cluster_histograms as enhanced_cluster,
         };
         use crate::entropy_coding::histogram::Histogram as EnhancedHistogram;
 
@@ -1351,12 +1388,16 @@ pub fn build_entropy_code_from_token_groups_with_clustering(
             PrefixClustering::Legacy => ClusteringType::Best,
             PrefixClustering::Libjxl(ct) => ct,
         };
-        let result = enhanced_cluster(
-            cluster_type,
-            EntropyType::Huffman,
-            &enhanced_histos,
-            max_histograms,
-        )
+        let result = if forced_prefix {
+            cluster_forced_prefix_histograms(cluster_type, &enhanced_histos, max_histograms)
+        } else {
+            enhanced_cluster(
+                cluster_type,
+                EntropyType::Huffman,
+                &enhanced_histos,
+                max_histograms,
+            )
+        }
         .expect("Enhanced clustering failed");
 
         let counts: Vec<Vec<u32>> = result

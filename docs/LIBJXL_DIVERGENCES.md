@@ -71,6 +71,16 @@ decode-time curves once the new base qualifies. Include Butteraugli and
 independent decoded-quality scores, exact lossless samples and the established
 1/4/8-worker endpoints.
 
+The [forced-prefix clustering change](https://github.com/libjxl/libjxl/pull/5002)
+now applies to enhanced ICC histogram seeding and assignment when an LZ77
+parse is selected. The distance is at least one bit per count from any
+singleton that gains another symbol. The small-alphabet ICC path already uses
+actual Huffman lengths, and automatic VarDCT prefix selection retains its
+existing costs. The Rust keep-best clustering refinements and the ICC
+ratio guard retain their prior decisions. A synthetic histogram pair
+exercises the new floor. On i270 all 66 tested RGB profiles produce the
+same stream as before, and djxl v0.13.0 recovers every profile byte.
+
 To reproduce the envelope grid, set `CJXL` to the v0.12.0 tool,
 `COMPARE_CJXL` to the v0.13.0 tool, `EFFORTS="5 7 9"`,
 `DISTS="0 0.5 1.0 2.0 4.0 8.0"`, and `KEEP_STREAMS=1`, then use

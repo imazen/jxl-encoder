@@ -124,6 +124,34 @@ pub fn fast_cluster_histograms(
     fast_cluster_histograms_with_prev(input, max_histograms, &[])
 }
 
+fn forced_prefix_distance(a: &Histogram, b: &Histogram, scratch: &mut DistanceScratch) -> f32 {
+    let distance = histogram_distance_reuse(a, b, scratch);
+    if a.total_count == 0 || b.total_count == 0 {
+        return distance;
+    }
+
+    fn singleton(hist: &Histogram) -> Option<usize> {
+        let mut used = hist
+            .counts
+            .iter()
+            .enumerate()
+            .filter(|&(_, &count)| count > 0);
+        let (symbol, _) = used.next()?;
+        used.next().is_none().then_some(symbol)
+    }
+
+    // An isolated symbol uses no payload bits. A second symbol makes every
+    // occurrence from that context cost at least one bit (libjxl v0.13).
+    let floor = match (singleton(a), singleton(b)) {
+        (Some(left), Some(right)) if left == right => return distance,
+        (Some(_), Some(_)) => a.total_count as f32 + b.total_count as f32,
+        (Some(_), None) => a.total_count as f32,
+        (None, Some(_)) => b.total_count as f32,
+        (None, None) => 0.0,
+    };
+    distance.max(floor)
+}
+
 /// Fast clustering with support for pre-existing histograms.
 ///
 /// This is the full implementation matching libjxl's `FastClusterHistograms`.
@@ -133,6 +161,20 @@ pub fn fast_cluster_histograms_with_prev(
     input: &[Histogram],
     max_histograms: usize,
     prev_histograms: &[Histogram],
+) -> Result<ClusterResult> {
+    fast_cluster_histograms_with_cost(
+        input,
+        max_histograms,
+        prev_histograms,
+        histogram_distance_reuse,
+    )
+}
+
+fn fast_cluster_histograms_with_cost(
+    input: &[Histogram],
+    max_histograms: usize,
+    prev_histograms: &[Histogram],
+    distance: impl Fn(&Histogram, &Histogram, &mut DistanceScratch) -> f32,
 ) -> Result<ClusterResult> {
     if input.is_empty() {
         return Ok(ClusterResult {
@@ -208,7 +250,7 @@ pub fn fast_cluster_histograms_with_prev(
                 continue;
             }
             // Update distance using histogram distance to new cluster
-            let dist = histogram_distance_reuse(h, out.last().unwrap(), &mut dist_scratch);
+            let dist = distance(h, out.last().unwrap(), &mut dist_scratch);
             dists[i] = dists[i].min(dist);
             if dists[i] > dists[new_largest_idx] {
                 new_largest_idx = i;
@@ -238,7 +280,7 @@ pub fn fast_cluster_histograms_with_prev(
                 histogram_kl_divergence(&input[i], out_hist)
             } else {
                 // Use symmetric distance for new histograms
-                histogram_distance_reuse(&input[i], out_hist, &mut dist_scratch)
+                distance(&input[i], out_hist, &mut dist_scratch)
             };
 
             if dist < best_dist {
@@ -741,6 +783,30 @@ pub fn cluster_histograms(
     input: &[Histogram],
     max_histograms: usize,
 ) -> Result<ClusterResult> {
+    cluster_histograms_with_policy(clustering_type, entropy_type, input, max_histograms, false)
+}
+
+pub(crate) fn cluster_forced_prefix_histograms(
+    clustering_type: ClusteringType,
+    input: &[Histogram],
+    max_histograms: usize,
+) -> Result<ClusterResult> {
+    cluster_histograms_with_policy(
+        clustering_type,
+        EntropyType::Huffman,
+        input,
+        max_histograms,
+        true,
+    )
+}
+
+fn cluster_histograms_with_policy(
+    clustering_type: ClusteringType,
+    entropy_type: EntropyType,
+    input: &[Histogram],
+    max_histograms: usize,
+    forced_prefix: bool,
+) -> Result<ClusterResult> {
     let max_histograms_req = match clustering_type {
         ClusteringType::Fastest => max_histograms.min(4),
         _ => max_histograms,
@@ -753,7 +819,11 @@ pub fn cluster_histograms(
     w44_75_dump::dump_input_histograms(input, max_histograms, clustering_type, entropy_type);
 
     // Fast clustering
-    let mut result = fast_cluster_histograms(input, max_histograms)?;
+    let mut result = if forced_prefix {
+        fast_cluster_histograms_with_cost(input, max_histograms, &[], forced_prefix_distance)
+    } else {
+        fast_cluster_histograms(input, max_histograms)
+    }?;
 
     #[cfg(feature = "std")]
     let small_dump = input.len() < 10 && std::env::var_os("JXL_ANS_DIST_DUMP").is_some();
@@ -956,6 +1026,24 @@ pub mod w44_75_dump {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn forced_prefix_preserves_large_singleton_histogram() {
+        let histograms = [
+            Histogram::from_counts(&[10_000]),
+            Histogram::from_counts(&[20, 1]),
+            Histogram::new(),
+            Histogram::from_counts(&[30]),
+        ];
+        let regular =
+            cluster_histograms(ClusteringType::Fast, EntropyType::Huffman, &histograms, 4).unwrap();
+        let forced =
+            cluster_forced_prefix_histograms(ClusteringType::Fast, &histograms, 4).unwrap();
+        assert_eq!(regular.symbols[0], regular.symbols[1]);
+        assert_ne!(forced.symbols[0], forced.symbols[1]);
+        assert_eq!(forced.symbols[0], forced.symbols[2]);
+        assert_eq!(forced.symbols[0], forced.symbols[3]);
+    }
 
     fn make_histogram(counts: &[i32]) -> Histogram {
         let h = Histogram::from_counts(counts);
