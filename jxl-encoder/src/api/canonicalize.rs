@@ -3,8 +3,9 @@
 use super::*;
 use alloc::sync::Arc;
 use zenpixels_convert::{
-    AlphaMode, ChannelOrder, ColorOrigin, ColorSpace, ImageSpec, PixelBuf, PixelView, SampleLayout,
-    SampleType, Transfer, icc::IccIdentification, icc_profiles::SynthesizedIcc, scan_facts,
+    AlphaMode, ChannelOrder, ColorOrigin, ColorSpace, PixelBuf, PixelFormat, PixelView,
+    SampleLayout, SampleType, Transfer, icc::IccIdentification, icc_profiles::SynthesizedIcc,
+    scan_facts,
 };
 
 type Prepared = (PixelBuf, PixelLayout, crate::budget::BudgetGuard);
@@ -25,7 +26,7 @@ const LAYOUTS: &[(PixelLayout, SampleLayout)] = &[
     (PixelLayout::GrayAlphaLinearF32, SampleLayout::GRAYAF32),
 ];
 
-fn sample_spec(layout: SampleLayout) -> ImageSpec {
+fn sample_format(layout: SampleLayout) -> PixelFormat {
     let color = if layout.order.is_gray_family() {
         ColorSpace::GRAY_SRGB
     } else {
@@ -41,7 +42,7 @@ fn sample_spec(layout: SampleLayout) -> ImageSpec {
     } else {
         AlphaMode::None
     };
-    ImageSpec::new(layout, color.with_transfer(transfer).with_alpha(alpha))
+    PixelFormat::new(layout, color.with_transfer(transfer).with_alpha(alpha))
 }
 
 fn output_icc(icc: Option<&[u8]>) -> Option<SynthesizedIcc> {
@@ -67,7 +68,7 @@ pub(super) fn prepare(
         return Ok(None);
     };
     let source = *source;
-    let source_spec = sample_spec(source);
+    let source_format = sample_format(source);
     let row_bytes = request.width as usize * source.bytes_per_pixel();
     let stride = request.row_stride.unwrap_or(row_bytes);
     let icc = request.metadata.and_then(|m| m.icc_profile);
@@ -86,11 +87,17 @@ pub(super) fn prepare(
         .reserve(bytes)
         .map_err(|e| at(EncodeError::from(e)))?;
     let aligned;
-    let view = match PixelView::new(pixels, request.width, request.height, stride, &source_spec) {
+    let view = match PixelView::new(
+        pixels,
+        request.width,
+        request.height,
+        stride,
+        &source_format,
+    ) {
         Ok(view) => view,
         Err(_) => {
             // EncodeRequest accepts byte addresses and strides without sample alignment.
-            let mut copy = PixelBuf::new(request.width, request.height, source_spec.clone())
+            let mut copy = PixelBuf::new(request.width, request.height, source_format.clone())
                 .map_err(canonicalization_error)?;
             let mut out = copy.as_view_mut();
             for y in 0..request.height {
@@ -145,7 +152,7 @@ pub(super) fn prepare(
     } else {
         icc.map(Arc::from)
     };
-    let mut buffer = PixelBuf::new(request.width, request.height, sample_spec(target))
+    let mut buffer = PixelBuf::new(request.width, request.height, sample_format(target))
         .map_err(canonicalization_error)?;
     if let Some(icc) = retained_icc {
         buffer = buffer.with_origin(ColorOrigin::from_icc(icc));

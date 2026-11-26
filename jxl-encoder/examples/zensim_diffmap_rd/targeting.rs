@@ -13,7 +13,7 @@ use std::{
     time::Instant,
 };
 use zenpixels_convert::{
-    AlphaMode, ColorSpace, ConvertPolicy, ImageSpec, PeakSource, SampleLayout,
+    AlphaMode, ColorSpace, ConvertPolicy, PeakSource, PixelFormat, SampleLayout,
     convert_to_buf_with_peak,
 };
 use zensim::{BakeScorer, RgbSlice};
@@ -331,7 +331,7 @@ pub(super) fn read_png(path: &Path, source: bool) -> Result<(Vec<u8>, u32, u32)>
     }
     let rgba: Vec<u8> = convert_to_buf_with_peak(
         &decoded.pixels.as_view(),
-        ImageSpec::new(
+        PixelFormat::new(
             SampleLayout::RGBA8,
             ColorSpace::SRGB.with_alpha(AlphaMode::Straight),
         ),

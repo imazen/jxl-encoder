@@ -8,7 +8,7 @@ use alloc::{sync::Arc, vec::Vec};
 use moxcms_extended as mox;
 #[cfg(feature = "cms-lcms")]
 use zenpixels_convert::{
-    AlphaMode, CmsBackend, ColorSpace, ImageSpec, RenderingIntent, SampleLayout,
+    AlphaMode, CmsBackend, ColorSpace, PixelFormat, RenderingIntent, SampleLayout,
 };
 
 struct FloatRgbTransform {
@@ -143,7 +143,7 @@ pub(super) fn rgb_to_icc(
     let lcms = if input.source_hdr {
         None
     } else {
-        let dst = ImageSpec::new(
+        let dst = PixelFormat::new(
             SampleLayout::RGBF32,
             ColorSpace::Icc {
                 profile: Arc::from(profile),
@@ -154,7 +154,7 @@ pub(super) fn rgb_to_icc(
         );
         Some(
             zenpixels_convert::Lcms
-                .build_transform(&zenpixels_convert::specs::RGBF32_LINEAR, &dst)
+                .build_transform(&zenpixels_convert::formats::RGBF32_LINEAR, &dst)
                 .map_err(|e| config_error(&e))?,
         )
     };

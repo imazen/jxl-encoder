@@ -62,14 +62,14 @@ rust-version = "1.93"
 [patch.crates-io]
 garb = { git = "https://github.com/imazen/garb", rev = "457ff8b9153e9d675a39dc098052b2ffeb6206fa" }
 linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "ae83f19426737635fee3dd16f228681019f52585" }
-zenpng = { git = "https://github.com/imazen/zenpng", rev = "b0205a1b72864ad047f5ec465f1900f167496484" }
+zenpng = { git = "https://github.com/imazen/zenpng", rev = "fc437267f5d4d9e1c6d1e22fd8a07291a479af90" }
 zenflate = { git = "https://github.com/imazen/zenflate", rev = "a0ea03637a2cc9a193e343018ae2cfb1a6c31edd" }
 # Shared metadata types use the same Git revision as the HDR and JPEG adapters.
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "3a10011b6b05d2269e29db5e40db71888d0fcfce" }
-zenmeta = { git = "https://github.com/imazen/zencodec", rev = "3a10011b6b05d2269e29db5e40db71888d0fcfce" }
-ultrahdr-core = { git = "https://github.com/imazen/ultrahdr", rev = "5220840ec1098ab00905c3bc758e6fe36ff58d5c" }
-zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "9686936bfa49df370a1e71666b252b9f48f744b4" }
-zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "9686936bfa49df370a1e71666b252b9f48f744b4" }
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "06298db38616157ae287471a86ec5f071e4b47c3" }
+zenmeta = { git = "https://github.com/imazen/zencodec", rev = "06298db38616157ae287471a86ec5f071e4b47c3" }
+ultrahdr-core = { git = "https://github.com/imazen/ultrahdr", rev = "1914ec75d2b571e9d39d65c2c5f7e17b080c73d6" }
+zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "0dd7af2a00d7ec4e573d80b764d323467c61cb5d" }
+zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "0dd7af2a00d7ec4e573d80b764d323467c61cb5d" }
 # Zensim target and the older codec-family edges still require 0.3.
 zenpixels-03 = { package = "zenpixels", git = "https://github.com/imazen/zenpixels", rev = "fde59b96632557592cffa9b7301acd8db96ed078" }
 zenpixels-convert-03 = { package = "zenpixels-convert", git = "https://github.com/imazen/zenpixels", rev = "fde59b96632557592cffa9b7301acd8db96ed078" }
@@ -87,7 +87,7 @@ jxl-threadpool = { git = "https://github.com/imazen/jxl-oxide.git", rev = "08395
 jxl-jbr = { git = "https://github.com/imazen/jxl-oxide.git", rev = "08395e61c1789f70bd1890fb29682e5aca274efa" }
 jxl-oxide-common = { git = "https://github.com/imazen/jxl-oxide.git", rev = "08395e61c1789f70bd1890fb29682e5aca274efa" }
 # The JPEG reencoding API uses the paired native JPEG revision.
-zenjpeg = { git = "https://github.com/imazen/zenjpeg", rev = "8d9d2e96b003f911ef385fc9acafd0f68b7afdd9" }
+zenjpeg = { git = "https://github.com/imazen/zenjpeg", rev = "e58c3d57b03409233cc3c165b6dc7849ee5081c8" }
 zenjxl-decoder = { git = "https://github.com/imazen/zenjxl-decoder", rev = "e58a4838725704e37d90f2acd1d11dcccd7ab98a" }
 # Pin the approved pre-allocation accounting API while 0.9.4 is unreleased.
 # A git revision also prevents unrelated local sibling WIP changing the build.

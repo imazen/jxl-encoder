@@ -36,8 +36,8 @@ bench = false
 # Keep the source overrides aligned with the parent workspace. These are
 # build-time siblings; CI fetches the revisions in .github/sibling-revisions.tsv.
 [patch.crates-io]
-zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "9686936bfa49df370a1e71666b252b9f48f744b4" }
-zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "9686936bfa49df370a1e71666b252b9f48f744b4" }
+zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "0dd7af2a00d7ec4e573d80b764d323467c61cb5d" }
+zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "0dd7af2a00d7ec4e573d80b764d323467c61cb5d" }
 # Zensim target and the older codec-family edges still require 0.3.
 zenpixels-03 = { package = "zenpixels", git = "https://github.com/imazen/zenpixels", rev = "fde59b96632557592cffa9b7301acd8db96ed078" }
 zenpixels-convert-03 = { package = "zenpixels-convert", git = "https://github.com/imazen/zenpixels", rev = "fde59b96632557592cffa9b7301acd8db96ed078" }
@@ -58,10 +58,10 @@ jxl-threadpool = { git = "https://github.com/imazen/jxl-oxide.git", rev = "fd4e2
 jxl-jbr = { git = "https://github.com/imazen/jxl-oxide.git", rev = "fd4e2c3" }
 jxl-oxide-common = { git = "https://github.com/imazen/jxl-oxide.git", rev = "fd4e2c3" }
 # The JPEG reencoding API and shared HDR metadata use the workspace cohort.
-zenjpeg = { git = "https://github.com/imazen/zenjpeg", rev = "8d9d2e96b003f911ef385fc9acafd0f68b7afdd9" }
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "3a10011b6b05d2269e29db5e40db71888d0fcfce" }
-zenmeta = { git = "https://github.com/imazen/zencodec", rev = "3a10011b6b05d2269e29db5e40db71888d0fcfce" }
-ultrahdr-core = { git = "https://github.com/imazen/ultrahdr", rev = "5220840ec1098ab00905c3bc758e6fe36ff58d5c" }
+zenjpeg = { git = "https://github.com/imazen/zenjpeg", rev = "e58c3d57b03409233cc3c165b6dc7849ee5081c8" }
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "06298db38616157ae287471a86ec5f071e4b47c3" }
+zenmeta = { git = "https://github.com/imazen/zencodec", rev = "06298db38616157ae287471a86ec5f071e4b47c3" }
+ultrahdr-core = { git = "https://github.com/imazen/ultrahdr", rev = "1914ec75d2b571e9d39d65c2c5f7e17b080c73d6" }
 # zenjxl-decoder (our pure-Rust JXL decoder) is a DEV-dependency used only by
 # the JBRD round-trip conformance gate (`tests/jbrd_roundtrip_conformance.rs`):
 # transcode a JPEG -> JXL with jxl-encoder, reconstruct the original JPEG bytes
