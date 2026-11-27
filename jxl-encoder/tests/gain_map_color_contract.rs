@@ -337,7 +337,11 @@ fn nonlinear_hdr_layouts_compute_the_same_gain_values() {
     for (label, transfer, base) in [
         // Keep the gain inside its grid after absolute PQ/base-white scaling.
         ("pq", ultrahdr_core::TransferFunction::Pq, 0.05_f32),
-        ("hlg", ultrahdr_core::TransferFunction::Hlg, 0.025_f32),
+        (
+            "hlg",
+            ultrahdr_core::TransferFunction::Hlg(zenpixels_convert::HlgMode::Scene),
+            0.025_f32,
+        ),
     ] {
         let sdr: Vec<u8> = (0..width * height)
             .flat_map(|_| {
@@ -405,7 +409,7 @@ fn nonlinear_hdr_layouts_compute_the_same_gain_values() {
             std::fs::write(output.join("input.jxl"), &bytes).unwrap();
             let expected_tf = match transfer {
                 ultrahdr_core::TransferFunction::Pq => jxl_image::color::TransferFunction::Pq,
-                ultrahdr_core::TransferFunction::Hlg => jxl_image::color::TransferFunction::Hlg,
+                ultrahdr_core::TransferFunction::Hlg(_) => jxl_image::color::TransferFunction::Hlg,
                 _ => unreachable!(),
             };
             let (gain, use_base, gamut) = gain_payload(&bytes, Some(expected_tf));
@@ -927,7 +931,10 @@ fn gain_map_source_transfer_layout_pairs_preserve_base_and_gain() {
         (8, ultrahdr_core::TransferFunction::Linear),
         (13, ultrahdr_core::TransferFunction::Srgb),
         (16, ultrahdr_core::TransferFunction::Pq),
-        (18, ultrahdr_core::TransferFunction::Hlg),
+        (
+            18,
+            ultrahdr_core::TransferFunction::Hlg(zenpixels_convert::HlgMode::Scene),
+        ),
     ] {
         let mut baseline = None;
         for sdr_layout in layouts {
@@ -1414,7 +1421,13 @@ fn gain_map_ordered_transfer_pairs_use_the_same_base_white() {
             pq,
             10000.0,
         ),
-        (18, ultrahdr_core::TransferFunction::Hlg, 0.5, hlg, 1000.0),
+        (
+            18,
+            ultrahdr_core::TransferFunction::Hlg(zenpixels_convert::HlgMode::Scene),
+            0.5,
+            hlg,
+            1000.0,
+        ),
     ];
     let (width, height) = (9_u32, 3_u32);
     let mut journal = std::fs::File::create(root.join("transfer-pairs.tsv")).unwrap();
@@ -1433,7 +1446,7 @@ fn gain_map_ordered_transfer_pairs_use_the_same_base_white() {
             let hdr_pixels = input(hdr_signal);
             let hdr_relative = match hdr_tf {
                 ultrahdr_core::TransferFunction::Pq => hdr_display * 10000.0 / base_white,
-                ultrahdr_core::TransferFunction::Hlg => hdr_display * 1000.0 / base_white,
+                ultrahdr_core::TransferFunction::Hlg(_) => hdr_display * 1000.0 / base_white,
                 _ => hdr_display,
             };
             let ratio = (hdr_relative + 1.0 / 64.0) / (base_display + 1.0 / 64.0);
@@ -1488,7 +1501,7 @@ fn gain_map_ordered_transfer_pairs_use_the_same_base_white() {
                 }
                 ultrahdr_core::TransferFunction::Srgb => jxl_image::color::TransferFunction::Srgb,
                 ultrahdr_core::TransferFunction::Pq => jxl_image::color::TransferFunction::Pq,
-                ultrahdr_core::TransferFunction::Hlg => jxl_image::color::TransferFunction::Hlg,
+                ultrahdr_core::TransferFunction::Hlg(_) => jxl_image::color::TransferFunction::Hlg,
                 _ => unreachable!("explicit source list"),
             };
             let (gain, use_base, gamut) =

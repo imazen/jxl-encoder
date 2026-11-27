@@ -464,7 +464,8 @@ fn embedded_gain_map_dht_uses_the_shared_reconstruction_model() {
     let metadata = ultrahdr_core::serialize_iso21496_fmt(
         &ultrahdr_core::GainMapParams::default(),
         ultrahdr_core::Iso21496Format::JxlJhgm,
-    );
+    )
+    .expect("serialize valid ISO gain-map metadata");
     let namespace = b"urn:iso:std:iso:ts:21496:-1\0";
     for (name, gain) in [("empty", empty), ("zero", zero)] {
         let mut secondary = gain[..2].to_vec();

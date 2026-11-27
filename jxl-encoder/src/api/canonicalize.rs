@@ -3,10 +3,53 @@
 use super::*;
 use alloc::sync::Arc;
 use zenpixels_convert::{
-    ColorContext, PixelBuffer, PixelDescriptor, PixelFormat, PixelSlice, PixelSliceLoadBearingExt,
+    AlphaMode, ChannelOrder, ColorOrigin, ColorSpace, PixelBuf, PixelFormat, PixelView,
+    SampleLayout, SampleType, Transfer, icc::IccIdentification, icc_profiles::SynthesizedIcc,
+    scan_facts,
 };
 
-type Prepared = (PixelBuffer, PixelLayout, crate::budget::BudgetGuard);
+type Prepared = (PixelBuf, PixelLayout, crate::budget::BudgetGuard);
+
+const LAYOUTS: &[(PixelLayout, SampleLayout)] = &[
+    (PixelLayout::Rgb8, SampleLayout::RGB8),
+    (PixelLayout::Rgba8, SampleLayout::RGBA8),
+    (PixelLayout::Bgra8, SampleLayout::BGRA8),
+    (PixelLayout::Gray8, SampleLayout::GRAY8),
+    (PixelLayout::GrayAlpha8, SampleLayout::GRAYA8),
+    (PixelLayout::Rgb16, SampleLayout::RGB16),
+    (PixelLayout::Rgba16, SampleLayout::RGBA16),
+    (PixelLayout::Gray16, SampleLayout::GRAY16),
+    (PixelLayout::GrayAlpha16, SampleLayout::GRAYA16),
+    (PixelLayout::RgbLinearF32, SampleLayout::RGBF32),
+    (PixelLayout::RgbaLinearF32, SampleLayout::RGBAF32),
+    (PixelLayout::GrayLinearF32, SampleLayout::GRAYF32),
+    (PixelLayout::GrayAlphaLinearF32, SampleLayout::GRAYAF32),
+];
+
+fn sample_format(layout: SampleLayout) -> PixelFormat {
+    let color = if layout.order.is_gray_family() {
+        ColorSpace::GRAY_SRGB
+    } else {
+        ColorSpace::SRGB
+    };
+    let transfer = if layout.sample == SampleType::F32 {
+        Transfer::Linear
+    } else {
+        Transfer::Srgb
+    };
+    let alpha = if layout.order.has_alpha_slot() {
+        AlphaMode::Straight
+    } else {
+        AlphaMode::None
+    };
+    PixelFormat::new(layout, color.with_transfer(transfer).with_alpha(alpha))
+}
+
+fn output_icc(icc: Option<&[u8]>) -> Option<SynthesizedIcc> {
+    icc.and_then(IccIdentification::from_icc_substitutable)
+        .and_then(|identification| identification.to_cicp())
+        .map(SynthesizedIcc::for_gray_cicp)
+}
 
 pub(super) fn prepare(
     request: &EncodeRequest<'_>,
@@ -21,32 +64,16 @@ pub(super) fn prepare(
     if request.layout.is_16bit() && request.bits_per_sample.is_some_and(|b| b != 16) {
         return Ok(None);
     }
-    let format = match request.layout {
-        PixelLayout::Rgb8 => PixelFormat::Rgb8,
-        PixelLayout::Rgba8 => PixelFormat::Rgba8,
-        PixelLayout::Bgra8 => PixelFormat::Bgra8,
-        PixelLayout::Gray8 => PixelFormat::Gray8,
-        PixelLayout::GrayAlpha8 => PixelFormat::GrayA8,
-        PixelLayout::Rgb16 => PixelFormat::Rgb16,
-        PixelLayout::Rgba16 => PixelFormat::Rgba16,
-        PixelLayout::Gray16 => PixelFormat::Gray16,
-        PixelLayout::GrayAlpha16 => PixelFormat::GrayA16,
-        PixelLayout::RgbLinearF32 => PixelFormat::RgbF32,
-        PixelLayout::RgbaLinearF32 => PixelFormat::RgbaF32,
-        PixelLayout::GrayLinearF32 => PixelFormat::GrayF32,
-        PixelLayout::GrayAlphaLinearF32 => PixelFormat::GrayAF32,
-        // No exact reduction is established for these input contracts.
-        _ => return Ok(None),
+    let Some((_, source)) = LAYOUTS.iter().find(|(layout, _)| *layout == request.layout) else {
+        return Ok(None);
     };
-    let descriptor = PixelDescriptor::from_pixel_format(format);
-    let stride = request
-        .row_stride
-        .unwrap_or_else(|| descriptor.aligned_stride(request.width));
+    let source = *source;
+    let source_format = sample_format(source);
+    let row_bytes = request.width as usize * source.bytes_per_pixel();
+    let stride = request.row_stride.unwrap_or(row_bytes);
     let icc = request.metadata.and_then(|m| m.icc_profile);
-    // Cover both an alignment repair and the reduced output, including
-    // allocation alignment slack. The source request was preflighted before
-    // this reservation; this guard remains live through the encode.
-    let bytes = (descriptor.aligned_stride(request.width) as u64)
+    // Cover alignment repair and reduced output within the existing budget.
+    let bytes = (row_bytes as u64)
         .checked_mul(u64::from(request.height))
         .and_then(|n| n.checked_add(16))
         .and_then(|n| n.checked_mul(2))
@@ -60,52 +87,112 @@ pub(super) fn prepare(
         .reserve(bytes)
         .map_err(|e| at(EncodeError::from(e)))?;
     let aligned;
-    let mut view = match PixelSlice::new(pixels, request.width, request.height, stride, descriptor)
-    {
+    let view = match PixelView::new(
+        pixels,
+        request.width,
+        request.height,
+        stride,
+        &source_format,
+    ) {
         Ok(view) => view,
         Err(_) => {
-            // EncodeRequest accepts unaligned byte slices and row strides.
-            // Align only this path; tight aligned input remains borrowed.
-            let mut copy = PixelBuffer::try_new(request.width, request.height, descriptor)
-                .map_err(|e| {
-                    at!(EncodeError::InvalidInput {
-                        message: format!("canonicalization buffer: {e}")
-                    })
-                })?;
-            let row_bytes = descriptor.aligned_stride(request.width);
+            // EncodeRequest accepts byte addresses and strides without sample alignment.
+            let mut copy = PixelBuf::new(request.width, request.height, source_format.clone())
+                .map_err(canonicalization_error)?;
+            let mut out = copy.as_view_mut();
             for y in 0..request.height {
                 let start = y as usize * stride;
-                copy.as_slice_mut()
-                    .row_mut(y)
+                out.row_mut(y)
                     .copy_from_slice(&pixels[start..start + row_bytes]);
             }
             aligned = copy;
-            aligned.as_slice()
+            aligned.as_view()
         }
     };
-    if let Some(icc) = icc {
-        view = view.with_color_context(Arc::new(ColorContext::from_icc(icc)));
+    let facts = scan_facts(&view);
+    let gray_icc = output_icc(icc);
+    let collapse = source.order.is_rgb_family()
+        && facts.all_grayscale
+        && (icc.is_none()
+            || matches!(
+                gray_icc,
+                Some(SynthesizedIcc::Profile(_) | SynthesizedIcc::NotNeeded)
+            ));
+    let remove_alpha = source.order.has_alpha_slot() && facts.all_opaque;
+    let narrow = source.sample == SampleType::U16
+        && facts
+            .depth
+            .is_some_and(|depth| depth.color_exact_at(8) && depth.alpha_exact_at(8));
+    if !collapse && !remove_alpha && !narrow {
+        return Ok(None);
     }
-    let Ok(Some(buffer)) = view.reduce_to_load_bearing_format() else {
+    let order = match (collapse, remove_alpha, source.order) {
+        (true, _, ChannelOrder::Rgb) | (true, true, _) => ChannelOrder::Gray,
+        (true, false, _) => ChannelOrder::GrayAlpha,
+        (false, true, ChannelOrder::GrayAlpha) => ChannelOrder::Gray,
+        (false, true, _) => ChannelOrder::Rgb,
+        _ => source.order,
+    };
+    let target = SampleLayout::new(
+        if narrow {
+            SampleType::U8
+        } else {
+            source.sample
+        },
+        order,
+    );
+    let Some((layout, _)) = LAYOUTS.iter().find(|(_, samples)| *samples == target) else {
         return Ok(None);
     };
-    let layout = match buffer.descriptor().format {
-        PixelFormat::Rgb8 => PixelLayout::Rgb8,
-        PixelFormat::Rgba8 => PixelLayout::Rgba8,
-        PixelFormat::Bgra8 => PixelLayout::Bgra8,
-        PixelFormat::Gray8 => PixelLayout::Gray8,
-        PixelFormat::GrayA8 => PixelLayout::GrayAlpha8,
-        PixelFormat::Rgb16 => PixelLayout::Rgb16,
-        PixelFormat::Rgba16 => PixelLayout::Rgba16,
-        PixelFormat::Gray16 => PixelLayout::Gray16,
-        PixelFormat::GrayA16 => PixelLayout::GrayAlpha16,
-        PixelFormat::RgbF32 => PixelLayout::RgbLinearF32,
-        PixelFormat::RgbaF32 => PixelLayout::RgbaLinearF32,
-        PixelFormat::GrayF32 => PixelLayout::GrayLinearF32,
-        PixelFormat::GrayAF32 => PixelLayout::GrayAlphaLinearF32,
-        _ => return Ok(None),
+    let retained_icc = if collapse {
+        match gray_icc {
+            Some(SynthesizedIcc::Profile(bytes)) => Some(Arc::from(bytes.as_ref())),
+            _ => None,
+        }
+    } else {
+        icc.map(Arc::from)
     };
-    Ok(Some((buffer, layout, guard)))
+    let mut buffer = PixelBuf::new(request.width, request.height, sample_format(target))
+        .map_err(canonicalization_error)?;
+    if let Some(icc) = retained_icc {
+        buffer = buffer.with_origin(ColorOrigin::from_icc(icc));
+    }
+    let sample_bytes = source.sample.byte_size();
+    let dst_bytes = target.sample.byte_size();
+    let mut out = buffer.as_view_mut();
+    for y in 0..request.height {
+        for (src, dst) in view
+            .row(y)
+            .chunks_exact(source.bytes_per_pixel())
+            .zip(out.row_mut(y).chunks_exact_mut(target.bytes_per_pixel()))
+        {
+            for (c, word) in dst.chunks_exact_mut(dst_bytes).enumerate() {
+                let src_c = if collapse && c == 1 {
+                    source.channels() - 1
+                } else if source.order == ChannelOrder::Bgra && order == ChannelOrder::Rgb {
+                    2 - c
+                } else {
+                    c
+                };
+                let word_src = &src[src_c * sample_bytes..][..sample_bytes];
+                if narrow {
+                    // The scan proved both bytes equal, on either endian.
+                    word[0] = word_src[0];
+                } else {
+                    word.copy_from_slice(word_src);
+                }
+            }
+        }
+    }
+    Ok(Some((buffer, *layout, guard)))
+}
+
+fn canonicalization_error(
+    error: zenpixels_convert::At<zenpixels_convert::BufferError>,
+) -> At<EncodeError> {
+    at!(EncodeError::InvalidInput {
+        message: format!("canonicalization buffer: {error}")
+    })
 }
 
 #[cfg(test)]
@@ -117,7 +204,7 @@ mod tests {
         let request = cfg.encode_request(2, 1, layout);
         prepare(&request, pixels, &crate::budget::MemoryBudget::unbounded())
             .unwrap()
-            .map(|(b, l, _)| (l, b.as_slice().as_strided_bytes().to_vec()))
+            .map(|(b, l, _)| (l, b.as_view().as_strided_bytes().to_vec()))
     }
 
     #[test]
@@ -163,8 +250,8 @@ mod tests {
         .unwrap()
         .unwrap();
         assert_eq!(layout, PixelLayout::Gray8);
-        assert_eq!(buffer.as_slice().row(0), &[1]);
-        assert_eq!(buffer.as_slice().row(1), &[2]);
+        assert_eq!(buffer.as_view().row(0), &[1]);
+        assert_eq!(buffer.as_view().row(1), &[2]);
         let request = request.with_bits_per_sample(12);
         assert!(
             prepare(
@@ -198,10 +285,7 @@ mod tests {
         .unwrap()
         .unwrap();
         assert_eq!(layout, PixelLayout::Rgb8);
-        assert_eq!(
-            buffer.as_slice().color_context().unwrap().icc(),
-            Some(profile.as_slice())
-        );
+        assert_eq!(buffer.origin().icc.as_deref(), Some(profile.as_slice()));
     }
 
     #[test]

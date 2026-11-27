@@ -55,7 +55,7 @@ impl HdrPixelLayout {
             Self::Rgb8 => PixelLayout::Rgb8,
             Self::RgbaF32 => match color.transfer {
                 UhdrTransfer::Pq => PixelLayout::RgbaPqF32,
-                UhdrTransfer::Hlg => PixelLayout::RgbaHlgF32,
+                UhdrTransfer::Hlg(_) => PixelLayout::RgbaHlgF32,
                 // sRGB float is linearized privately before this layout is used.
                 _ => PixelLayout::RgbaLinearF32,
             },
@@ -103,7 +103,7 @@ impl HdrColorEncoding {
     pub const fn bt2100_hlg() -> Self {
         Self {
             primaries: UhdrPrimaries::Bt2020,
-            transfer: UhdrTransfer::Hlg,
+            transfer: UhdrTransfer::Hlg(zenpixels_convert::HlgMode::Scene),
         }
     }
 
@@ -348,7 +348,7 @@ impl<'a> HdrFromSdrRequest<'a> {
             sdr_linear,
             self.width,
             self.height,
-            PixelFormat::RgbaF32,
+            PixelFormat::RGBAF32,
             self.hdr_color.primaries,
             UhdrTransfer::Linear,
         )
@@ -357,7 +357,7 @@ impl<'a> HdrFromSdrRequest<'a> {
             hdr_linear,
             self.width,
             self.height,
-            PixelFormat::RgbaF32,
+            PixelFormat::RGBAF32,
             self.hdr_color.primaries,
             UhdrTransfer::Linear,
         )
@@ -365,8 +365,8 @@ impl<'a> HdrFromSdrRequest<'a> {
 
         // 3. Compute the gain map.
         let (gainmap, mut metadata) = compute_gainmap_slice(
-            hdr_buf.as_slice(),
-            sdr_buf.as_slice(),
+            hdr_buf.as_view(),
+            sdr_buf.as_view(),
             &self.gainmap_config,
             Unstoppable,
         )
@@ -447,7 +447,8 @@ impl<'a> HdrFromSdrRequest<'a> {
         let iso21496 = ultrahdr_core::serialize_iso21496_fmt(
             &metadata,
             ultrahdr_core::Iso21496Format::JxlJhgm,
-        );
+        )
+        .map_err(|err| invalid(format!("hdr-gainmap: {err}")))?;
 
         // Part 2 9.11: alternate color describes reconstructed HDR samples;
         // gain values themselves retain their separate lossless coding.

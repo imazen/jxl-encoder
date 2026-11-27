@@ -206,7 +206,8 @@ mod tests {
         let metadata = ultrahdr_core::serialize_iso21496_fmt(
             &ultrahdr_core::GainMapParams::default(),
             ultrahdr_core::Iso21496Format::JxlJhgm,
-        );
+        )
+        .expect("serialize valid ISO gain-map metadata");
         let mut jpeg = vec![0xff, 0xd8];
         jpeg.extend(app2(&metadata));
         assert!(

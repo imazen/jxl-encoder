@@ -31,7 +31,9 @@ enough = "0.4.3"
 # CMYK conversion uses the verified private original-LUT repairs; the
 # separate RGB conversion selects its CMS through zenpixels-convert.
 moxcms = { version = "=0.9.0", git = "https://github.com/imazen/moxcms", rev = "0425eb09570496c439462a334f116666cb9f39c9", optional = true, default-features = false, features = ["options", "extended_range", "any_to_any"] }
-zenpixels-convert = { version = ">=0.4.0, <0.5.0", default-features = false }
+# Keep the float RGB ICC settings used before the pixel 0.5 migration.
+moxcms-extended = { package = "moxcms", version = "=0.9.2", default-features = false, features = ["options", "extended_range"], optional = true }
+zenpixels-convert = { version = ">=0.5.0, <0.6.0", default-features = false }
 once_cell = { version = "1.21.4", default-features = false, features = ["race", "alloc"] }
 hashbrown = { version = "0.17.1", default-features = false, features = ["default-hasher"] }
 # W44-192: strategy_def! proc-macro for declarative gate registries.
@@ -109,13 +111,9 @@ postcard = { version = "1.1.3", default-features = false, features = ["use-std"]
 # 0.0.1 is `publish = false`. CubeCL is pulled in as a direct dep so the
 # `CudaRuntime` type is reachable from the backend module.
 butteraugli-gpu = { version = "0.0.1", default-features = false, features = ["cuda", "cubecl-types", "internals"], optional = true }
-# cubecl resolves to the `zenforks-cubecl` crates.io publication (the
-# pinned-upload fork lineage) — the same package the zenmetrics GPU crates
-# bound their Runtime traits against. The old lilith/cubecl git patch
-# created a second cubecl universe and E0277/E0599 under `gpu-butteraugli`
-# (CLAUDE.md Known Bug 2026-06-10, fixed by this unification).
-# to the same git rev butteraugli-gpu is tested against.
-cubecl = { package = "zenforks-cubecl", version = "0.10.1", default-features = false, features = ["std", "cuda"], optional = true }
+# Match the CubeCL revision in the pinned zenmetrics GPU dependencies so
+# their Runtime and CudaRuntime types have the same Cargo identity.
+cubecl = { package = "zenforks-cubecl", git = "https://github.com/imazen/zenforks-cubecl", rev = "9084240103f9104719f56bd27b8f9f614d5a1d12", default-features = false, features = ["std", "cuda"], optional = true }
 # cvvdp-fork Phase 3: GPU CVVDP backend for the perceptual quantization
 # loop (RFC `docs/RFC_CVVDP_FORK.md` §2.1, Phase 3 brief
 # `docs/RFC_CVVDP_PHASE3_BRIEF.md`). Opt-in via the `cvvdp-loop` cargo
@@ -259,7 +257,7 @@ parallel = ["std", "dep:rayon"]
 # feature together with jpeg-reencoding. zenyuv supplies chroma conversion;
 # the CMS converts explicit source color/gamma to an attached output ICC.
 # The public selector remains available without these implementation features.
-chroma-subsampling = ["dep:zenyuv", "zenpixels-convert/cms-moxcms", "zenpixels-convert/hdr-transfers"]
+chroma-subsampling = ["dep:zenyuv", "dep:moxcms-extended"]
 # Select the pure-Rust Little CMS worker for the RGB8 ICC conversion.
 cms-lcms = ["chroma-subsampling", "zenpixels-convert/cms-lcms", "zenpixels-convert/icc-db"]
 # Parallel tree learning for lossless modular path.

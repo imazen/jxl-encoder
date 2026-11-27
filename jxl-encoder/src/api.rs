@@ -6939,9 +6939,9 @@ impl<'a> EncodeRequest<'a> {
         if matches!(self.config, ConfigRef::Lossy(cfg) if cfg.canonicalize_input) {
             let canonical = canonicalize::prepare(&self, pixels, &preflight.budget)?;
             if let Some((buffer, layout, _guard)) = canonical {
-                let view = buffer.as_slice();
+                let view = buffer.as_view();
                 let mut metadata = self.metadata.cloned().unwrap_or_default();
-                metadata.icc_profile = view.color_context().and_then(|context| context.icc());
+                metadata.icc_profile = buffer.origin().icc.as_deref();
                 let bits_per_sample = if self.layout.is_16bit() && !layout.is_16bit() {
                     None
                 } else {
@@ -6956,7 +6956,7 @@ impl<'a> EncodeRequest<'a> {
                 }
                 let request = EncodeRequest {
                     layout,
-                    row_stride: Some(view.stride()),
+                    row_stride: Some(view.stride_bytes()),
                     bits_per_sample,
                     color_encoding,
                     metadata: Some(&metadata),
@@ -8574,6 +8574,8 @@ impl<'a> EncodeRequest<'a> {
         let w = self.width as usize;
         let h = self.height as usize;
 
+        #[cfg(feature = "__env_var_diagnostics")]
+        let _t_conv = crate::clock::Instant::now();
         let LossyPixels {
             mut linear_rgb,
             alpha,
