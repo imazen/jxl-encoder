@@ -6956,7 +6956,7 @@ impl<'a> EncodeRequest<'a> {
                 }
                 let request = EncodeRequest {
                     layout,
-                    row_stride: Some(view.stride()),
+                    row_stride: Some(view.stride_bytes()),
                     bits_per_sample,
                     color_encoding,
                     metadata: Some(&metadata),

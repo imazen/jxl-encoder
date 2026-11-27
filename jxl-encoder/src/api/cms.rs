@@ -147,7 +147,7 @@ pub(super) fn rgb_to_icc(
             SampleLayout::RGBF32,
             ColorSpace::Icc {
                 profile: Arc::from(profile),
-                channels: 3,
+                color_channels: 3,
                 alpha: AlphaMode::None,
                 intent: RenderingIntent::RelativeColorimetric,
             },
